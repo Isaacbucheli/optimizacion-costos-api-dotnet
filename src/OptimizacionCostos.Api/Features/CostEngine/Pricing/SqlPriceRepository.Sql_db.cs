@@ -61,7 +61,8 @@ public sealed partial class SqlPriceRepository
             ? _cache.QueryCached(serviceName, region)
             : _cache.QueryCached(serviceName, region, skuName: skuName);
 
-        var item = SelectSqlDbPriceItem(cached, skuName, skuTier, computeTier);
+        var item = SelectSqlDbPriceItem(
+            cached, skuName ?? string.Empty, skuTier ?? string.Empty, computeTier ?? string.Empty);
         if (item is null)
             return null;
 
