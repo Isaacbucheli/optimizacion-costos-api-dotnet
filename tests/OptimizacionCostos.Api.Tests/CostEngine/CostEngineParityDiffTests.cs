@@ -34,7 +34,7 @@ public sealed class CostEngineParityDiffTests
 
         var config = AppConfig.FromConfiguration(new ConfigurationBuilder().Build());
         var factory = new SqlConnectionFactory(config);
-        var constants = new PricingConstants();
+        var constants = new PricingConstants(factory);
         using var http = new HttpClient();
         var repo = new SqlPriceRepository(new SqlPriceCache(factory), new RetailPriceClient(http), constants);
         var engine = new EngineCostEngine(
