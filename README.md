@@ -75,10 +75,18 @@ seed idempotente. Pasa. Se activa con `BIT_INTEGRATION_DB=1` + `SQL_*` en el ent
 
 > Costo recurrente nuevo: solo la BD Basic (~$5/mes). El App Service comparte el plan B1 existente.
 
+## CI/CD (✅ 2026-06-26)
+
+- **Repo:** https://github.com/Isaacbucheli/optimizacion-costos-api-dotnet (privado).
+- **Workflow:** `.github/workflows/deploy.yml` — en push a `main`: restore → test → publish → deploy.
+- **Auth a Azure: OIDC** (sin secretos de larga vida). Service principal `github-optimizacion-costos-api-dotnet`
+  con credencial federada para `repo:Isaacbucheli/optimizacion-costos-api-dotnet:ref:refs/heads/main` y rol
+  **Website Contributor** acotado solo a este App Service. Secrets en el repo: `AZURE_CLIENT_ID`,
+  `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (son IDs, no credenciales).
+- Primer run verde end-to-end; app desplegada por Actions verificada en vivo (GET autenticado → alertas).
+
 ## Pendiente (con OK del usuario)
 
-1. **CI/CD:** mover este código a su propio repo (como el front `innovacion-CDC`) + GitHub Actions;
-   hoy el deploy fue manual por zip.
-2. **Cutover:** decidir si el front apunta a este backend para alertas (primer servicio "estrangulado")
+1. **Cutover:** decidir si el front apunta a este backend para alertas (primer servicio "estrangulado")
    y, en producción, si `SQL_DATABASE` pasa a la BD real (donde están los usuarios reales) o se mantiene aislado.
-3. (Opcional) login SQL dedicado en vez de reusar `bitadmin` — descartado por ahora por decisión del usuario.
+2. (Opcional) login SQL dedicado en vez de reusar `bitadmin` — descartado por ahora por decisión del usuario.
