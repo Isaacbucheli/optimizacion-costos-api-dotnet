@@ -17,4 +17,10 @@
     <EmbeddedResource Include="Features\AlertCatalog\Seed\alert_seed.json" />
   </ItemGroup>
 
+  <!-- Expone tipos/miembros internal al proyecto de tests (selectores internal static
+       del motor de costos que los tests de selección invocan directamente). -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="OptimizacionCostos.Api.Tests" />
+  </ItemGroup>
+
 </Project>

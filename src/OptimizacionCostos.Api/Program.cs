@@ -5,6 +5,7 @@ using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.AlertCatalog;
+using OptimizacionCostos.Api.Features.CostEngine.Pricing;
 
 var builder = WebApplication.CreateBuilder(args);
 var config = AppConfig.FromConfiguration(builder.Configuration);
@@ -23,6 +24,17 @@ builder.Services.AddSingleton<ISqlConnectionFactory, SqlConnectionFactory>();
 builder.Services.AddScoped<IUserDirectory, SqlUserDirectory>();
 builder.Services.AddScoped<IAlertCatalogStore, SqlAlertCatalogStore>();
 builder.Services.AddBitJwtAuth(config);
+
+// Motor de costos – capa de precios (Fase 1). Registros aditivos: aun no hay rutas de
+// costos que los consuman, pero deben resolver vía DI.
+//   - PricingConstants: tablas/umbrales estaticos, sin estado -> singleton.
+//   - SqlPriceCache: usa ISqlConnectionFactory (ya registrado) -> scoped.
+//   - RetailPriceClient: usa HttpClient inyectado por IHttpClientFactory (AddHttpClient).
+//   - SqlPriceRepository: orquesta cache + cliente + constantes -> scoped.
+builder.Services.AddSingleton<IPricingConstants, PricingConstants>();
+builder.Services.AddScoped<IPriceCache, SqlPriceCache>();
+builder.Services.AddHttpClient<IRetailPriceClient, RetailPriceClient>();
+builder.Services.AddScoped<IPriceRepository, SqlPriceRepository>();
 
 // CORS explicito (paridad con CORS_ORIGINS del FastAPI)
 const string CorsPolicy = "BitCors";
