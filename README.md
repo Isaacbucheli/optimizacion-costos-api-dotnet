@@ -85,8 +85,42 @@ seed idempotente. Pasa. Se activa con `BIT_INTEGRATION_DB=1` + `SQL_*` en el ent
   `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (son IDs, no credenciales).
 - Primer run verde end-to-end; app desplegada por Actions verificada en vivo (GET autenticado → alertas).
 
+## Cutover de demo (✅ 2026-06-26)
+
+El piloto React **`innovacion-CDC`** (SWA `ambitious-moss-00f9c9610`) ya consume el catálogo de alertas
+desde este backend .NET (primer servicio "estrangulado"): en `src/lib/api.ts`, las llamadas a
+`/alert-catalog` y `/kql` van a `catalogBase()` (.NET); el login y todo lo demás siguen en el FastAPI.
+- **BD: aislada** (`sqldb-optimizacion-costos-dotnet`) por decisión del usuario → es un cutover de
+  **demo/staging**, no toca datos ni el catálogo real. Se sembró el email del usuario en `app_users`
+  de la BD aislada para que el .NET lo reconozca tras el login del FastAPI.
+- Verificado en vivo: GET autenticado devuelve las 48 alertas sembradas; el bundle desplegado apunta
+  el catálogo al .NET y mantiene auth en FastAPI.
+
+## Motor de costos — Fase 0 (✅ 2026-06-26)
+
+Migración del módulo de costos (el más grande y delicado) por fases, con **paridad exacta** contra
+el FastAPI validada por la suite de regresión. La Fase 0 cubre los fundamentos y las 12 calculadoras.
+
+- **Fundamentos** (`Features/CostEngine/`): `CostResult` (savings + descarte de RI), `ResourceRow`,
+  `IPriceRepository` + DTOs de precios, `IPricingConstants`, `ICostCalculator`, `CalculatorRegistry`
+  (mapeo `calculator_key` → calculadora, igual que `app/calculators/__init__.py`).
+- **12 calculadoras** (`Features/CostEngine/Calculators/`): compute_vm, managed_disk, sql_database,
+  sql_managed_instance, app_service_plan, mysql_flex, cosmos_account, redis_cache, public_ip,
+  sql_vm_metadata, synapse_dedicated_pool, elastic_pool — port 1:1 de `app/calculators/*.py`.
+- **Tests de paridad** (`tests/CostEngine/`): ~55 tests xUnit que portan la suite de regresión de
+  precios mockeados con los **montos exactos** del Python. Suite total **69/69 verde**.
+- **Verificación adversarial**: revisores escépticos compararon fórmula a fórmula .NET vs Python;
+  detectaron y se corrigió 1 divergencia de borde en Synapse (fallback de nivel DWc: `or` vs `??`).
+- Construido con un workflow multi-agente (1 agente por calculadora + verificadores en paralelo).
+
+### Pendiente del motor de costos (próximas fases)
+- **Fase 1**: capa de precios real (Azure Retail API client + `price_repository` matching determinista).
+- **Fase 2**: `cost_engine` (orquestación, carga/enriquecimiento de recursos, inserción) + 4 escenarios;
+  validar con diff fila a fila de `cost_results` (Python vs .NET) sobre un análisis real.
+- **Fase 3**: endpoints + cutover.
+
 ## Pendiente (con OK del usuario)
 
-1. **Cutover:** decidir si el front apunta a este backend para alertas (primer servicio "estrangulado")
-   y, en producción, si `SQL_DATABASE` pasa a la BD real (donde están los usuarios reales) o se mantiene aislado.
+1. **Pasar el cutover de alertas a producción** (cuando el usuario quiera): apuntar `SQL_DATABASE` del .NET
+   a la BD real `sqldb-optimizacion-costos` (datos + usuarios reales) y/o repuntar el front principal `alert-catalog.js`.
 2. (Opcional) login SQL dedicado en vez de reusar `bitadmin` — descartado por ahora por decisión del usuario.
