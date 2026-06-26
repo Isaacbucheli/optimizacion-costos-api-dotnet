@@ -5,7 +5,9 @@ using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.AlertCatalog;
+using OptimizacionCostos.Api.Features.CostEngine.Engine;
 using OptimizacionCostos.Api.Features.CostEngine.Pricing;
+using OptimizacionCostos.Api.Features.CostEngine.Scenarios;
 
 var builder = WebApplication.CreateBuilder(args);
 var config = AppConfig.FromConfiguration(builder.Configuration);
@@ -35,6 +37,14 @@ builder.Services.AddSingleton<IPricingConstants, PricingConstants>();
 builder.Services.AddScoped<IPriceCache, SqlPriceCache>();
 builder.Services.AddHttpClient<IRetailPriceClient, RetailPriceClient>();
 builder.Services.AddScoped<IPriceRepository, SqlPriceRepository>();
+
+// Motor de costos – orquestación y escenarios (Fase 2). Aditivos: sin rutas que los usen aún.
+builder.Services.AddScoped<IServiceCatalog, SqlServiceCatalog>();
+builder.Services.AddScoped<IResourceLoader, SqlResourceLoader>();
+builder.Services.AddScoped<ICostResultStore, SqlCostResultStore>();
+builder.Services.AddScoped<CostEngine>();
+builder.Services.AddScoped<IScenarioDataSource, SqlScenarioDataSource>();
+builder.Services.AddScoped<ScenarioService>();
 
 // CORS explicito (paridad con CORS_ORIGINS del FastAPI)
 const string CorsPolicy = "BitCors";
