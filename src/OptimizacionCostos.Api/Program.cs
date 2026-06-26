@@ -1,0 +1,64 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using Microsoft.OpenApi.Models;
+using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Configuration;
+using OptimizacionCostos.Api.Data;
+using OptimizacionCostos.Api.Features.AlertCatalog;
+
+var builder = WebApplication.CreateBuilder(args);
+var config = AppConfig.FromConfiguration(builder.Configuration);
+builder.Services.AddSingleton(config);
+
+// JSON en snake_case para mantener el mismo contrato que el FastAPI (alert_number, is_active, ...).
+builder.Services.AddControllers().AddJsonOptions(o =>
+{
+    o.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
+    o.JsonSerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower;
+    o.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.Never;
+});
+
+// Datos y auth
+builder.Services.AddSingleton<ISqlConnectionFactory, SqlConnectionFactory>();
+builder.Services.AddScoped<IUserDirectory, SqlUserDirectory>();
+builder.Services.AddScoped<IAlertCatalogStore, SqlAlertCatalogStore>();
+builder.Services.AddBitJwtAuth(config);
+
+// CORS explicito (paridad con CORS_ORIGINS del FastAPI)
+const string CorsPolicy = "BitCors";
+builder.Services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
+{
+    if (config.CorsOrigins.Length > 0)
+        p.WithOrigins(config.CorsOrigins).AllowAnyHeader().AllowAnyMethod();
+}));
+
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(o =>
+{
+    o.SwaggerDoc("v1", new OpenApiInfo { Title = "Optimizacion Costos API (.NET PoC)", Version = "v1" });
+    o.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
+    {
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        Description = "Pega el JWT del login (mismo token del FastAPI).",
+    });
+    o.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        [new OpenApiSecurityScheme { Reference = new OpenApiReference { Type = ReferenceType.SecurityScheme, Id = "Bearer" } }] = [],
+    });
+});
+
+var app = builder.Build();
+
+app.UseSwagger();
+app.UseSwaggerUI();
+app.UseCors(CorsPolicy);
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();
+
+app.Run();
+
+// Necesario para WebApplicationFactory<Program> en los tests.
+public partial class Program;

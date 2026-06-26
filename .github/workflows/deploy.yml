@@ -1,0 +1,48 @@
+name: Build & Deploy .NET API to Azure
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  id-token: write      # OIDC: pedir el token federado
+  contents: read
+
+env:
+  AZURE_WEBAPP_NAME: app-optimizacion-costos-api-dotnet
+  DOTNET_VERSION: '8.0.x'
+  PROJECT: src/OptimizacionCostos.Api/OptimizacionCostos.Api.csproj
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Test (suite sin BD; las pruebas de integración se auto-saltean)
+        run: dotnet test --no-restore --configuration Release --verbosity minimal
+
+      - name: Publish
+        run: dotnet publish ${{ env.PROJECT }} --configuration Release -p:UseAppHost=false --output ${{ github.workspace }}/publish
+
+      - name: Azure login (OIDC, sin secretos de larga vida)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
+          package: ${{ github.workspace }}/publish
