@@ -84,7 +84,7 @@ public sealed class SqlCostResultsQuery(ISqlConnectionFactory factory) : ICostRe
                 ManualCostNote = Str(reader, 24),
                 RiApplies = Bool(reader, 25),
                 RiNotApplicableReason = Str(reader, 26),
-                RiCoverage = Dbl(reader, 27),
+                RiCoverage = Str(reader, 27),
                 RiReservationName = Str(reader, 28),
                 RiTerm = Str(reader, 29),
                 PowerRunningHours = Dbl(reader, 30),

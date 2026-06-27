@@ -121,7 +121,7 @@ public class CostCalculationApiTests : IClassFixture<CostApiTestFactory>
             new CostResultRow
             {
                 CostResultId = 9, ResourceId = 200, ServiceKey = "disks",
-                PaygMonthly = 5.0, RiCoverage = 0.5, RiReservationName = "res-1", RiTerm = "P1Y",
+                PaygMonthly = 5.0, RiCoverage = "confirmed", RiReservationName = "res-1", RiTerm = "P1Y",
                 PowerRunningHours = 720, PowerUptimePct = 100,
             },
         };

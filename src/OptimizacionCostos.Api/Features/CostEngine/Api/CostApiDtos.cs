@@ -67,7 +67,7 @@ public sealed class CostResultRow
 
     public bool? RiApplies { get; set; }
     public string? RiNotApplicableReason { get; set; }
-    public double? RiCoverage { get; set; }
+    public string? RiCoverage { get; set; }  // nvarchar en BD ("confirmed"/"estimated"), NO numérico
     public string? RiReservationName { get; set; }
     public string? RiTerm { get; set; }
 
