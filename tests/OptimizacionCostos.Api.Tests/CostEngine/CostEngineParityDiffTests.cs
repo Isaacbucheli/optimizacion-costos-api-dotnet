@@ -25,6 +25,22 @@ public sealed class CostEngineParityDiffTests
 {
     private sealed record Stored(double? Payg, double? Ri1y, double? Ri3y, string? Status);
 
+    /// <summary>
+    /// Decorador de IPriceCache que NO refresca: reporta todo "fresco" y no escribe nada,
+    /// así SqlPriceRepository lee la cache existente (mismos precios que usó el Python) sin
+    /// llamar a la Retail API ni tocar dbo.azure_retail_prices. Diff determinista y de solo lectura.
+    /// </summary>
+    private sealed class NoRefreshPriceCache(IPriceCache inner) : IPriceCache
+    {
+        public IReadOnlyList<PriceRow> QueryCached(string s, string r, string? a = null, string? k = null)
+            => inner.QueryCached(s, r, a, k);
+        public bool IsCacheFreshFor(string s, string r, string? a = null, string? k = null) => true;
+        public bool IsFetchQueryFresh(string fetchQuery) => true;
+        public void Insert(IEnumerable<PriceRow> rows, string fetchQuery) { /* no-op: solo lectura */ }
+        public void DeleteStale(string s, string r, string? a = null, string? k = null) { /* no-op */ }
+        public void DeleteByFetchQuery(string fetchQuery) { /* no-op */ }
+    }
+
     [Fact]
     public async Task Diff_ComputeResults_Vs_StoredCostResults()
     {
@@ -32,17 +48,27 @@ public sealed class CostEngineParityDiffTests
         if (string.IsNullOrEmpty(idRaw)) return; // no-op fuera de la corrida de paridad
         var analysisId = int.Parse(idRaw);
 
+        // Filtro opcional de servicios (BIT_DIFF_SERVICES="vms,disks"); null = todos.
+        var svcRaw = Environment.GetEnvironmentVariable("BIT_DIFF_SERVICES");
+        var serviceKeys = string.IsNullOrWhiteSpace(svcRaw)
+            ? null
+            : svcRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
         var config = AppConfig.FromConfiguration(new ConfigurationBuilder().Build());
         var factory = new SqlConnectionFactory(config);
         var constants = new PricingConstants(factory);
         using var http = new HttpClient();
-        var repo = new SqlPriceRepository(new SqlPriceCache(factory), new RetailPriceClient(http), constants);
+        // Decorador SIN refresh: lee la cache de precios existente (los mismos precios que
+        // usó el Python en su última corrida) y NO escribe ni llama a la Retail API. Así el
+        // diff es no destructivo y determinista (compara LÓGICA, no cambios de precio de Azure).
+        var repo = new SqlPriceRepository(
+            new NoRefreshPriceCache(new SqlPriceCache(factory)), new RetailPriceClient(http), constants);
         var engine = new EngineCostEngine(
             new SqlServiceCatalog(factory), new SqlResourceLoader(factory),
             new SqlCostResultStore(factory), repo, constants, NullLogger<EngineCostEngine>.Instance);
 
-        var computed = engine.ComputeResults(analysisId);
-        var stored = await LoadStored(factory, analysisId);
+        var computed = engine.ComputeResults(analysisId, serviceKeys);
+        var stored = await LoadStored(factory, analysisId, serviceKeys);
 
         const double tol = 0.02; // tolerancia absoluta en USD/mes
         var mismatches = new List<string>();
@@ -84,16 +110,25 @@ public sealed class CostEngineParityDiffTests
         return Math.Abs(a.Value - b.Value) <= tol;
     }
 
-    private static async Task<Dictionary<(int, string), Stored>> LoadStored(ISqlConnectionFactory factory, int analysisId)
+    private static async Task<Dictionary<(int, string), Stored>> LoadStored(
+        ISqlConnectionFactory factory, int analysisId, string[]? serviceKeys)
     {
         var map = new Dictionary<(int, string), Stored>();
         await using var conn = await factory.OpenAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        var svcFilter = serviceKeys is { Length: > 0 }
+            ? " AND service_key IN (" + string.Join(",", serviceKeys.Select((_, i) => $"@s{i}")) + ")"
+            : "";
+        cmd.CommandText = $"""
             SELECT resource_id, service_key, payg_monthly, ri_1y_monthly, ri_3y_monthly, calculation_status
-            FROM dbo.cost_results WHERE analysis_id = @a
+            FROM dbo.cost_results WHERE analysis_id = @a{svcFilter}
             """;
         cmd.Parameters.Add(new SqlParameter("@a", analysisId));
+        if (serviceKeys is { Length: > 0 })
+        {
+            for (var i = 0; i < serviceKeys.Length; i++)
+                cmd.Parameters.Add(new SqlParameter($"@s{i}", serviceKeys[i]));
+        }
         await using var reader = await cmd.ExecuteReaderAsync();
         double? D(int i) => reader.IsDBNull(i) ? null : Convert.ToDouble(reader.GetValue(i));
         while (await reader.ReadAsync())

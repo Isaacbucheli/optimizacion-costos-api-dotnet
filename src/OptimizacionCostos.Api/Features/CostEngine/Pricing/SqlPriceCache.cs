@@ -258,12 +258,21 @@ public sealed class SqlPriceCache : IPriceCache
         PriceType = r.IsDBNull(8) ? null : r.GetString(8),
         ReservationTerm = r.IsDBNull(9) ? null : r.GetString(9),
         CurrencyCode = r.IsDBNull(10) ? null : r.GetString(10),
-        UnitPrice = r.IsDBNull(11) ? null : r.GetDouble(11),
-        RetailPrice = r.IsDBNull(12) ? null : r.GetDouble(12),
+        UnitPrice = ReadDouble(r, 11),
+        RetailPrice = ReadDouble(r, 12),
         UnitOfMeasure = r.IsDBNull(13) ? null : r.GetString(13),
-        TierMinimumUnits = r.IsDBNull(14) ? null : r.GetDouble(14),
+        TierMinimumUnits = ReadDouble(r, 14),
         IsPrimaryMeter = !r.IsDBNull(15) && r.GetBoolean(15),
         FetchQuery = r.IsDBNull(16) ? null : r.GetString(16),
         CachedAt = r.IsDBNull(17) ? null : r.GetDateTime(17),
     };
+
+    /// <summary>
+    /// Lee un numérico tolerante al tipo de columna. CRÍTICO: la tabla azure_retail_prices
+    /// real (creada por el FastAPI) usa DECIMAL/NUMERIC; SqlDataReader.GetDouble SOLO acepta
+    /// FLOAT y lanza InvalidCastException sobre DECIMAL. En coexistencia .NET+Python comparten
+    /// esa tabla, así que hay que convertir desde el tipo real (decimal/double/etc.).
+    /// </summary>
+    private static double? ReadDouble(SqlDataReader r, int i)
+        => r.IsDBNull(i) ? null : Convert.ToDouble(r.GetValue(i), System.Globalization.CultureInfo.InvariantCulture);
 }
