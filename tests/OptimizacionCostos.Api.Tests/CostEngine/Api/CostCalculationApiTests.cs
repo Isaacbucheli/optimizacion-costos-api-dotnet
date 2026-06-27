@@ -121,7 +121,9 @@ public class CostCalculationApiTests : IClassFixture<CostApiTestFactory>
             new CostResultRow
             {
                 CostResultId = 9, ResourceId = 200, ServiceKey = "disks",
-                PaygMonthly = 5.0, RiCoverage = "confirmed", RiReservationName = "res-1", RiTerm = "P1Y",
+                PaygMonthly = 5.0, Ri1yMonthly = 4.0, Ri3yMonthly = 3.0,
+                Savings1yMonthly = 1.0, Savings1yPct = 0.2,
+                RiCoverage = "confirmed", RiReservationName = "res-1", RiTerm = "P1Y",
                 PowerRunningHours = 720, PowerUptimePct = 100,
             },
         };
@@ -131,6 +133,12 @@ public class CostCalculationApiTests : IClassFixture<CostApiTestFactory>
         var first = items[0];
         Assert.True(first.TryGetProperty("cost_result_id", out _));
         Assert.True(first.TryGetProperty("payg_monthly", out _));
+        // Claves EXACTAS del contrato FastAPI (no "ri1y_monthly"): el front las consume así.
+        Assert.True(first.TryGetProperty("ri_1y_monthly", out var ri1) && ri1.GetDouble() == 4.0);
+        Assert.True(first.TryGetProperty("ri_3y_monthly", out _));
+        Assert.True(first.TryGetProperty("savings_1y_monthly", out _));
+        Assert.True(first.TryGetProperty("savings_1y_pct", out _));
+        Assert.False(first.TryGetProperty("ri1y_monthly", out _)); // el nombre malo NO debe existir
         Assert.True(first.TryGetProperty("ri_coverage", out _));
         Assert.True(first.TryGetProperty("ri_reservation_name", out _));
         Assert.True(first.TryGetProperty("ri_term", out _));

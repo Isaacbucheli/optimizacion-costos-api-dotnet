@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace OptimizacionCostos.Api.Features.CostEngine.Api;
 
 /// <summary>
@@ -49,12 +51,14 @@ public sealed class CostResultRow
 
     public double? PaygHourly { get; set; }
     public double? PaygMonthly { get; set; }
-    public double? Ri1yMonthly { get; set; }
-    public double? Ri3yMonthly { get; set; }
-    public double? Savings1yPct { get; set; }
-    public double? Savings3yPct { get; set; }
-    public double? Savings1yMonthly { get; set; }
-    public double? Savings3yMonthly { get; set; }
+    // La política snake_case serializa "Ri1yMonthly" como "ri1y_monthly"; el FastAPI/front
+    // usan "ri_1y_monthly". Forzamos el nombre exacto para mantener el contrato.
+    [JsonPropertyName("ri_1y_monthly")] public double? Ri1yMonthly { get; set; }
+    [JsonPropertyName("ri_3y_monthly")] public double? Ri3yMonthly { get; set; }
+    [JsonPropertyName("savings_1y_pct")] public double? Savings1yPct { get; set; }
+    [JsonPropertyName("savings_3y_pct")] public double? Savings3yPct { get; set; }
+    [JsonPropertyName("savings_1y_monthly")] public double? Savings1yMonthly { get; set; }
+    [JsonPropertyName("savings_3y_monthly")] public double? Savings3yMonthly { get; set; }
     public double? SqlAddonMonthly { get; set; }
     public double? AhbDiscountMonthly { get; set; }
     public double? StorageMonthly { get; set; }
@@ -83,8 +87,8 @@ public sealed class CostResultRow
 /// <summary>Config de un escenario tal como lo expone GET /analysis/{id}/scenarios.</summary>
 public sealed class ScenarioConfigDto
 {
-    public bool UseRi1y { get; set; }
-    public bool UseRi3y { get; set; }
+    [JsonPropertyName("use_ri_1y")] public bool UseRi1y { get; set; }
+    [JsonPropertyName("use_ri_3y")] public bool UseRi3y { get; set; }
     public bool EliminateStoppedVmDisks { get; set; }
     public bool EliminateOrphanDisks { get; set; }
     public bool EliminateOrphanIps { get; set; }
