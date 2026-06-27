@@ -39,6 +39,9 @@ public sealed class CostEngineParityDiffTests
         public void Insert(IEnumerable<PriceRow> rows, string fetchQuery) { /* no-op: solo lectura */ }
         public void DeleteStale(string s, string r, string? a = null, string? k = null) { /* no-op */ }
         public void DeleteByFetchQuery(string fetchQuery) { /* no-op */ }
+        public int ClearAll() => 0; // no-op: solo lectura
+        public IReadOnlyList<OptimizacionCostos.Api.Features.CostEngine.Api.PriceCacheStatusRow> GetStatus()
+            => inner.GetStatus();
     }
 
     [Fact]

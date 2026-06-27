@@ -91,4 +91,27 @@ public sealed class FakePriceCache : IPriceCache
 
     public void DeleteByFetchQuery(string fetchQuery)
         => DeleteByFetchQueryCalls.Add(fetchQuery);
+
+    // -------------------- Fase 3: clear-all / status --------------------
+
+    /// <summary>Filas a "borrar" que devuelve <see cref="ClearAll"/> (configurable).</summary>
+    public int ClearAllReturns { get; set; }
+    public int ClearAllCallCount { get; private set; }
+
+    /// <summary>Resumen que devuelve <see cref="GetStatus"/> (configurable).</summary>
+    public IReadOnlyList<OptimizacionCostos.Api.Features.CostEngine.Api.PriceCacheStatusRow> StatusReturns { get; set; }
+        = Array.Empty<OptimizacionCostos.Api.Features.CostEngine.Api.PriceCacheStatusRow>();
+    public int GetStatusCallCount { get; private set; }
+
+    public int ClearAll()
+    {
+        ClearAllCallCount++;
+        return ClearAllReturns;
+    }
+
+    public IReadOnlyList<OptimizacionCostos.Api.Features.CostEngine.Api.PriceCacheStatusRow> GetStatus()
+    {
+        GetStatusCallCount++;
+        return StatusReturns;
+    }
 }

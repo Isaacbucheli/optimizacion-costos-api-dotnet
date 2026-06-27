@@ -159,6 +159,46 @@ public sealed class SqlPriceCache : IPriceCache
         cmd.ExecuteNonQuery();
     }
 
+    public int ClearAll()
+    {
+        using var conn = OpenWithSchema();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM dbo.azure_retail_prices";
+        return cmd.ExecuteNonQuery();
+    }
+
+    public IReadOnlyList<Api.PriceCacheStatusRow> GetStatus()
+    {
+        using var conn = OpenWithSchema();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT service_name, arm_region_name,
+                   COUNT(*) AS prices_count,
+                   MIN(cached_at) AS oldest_cached,
+                   MAX(cached_at) AS newest_cached
+            FROM dbo.azure_retail_prices
+            GROUP BY service_name, arm_region_name
+            ORDER BY service_name, arm_region_name
+            """;
+
+        var rows = new List<Api.PriceCacheStatusRow>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var newest = reader.IsDBNull(4) ? (DateTime?)null : reader.GetDateTime(4);
+            rows.Add(new Api.PriceCacheStatusRow
+            {
+                ServiceName = reader.IsDBNull(0) ? null : reader.GetString(0),
+                Region = reader.IsDBNull(1) ? null : reader.GetString(1),
+                PricesCount = reader.GetInt32(2),
+                OldestCached = reader.IsDBNull(3) ? null : reader.GetDateTime(3).ToString("o"),
+                NewestCached = newest?.ToString("o"),
+                IsFresh = CacheIsFresh(newest),
+            });
+        }
+        return rows;
+    }
+
     // -------------------- Helpers --------------------
 
     /// <summary>

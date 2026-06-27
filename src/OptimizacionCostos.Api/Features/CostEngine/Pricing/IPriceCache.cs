@@ -67,4 +67,16 @@ public interface IPriceCache
     /// fetch_query (usado por los lookups amplios / por región).
     /// </summary>
     void DeleteByFetchQuery(string fetchQuery);
+
+    /// <summary>
+    /// Python: <c>clear_all_cache()</c>. Borra TODAS las filas del cache de precios y
+    /// devuelve la cantidad de filas eliminadas.
+    /// </summary>
+    int ClearAll();
+
+    /// <summary>
+    /// Python: <c>get_cache_status()</c>. Resumen del cache agrupado por service_name + region:
+    /// count, oldest/newest cached_at y si el mas reciente está fresco (&lt; 24h).
+    /// </summary>
+    IReadOnlyList<Api.PriceCacheStatusRow> GetStatus();
 }

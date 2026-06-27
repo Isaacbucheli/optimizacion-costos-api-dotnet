@@ -5,6 +5,7 @@ using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.AlertCatalog;
+using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.CostEngine.Engine;
 using OptimizacionCostos.Api.Features.CostEngine.Pricing;
 using OptimizacionCostos.Api.Features.CostEngine.Scenarios;
@@ -45,6 +46,11 @@ builder.Services.AddScoped<ICostResultStore, SqlCostResultStore>();
 builder.Services.AddScoped<CostEngine>();
 builder.Services.AddScoped<IScenarioDataSource, SqlScenarioDataSource>();
 builder.Services.AddScoped<ScenarioService>();
+
+// Motor de costos – endpoints REST (Fase 3): control de acceso por cliente + consultas
+// del router. Port de cost_calculation.py + access_control.py.
+builder.Services.AddScoped<IAnalysisAccess, SqlAnalysisAccess>();
+builder.Services.AddScoped<ICostResultsQuery, SqlCostResultsQuery>();
 
 // CORS explicito (paridad con CORS_ORIGINS del FastAPI)
 const string CorsPolicy = "BitCors";
