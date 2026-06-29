@@ -44,7 +44,31 @@ public sealed partial class SqlPriceRepository
         RefreshByFetchQueryIfStale(fetchQuery, fetchFn);
 
         var cached = _cache.QueryCached(serviceName, region);
-        return SelectRedisPrices(cached, skuTier, skuCapacity);
+        var selected = SelectRedisPrices(cached, skuTier, skuCapacity);
+
+        // Fallback IA (paridad con Python _select_redis_prices): si el determinista no halló PAYG,
+        // la IA elige un meter REAL entre TODOS los Consumption cacheados del servicio Redis.
+        if (selected.PaygHourly is null)
+        {
+            var candidates = cached.Where(PriceSelectors.IsConsumption).ToList();
+            var ctx = new Dictionary<string, object?>
+            {
+                ["sku_name"] = skuTier,
+                ["sku_capacity"] = skuCapacity,
+                ["expected_product"] = "Azure Cache for Redis or Azure Managed Redis",
+                ["expected_unit"] = "hourly cache capacity",
+            };
+            var payg = AssistSelect("redis", "payg_compute_hourly", ctx, candidates);
+            if (payg is not null)
+                selected = selected with
+                {
+                    PaygHourly = payg.RetailPrice,
+                    MatchStrategy = payg.AiMatchStrategy,
+                    MatchConfidence = payg.AiMatchConfidence,
+                };
+        }
+
+        return selected;
     }
 
     /// <summary>

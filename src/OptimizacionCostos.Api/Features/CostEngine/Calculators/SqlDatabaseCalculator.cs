@@ -141,6 +141,10 @@ public sealed class SqlDatabaseCalculator(IPriceRepository prices, IPricingConst
                 $"sku={skuName} tier={skuTier} compute_tier={computeTier} " +
                 $"capacity={skuCapacity} meter={priceInfo.MeterName} unit={priceInfo.UnitOfMeasure}";
 
+            // Si el precio lo resolvió la IA, marcarlo en las notas → el front muestra "IA asistida".
+            if (priceInfo.MatchStrategy is not null)
+                result.CalculationNotes += $"; {priceInfo.MatchStrategy}";
+
             // Serverless factura por uso real con autopausa: el monto calculado es
             // un TOPE MÁXIMO (máx vCores × 730h encendido 24/7). El costo real será menor.
             if (isServerless)

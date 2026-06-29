@@ -27,13 +27,35 @@ public sealed partial class SqlPriceRepository : IPriceRepository
     private readonly IPriceCache _cache;
     private readonly IRetailPriceClient _client;
     private readonly IPricingConstants _constants;
+    private readonly IPriceAssistant? _assistant;
 
-    public SqlPriceRepository(IPriceCache cache, IRetailPriceClient client, IPricingConstants constants)
+    // El asistente IA es OPCIONAL (default null) para no romper construcciones existentes
+    // (tests de paridad) ni cambiar el comportamiento cuando no se inyecta. DI lo provee.
+    public SqlPriceRepository(
+        IPriceCache cache,
+        IRetailPriceClient client,
+        IPricingConstants constants,
+        IPriceAssistant? assistant = null)
     {
         _cache = cache ?? throw new ArgumentNullException(nameof(cache));
         _client = client ?? throw new ArgumentNullException(nameof(client));
         _constants = constants ?? throw new ArgumentNullException(nameof(constants));
+        _assistant = assistant;
     }
+
+    /// <summary>
+    /// Fallback IA compartido: si el asistente está activo y hay candidatos REALES, deja que
+    /// la IA elija uno. Devuelve la <see cref="PriceRow"/> elegida (marcada con AiMatch*) o null.
+    /// Lo invocan los get_* cuando la selección determinista no encuentra precio.
+    /// </summary>
+    private PriceRow? AssistSelect(
+        string serviceKey,
+        string component,
+        IReadOnlyDictionary<string, object?> context,
+        IReadOnlyList<PriceRow> candidates)
+        => _assistant is { IsEnabled: true } && candidates.Count > 0
+            ? _assistant.SelectCandidate(serviceKey, component, context, candidates)
+            : null;
 
     // -------------------- Specs compartidas --------------------
 

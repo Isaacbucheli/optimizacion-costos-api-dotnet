@@ -47,6 +47,21 @@ public sealed class FakeAnalysisAccess : IAnalysisAccess
         return await AssertClientAsync(user, clientId);
     }
 
+    public Task<AccessCheck> AssertClientAccessAsync(ClaimsPrincipal user, int clientId, CancellationToken ct = default)
+        => AssertClientAsync(user, clientId);
+
+    /// <summary>file_id -> analysis_id. Lo que no esté aquí no existe (404).</summary>
+    public Dictionary<int, int> FileToAnalysis { get; } = new();
+
+    public async Task<AccessCheck> AssertFileAccessAsync(ClaimsPrincipal user, int fileId, CancellationToken ct = default)
+    {
+        if (!FileToAnalysis.TryGetValue(fileId, out var analysisId))
+            return AccessCheck.NotFound("File not found");
+        if (!AnalysisToClient.TryGetValue(analysisId, out var clientId))
+            return AccessCheck.NotFound("File not found");
+        return await AssertClientAsync(user, clientId);
+    }
+
     private async Task<AccessCheck> AssertClientAsync(ClaimsPrincipal user, int clientId)
     {
         var ids = await AccessibleClientIdsAsync(user);

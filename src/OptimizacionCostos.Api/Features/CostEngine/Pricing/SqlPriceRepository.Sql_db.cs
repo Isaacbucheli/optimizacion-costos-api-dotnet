@@ -63,15 +63,46 @@ public sealed partial class SqlPriceRepository
 
         var item = SelectSqlDbPriceItem(
             cached, skuName ?? string.Empty, skuTier ?? string.Empty, computeTier ?? string.Empty);
+
         if (item is null)
-            return null;
+        {
+            // Fallback IA: la selección determinista no cubre este caso (p.ej. Hyperscale
+            // PROVISIONED, HS_Gen5). Traer TODOS los meters de SQL Database de la región y dejar
+            // que la IA elija un meter REAL de cómputo (vCore/DTU, Consumption).
+            RefreshByFetchQueryIfStale($"sql_db_all {region}", () => _client.FetchSqlDbPrices(region, null));
+            // Curación de candidatos: meters de cómputo (vCore/DTU) Consumption, y si conocemos
+            // el tier (Hyperscale/General Purpose/Business Critical) filtramos a ESE tier para que
+            // el meter correcto NO quede fuera del tope que ve la IA (evita que elija un meter
+            // plausible pero más caro de otra serie, p.ej. DC-Series en vez de Gen5).
+            var tierToken = VcorePoolTierTokens.TryGetValue((skuTier ?? string.Empty).ToLowerInvariant(), out var tt)
+                ? tt
+                : null;
+            var broad = _cache.QueryCached(serviceName, region)
+                .Where(c => c.IsConsumption
+                    && (PriceSelectors.Contains(c.MeterName, "vCore") || PriceSelectors.Contains(c.MeterName, "DTU"))
+                    && !PriceSelectors.Contains(c.MeterName, "Free")
+                    && !PriceSelectors.Contains(c.MeterName, "Backup")
+                    && (tierToken is null || PriceSelectors.Contains(c.ProductName, tierToken)))
+                .ToList();
+            var ctx = new Dictionary<string, object?>
+            {
+                ["sku_name"] = skuName,
+                ["sku_tier"] = skuTier,
+                ["compute_tier"] = computeTier,
+                ["region"] = region,
+            };
+            item = AssistSelect("sql_db", "compute", ctx, broad);
+            if (item is null)
+                return null;
+        }
 
         return new SqlDbPriceDetails(
             RetailPrice: item.RetailPrice,
             UnitOfMeasure: item.UnitOfMeasure ?? string.Empty,
             MeterName: item.MeterName ?? string.Empty,
             ProductName: item.ProductName ?? string.Empty,
-            SkuName: item.SkuName ?? string.Empty);
+            SkuName: item.SkuName ?? string.Empty,
+            MatchStrategy: item.AiMatchStrategy);
     }
 
     /// <summary>

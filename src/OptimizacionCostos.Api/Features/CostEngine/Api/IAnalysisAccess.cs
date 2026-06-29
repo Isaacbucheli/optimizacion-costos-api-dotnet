@@ -30,4 +30,16 @@ public interface IAnalysisAccess
     /// 404 si el cost_result no existe; 403 si el cliente no es accesible.
     /// </summary>
     Task<AccessCheck> AssertCostResultAccessAsync(ClaimsPrincipal user, int costResultId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Verifica acceso a un cliente por su id (port de assert_client_access). 403 si no es
+    /// accesible. Usado por credenciales/suscripciones. admin = global.
+    /// </summary>
+    Task<AccessCheck> AssertClientAccessAsync(ClaimsPrincipal user, int clientId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Verifica que el usuario pueda acceder al cliente dueño del archivo (analysis_files).
+    /// Port de assert_file_access. 404 si el archivo no existe; 403 si el cliente no es accesible.
+    /// </summary>
+    Task<AccessCheck> AssertFileAccessAsync(ClaimsPrincipal user, int fileId, CancellationToken ct = default);
 }

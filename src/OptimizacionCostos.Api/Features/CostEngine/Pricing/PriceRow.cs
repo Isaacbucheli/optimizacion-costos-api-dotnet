@@ -72,6 +72,19 @@ public sealed record PriceRow
     /// <summary>cached_at (UTC). Usado por la lógica de freshness (TTL 24h).</summary>
     public DateTime? CachedAt { get; init; }
 
+    // -------------------- Marca de selección por IA (asistente de precios) --------------------
+    // Se setean cuando el precio lo eligió Azure OpenAI (fallback). Null = selección determinista.
+    // El calculador propaga "assist_match" a calculation_notes → el front muestra "IA asistida".
+
+    /// <summary>Python: <c>ai_match_strategy</c>. Ej. "assist_match:compute". Null si determinista.</summary>
+    public string? AiMatchStrategy { get; init; }
+
+    /// <summary>Python: <c>ai_match_confidence</c>. Confianza 0..1 reportada por la IA.</summary>
+    public double? AiMatchConfidence { get; init; }
+
+    /// <summary>Python: <c>ai_match_reason</c>. Explicación breve (es) de por qué eligió ese meter.</summary>
+    public string? AiMatchReason { get; init; }
+
     // -------------------- Acceso conveniente (paridad con los selectores Python) --------------------
 
     /// <summary>True si <see cref="PriceType"/> == "Consumption". Python: <c>_is_consumption</c>.</summary>

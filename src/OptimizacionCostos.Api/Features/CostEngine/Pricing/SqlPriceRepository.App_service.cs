@@ -66,10 +66,33 @@ public sealed partial class SqlPriceRepository
             }
         }
 
-        // Fallback amplio por región (sin IA): re-hidrata la cache pero el _assistant_select
-        // de Python no se porta, así que se devuelve la selección determinista tal cual.
+        // Fallback IA (paridad con Python get_app_service_prices): re-hidrata la cache por región
+        // y deja que la IA elija un meter REAL del plan (Consumption, producto "App Service", del
+        // OS correcto, SKU coincidente, sin Certificate/Domain).
         var broadQuery = $"appservice_region {region}";
         RefreshByFetchQueryIfStale(broadQuery, () => _client.FetchAppServiceRegionPrices(region));
+
+        var broad = _cache.QueryCached(AppServiceServiceName, region);
+        var candidates = broad
+            .Where(c => PriceSelectors.IsConsumption(c)
+                && (c.ProductName ?? string.Empty).Contains("App Service")
+                && (c.ProductName ?? string.Empty).ToLowerInvariant().Contains("linux") == isLinux
+                && PriceSelectors.AppServiceSkuMatches(c, armSkuName)
+                && !PriceSelectors.Contains(c.MeterName, "Certificate")
+                && !PriceSelectors.Contains(c.MeterName, "Domain"))
+            .ToList();
+
+        var ctx = new Dictionary<string, object?>
+        {
+            ["arm_sku_name"] = armSkuName,
+            ["region"] = region,
+            ["is_linux"] = isLinux,
+            ["expected_product"] = "Azure App Service Plan",
+            ["expected_unit"] = "hourly plan capacity",
+        };
+        var payg = AssistSelect("appservice", "payg_compute_hourly", ctx, candidates);
+        if (payg is not null)
+            return selected with { PaygHourly = payg.RetailPrice, MatchStrategy = payg.AiMatchStrategy };
 
         return selected;
     }

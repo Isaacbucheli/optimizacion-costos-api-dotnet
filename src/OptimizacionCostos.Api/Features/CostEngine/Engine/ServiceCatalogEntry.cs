@@ -10,6 +10,8 @@ public sealed record ServiceCatalogEntry
     public string? DisplayName { get; init; }
     public required string AzureResourceType { get; init; }
     public string? ServiceCategory { get; init; }
+    /// <summary>KQL de Resource Graph para importar este servicio (la usa el import, B4).</summary>
+    public string? KqlQuery { get; init; }
     public string? DetailTableName { get; init; }
     public string? InserterKey { get; init; }
     public required string CalculatorKey { get; init; }

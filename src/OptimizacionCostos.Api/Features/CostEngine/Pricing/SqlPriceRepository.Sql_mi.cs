@@ -30,7 +30,83 @@ public sealed partial class SqlPriceRepository
         RefreshByFetchQueryIfStale(fetchQuery, () => _client.FetchSqlManagedInstancePrices(region));
 
         var cached = _cache.QueryCached(serviceName, region);
-        return SelectSqlMiPrices(cached, skuTier, skuFamily, vcores, zoneRedundant);
+        var selected = SelectSqlMiPrices(cached, skuTier, skuFamily, vcores, zoneRedundant);
+
+        // Fallback IA (paridad con Python _select_sql_mi_prices): para cada componente que el
+        // determinista no halló (compute, storage, RI 1y, RI 3y), la IA elige un meter REAL.
+        if (_assistant is { IsEnabled: true })
+        {
+            var allBase = SqlMiAllBase(cached);
+            var ctxBase = new Dictionary<string, object?>
+            {
+                ["sku_tier"] = skuTier,
+                ["sku_family"] = skuFamily,
+                ["expected_tokens"] = PriceSelectors.SqlMiProductTokens(skuTier, skuFamily),
+                ["expected_product"] = "SQL Managed Instance",
+            };
+
+            if (selected.PaygHourlyPerVcore is null)
+            {
+                var candidates = allBase
+                    .Where(c => PriceSelectors.IsConsumption(c)
+                        && !PriceSelectors.Contains(c.MeterName, "Backup")
+                        && SqlMiZoneMatches(c, zoneRedundant))
+                    .ToList();
+                var ctx = new Dictionary<string, object?>(ctxBase) { ["expected_unit"] = "hourly vCore compute" };
+                var compute = AssistSelect("sql_managed_instance", "payg_compute_hourly_per_vcore", ctx, candidates);
+                if (compute is not null)
+                {
+                    var price = compute.RetailPrice;
+                    var n = PriceSelectors.VcoreCountFromSku(compute.SkuName ?? string.Empty);
+                    if (price is not null && n > 1) price = price.Value / n;
+                    selected = selected with
+                    {
+                        PaygHourlyPerVcore = price,
+                        ComputeMeterName = compute.MeterName,
+                        ComputeSkuName = compute.SkuName,
+                        ProductName = compute.ProductName,
+                        MatchStrategy = compute.AiMatchStrategy,
+                        MatchConfidence = compute.AiMatchConfidence,
+                    };
+                }
+            }
+
+            if (selected.StorageMonthlyPerGb is null)
+            {
+                var candidates = allBase
+                    .Where(c => PriceSelectors.IsConsumption(c)
+                        && !PriceSelectors.Contains(c.MeterName, "Backup")
+                        && !PriceSelectors.Contains(c.ProductName, "Backup"))
+                    .ToList();
+                var ctx = new Dictionary<string, object?>(ctxBase) { ["expected_unit"] = "GB per month data storage" };
+                var storage = AssistSelect("sql_managed_instance", "storage_monthly_per_gb", ctx, candidates);
+                if (storage is not null)
+                    selected = selected with
+                    {
+                        StorageMonthlyPerGb = storage.RetailPrice,
+                        StorageMeterName = storage.MeterName,
+                        StorageSkuName = storage.SkuName,
+                    };
+            }
+
+            if (selected.Ri1yTotalPerVcore is null)
+            {
+                var candidates = allBase.Where(c => PriceSelectors.IsReservation(c, "1 Year")).ToList();
+                var ctx = new Dictionary<string, object?>(ctxBase) { ["expected_reservation_term"] = "1 Year" };
+                var ri = AssistSelect("sql_managed_instance", "ri_1y_total_per_vcore", ctx, candidates);
+                if (ri is not null) selected = selected with { Ri1yTotalPerVcore = ri.RetailPrice };
+            }
+
+            if (selected.Ri3yTotalPerVcore is null)
+            {
+                var candidates = allBase.Where(c => PriceSelectors.IsReservation(c, "3 Years")).ToList();
+                var ctx = new Dictionary<string, object?>(ctxBase) { ["expected_reservation_term"] = "3 Years" };
+                var ri = AssistSelect("sql_managed_instance", "ri_3y_total_per_vcore", ctx, candidates);
+                if (ri is not null) selected = selected with { Ri3yTotalPerVcore = ri.RetailPrice };
+            }
+        }
+
+        return selected;
     }
 
     /// <summary>Port de <c>_select_sql_mi_prices</c>.</summary>
@@ -44,22 +120,9 @@ public sealed partial class SqlPriceRepository
         var tokens = PriceSelectors.SqlMiProductTokens(skuTier, skuFamily);
         var requestedVcores = vcores;
 
-        // Replica zone_matches(item): True si el flag de zona pedido coincide con la presencia
-        // de "zone redundancy" en meter_name + sku_name (lower).
-        bool ZoneMatches(PriceRow item)
-        {
-            var haystack = string.Join(" ",
-                item.MeterName ?? string.Empty,
-                item.SkuName ?? string.Empty).ToLowerInvariant();
-            var isZr = haystack.Contains("zone redundancy");
-            return zoneRedundant ? isZr : !isZr;
-        }
+        bool ZoneMatches(PriceRow item) => SqlMiZoneMatches(item, zoneRedundant);
 
-        var allBase = cached
-            .Where(c => (c.ProductName ?? string.Empty).Contains("SQL Managed Instance")
-                && !PriceSelectors.Contains(c.ProductName, "Backup")
-                && !PriceSelectors.Contains(c.MeterName, "Backup"))
-            .ToList();
+        var allBase = SqlMiAllBase(cached);
 
         var matching = allBase
             .Where(c => tokens.All(token =>
@@ -133,5 +196,29 @@ public sealed partial class SqlPriceRepository
             // que: compute ENCONTRADO → None (null); compute NO encontrado → "deterministic".
             MatchStrategy: compute is not null ? null : "deterministic",
             MatchConfidence: null);
+    }
+
+    /// <summary>
+    /// Universo base de SQL Managed Instance (product contiene "SQL Managed Instance", sin Backup
+    /// en product ni meter). Compartido por el selector determinista y el fallback de IA.
+    /// </summary>
+    internal static List<PriceRow> SqlMiAllBase(IReadOnlyList<PriceRow> cached)
+        => cached
+            .Where(c => (c.ProductName ?? string.Empty).Contains("SQL Managed Instance")
+                && !PriceSelectors.Contains(c.ProductName, "Backup")
+                && !PriceSelectors.Contains(c.MeterName, "Backup"))
+            .ToList();
+
+    /// <summary>
+    /// Replica zone_matches(item): True si el flag de zona pedido coincide con la presencia de
+    /// "zone redundancy" en meter_name + sku_name (lower).
+    /// </summary>
+    internal static bool SqlMiZoneMatches(PriceRow item, bool zoneRedundant)
+    {
+        var haystack = string.Join(" ",
+            item.MeterName ?? string.Empty,
+            item.SkuName ?? string.Empty).ToLowerInvariant();
+        var isZr = haystack.Contains("zone redundancy");
+        return zoneRedundant ? isZr : !isZr;
     }
 }

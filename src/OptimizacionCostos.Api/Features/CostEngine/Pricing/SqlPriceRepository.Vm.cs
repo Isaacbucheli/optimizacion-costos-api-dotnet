@@ -36,8 +36,56 @@ public sealed partial class SqlPriceRepository
         if (selected.PaygHourly is not null)
             return selected with { MatchStrategy = "deterministic" };
 
-        // Fallback amplio "vm_region": Python aquí intentaría _assistant_select (IA), que NO se
-        // porta en Fase 1. Sin asistente, el resultado es el determinista (payg_hourly = null).
+        // Fallback IA (paridad con Python get_vm_prices): el determinista no halló PAYG para esta
+        // SKU exacta → traemos precios de TODA la región y dejamos que la IA elija un meter REAL de
+        // cómputo (Consumption, no Cloud Services, no Spot/Low Priority, OS correcto).
+        RefreshByFetchQueryIfStale($"vm_region {region}", () => _client.FetchVmRegionPrices(region));
+        var broad = _cache.QueryCached(serviceName, region);
+        var wantsWindows = (osType ?? string.Empty).ToLowerInvariant() == "windows";
+
+        bool OsMatches(PriceRow c, bool windows) =>
+            (c.ProductName ?? string.Empty).ToLowerInvariant().Contains("windows") == windows;
+
+        var candidates = broad
+            .Where(c => PriceSelectors.IsConsumption(c)
+                && !PriceSelectors.IsCloudServices(c)
+                && !PriceSelectors.IsSpotOrLowPriority(c)
+                && OsMatches(c, wantsWindows))
+            .ToList();
+
+        var ctx = new Dictionary<string, object?>
+        {
+            ["arm_sku_name"] = armSkuName,
+            ["region"] = region,
+            ["os_type"] = osType,
+            ["expected_product"] = "Virtual Machines",
+            ["expected_unit"] = "hourly compute",
+        };
+        var payg = AssistSelect("vms", "payg_compute_hourly", ctx, candidates);
+
+        // Para Windows sin PAYG Windows, Python reintenta con candidatos Linux (fallback OS).
+        if (payg is null && wantsWindows)
+        {
+            var linuxCandidates = broad
+                .Where(c => PriceSelectors.IsConsumption(c)
+                    && !PriceSelectors.IsCloudServices(c)
+                    && !PriceSelectors.IsSpotOrLowPriority(c)
+                    && OsMatches(c, false))
+                .ToList();
+            var ctxLinux = new Dictionary<string, object?>
+            {
+                ["arm_sku_name"] = armSkuName,
+                ["region"] = region,
+                ["os_type"] = "Linux fallback for Windows",
+                ["expected_product"] = "Virtual Machines",
+                ["expected_unit"] = "hourly compute",
+            };
+            payg = AssistSelect("vms", "payg_compute_hourly_linux_fallback", ctxLinux, linuxCandidates);
+        }
+
+        if (payg is not null)
+            return selected with { PaygHourly = payg.RetailPrice, MatchStrategy = payg.AiMatchStrategy };
+
         return selected;
     }
 

@@ -70,6 +70,31 @@ public sealed class SqlAnalysisAccess(ISqlConnectionFactory factory) : IAnalysis
         return await AssertClientAccessAsync(conn, user, clientId.Value, ct);
     }
 
+    public async Task<AccessCheck> AssertClientAccessAsync(ClaimsPrincipal user, int clientId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        return await AssertClientAccessAsync(conn, user, clientId, ct);
+    }
+
+    public async Task<AccessCheck> AssertFileAccessAsync(ClaimsPrincipal user, int fileId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT a.client_id
+            FROM dbo.analysis_files f
+            JOIN dbo.cost_analysis a ON a.analysis_id = f.analysis_id
+            WHERE f.file_id = @id
+            """;
+        cmd.Parameters.Add(new SqlParameter("@id", fileId));
+        var clientIdObj = await cmd.ExecuteScalarAsync(ct);
+        if (clientIdObj is null or DBNull)
+            return AccessCheck.NotFound("File not found");
+
+        return await AssertClientAccessAsync(conn, user, Convert.ToInt32(clientIdObj), ct);
+    }
+
     // -------------------- internos --------------------
 
     /// <summary>Lanza/devuelve 403 si el usuario no puede acceder al cliente indicado.</summary>

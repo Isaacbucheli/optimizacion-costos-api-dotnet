@@ -18,7 +18,7 @@ public sealed class SqlServiceCatalog(ISqlConnectionFactory factory) : IServiceC
         cmd.CommandText = $"""
             SELECT service_key, display_name, azure_resource_type, service_category,
                    detail_table_name, inserter_key, calculator_key,
-                   display_order, is_active
+                   display_order, is_active, kql_query
             FROM dbo.service_catalog
             {where}
             ORDER BY display_order, service_key
@@ -39,6 +39,7 @@ public sealed class SqlServiceCatalog(ISqlConnectionFactory factory) : IServiceC
                 CalculatorKey = reader.GetString(6),
                 DisplayOrder = reader.IsDBNull(7) ? null : reader.GetInt32(7),
                 IsActive = reader.GetBoolean(8),
+                KqlQuery = reader.IsDBNull(9) ? null : reader.GetString(9),
             });
         }
         return list;

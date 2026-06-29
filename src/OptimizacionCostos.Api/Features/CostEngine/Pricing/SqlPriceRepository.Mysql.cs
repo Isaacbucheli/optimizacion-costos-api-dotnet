@@ -30,7 +30,39 @@ public sealed partial class SqlPriceRepository
         RefreshByFetchQueryIfStale(fetchQuery, () => _client.FetchMySqlFlexPrices(armSkuName, region));
 
         var cached = _cache.QueryCached(MySqlServiceName, region);
-        return SelectMySqlFlexPrices(cached, armSkuName, skuTier);
+        var selected = SelectMySqlFlexPrices(cached, armSkuName, skuTier);
+
+        // Fallback IA (paridad con Python _select_mysql_flex_prices): si el determinista no halló
+        // compute, la IA elige un meter REAL de cómputo entre los Consumption de "Flexible Server"
+        // (serie-filtrados), excluyendo Storage/Backup/IOPS.
+        if (selected.PaygHourly is null)
+        {
+            var baseItems = MySqlFlexBase(cached, armSkuName, skuTier);
+            var candidates = baseItems
+                .Where(c => PriceSelectors.IsConsumption(c)
+                    && !PriceSelectors.Contains(c.MeterName, "Storage")
+                    && !PriceSelectors.Contains(c.MeterName, "Backup")
+                    && !PriceSelectors.Contains(c.MeterName, "IOPS"))
+                .ToList();
+            var ctx = new Dictionary<string, object?>
+            {
+                ["sku_name"] = armSkuName,
+                ["sku_tier"] = skuTier,
+                ["expected_product"] = "Azure Database for MySQL Flexible Server",
+                ["expected_unit"] = "hourly compute",
+            };
+            var compute = AssistSelect("mysql", "payg_compute_hourly", ctx, candidates);
+            if (compute is not null)
+                selected = selected with
+                {
+                    PaygHourly = compute.RetailPrice,
+                    IsPerVcore = (compute.MeterName ?? string.Empty).ToLowerInvariant().Contains("vcore"),
+                    MatchStrategy = compute.AiMatchStrategy,
+                    MatchConfidence = compute.AiMatchConfidence,
+                };
+        }
+
+        return selected;
     }
 
     /// <summary>
@@ -42,23 +74,38 @@ public sealed partial class SqlPriceRepository
         RefreshByFetchQueryIfStale(fetchQuery, () => _client.FetchMySqlStoragePrice(region));
 
         var cached = _cache.QueryCached(MySqlServiceName, region);
-        return SelectMySqlStoragePrice(cached);
+        var storage = SelectMySqlStoragePrice(cached);
+        if (storage is not null)
+            return storage;
+
+        // Fallback IA (paridad con Python _select_mysql_storage_price): la IA elige un meter REAL
+        // de almacenamiento entre los Consumption de "Flexible Server".
+        var candidates = cached
+            .Where(c => (c.ProductName ?? string.Empty).Contains("Flexible Server")
+                && PriceSelectors.IsConsumption(c))
+            .ToList();
+        var ctx = new Dictionary<string, object?>
+        {
+            ["expected_product"] = "Azure Database for MySQL Flexible Server",
+            ["expected_unit"] = "GB per month storage",
+        };
+        var picked = AssistSelect("mysql", "storage_monthly_per_gb", ctx, candidates);
+        return picked?.RetailPrice;
     }
 
-    // -------------------- Selectores deterministas (port de los _select_*) --------------------
-
     /// <summary>
-    /// Python: <c>_select_mysql_flex_prices(cached, sku_name, sku_tier)</c>.
+    /// Base serie-filtrada de MySQL Flexible Server (port del bloque inicial de
+    /// <see cref="SelectMySqlFlexPrices"/>): filas "Flexible Server" y, si hay tokens de serie con
+    /// coincidencias, restringidas a esa serie. Compartida por el selector determinista y el
+    /// fallback de IA para garantizar que ambos parten del MISMO universo de candidatos.
     /// </summary>
-    private static MySqlFlexPrices SelectMySqlFlexPrices(
+    internal static List<PriceRow> MySqlFlexBase(
         IReadOnlyList<PriceRow> cached, string skuName = "", string skuTier = "")
     {
-        // base = filas de "Flexible Server".
         var baseItems = cached
             .Where(c => (c.ProductName ?? string.Empty).Contains("Flexible Server"))
             .ToList();
 
-        // Filtra por serie si hay tokens y hay coincidencias (todos los tokens en el join lower).
         var tokens = PriceSelectors.MySqlSeriesTokens(skuName, skuTier)
             .Select(t => t.ToLowerInvariant())
             .ToList();
@@ -78,6 +125,20 @@ public sealed partial class SqlPriceRepository
             if (matchingSeries.Count > 0)
                 baseItems = matchingSeries;
         }
+
+        return baseItems;
+    }
+
+    // -------------------- Selectores deterministas (port de los _select_*) --------------------
+
+    /// <summary>
+    /// Python: <c>_select_mysql_flex_prices(cached, sku_name, sku_tier)</c>.
+    /// </summary>
+    private static MySqlFlexPrices SelectMySqlFlexPrices(
+        IReadOnlyList<PriceRow> cached, string skuName = "", string skuTier = "")
+    {
+        // base serie-filtrada (compartida con el fallback de IA, ver MySqlFlexBase).
+        var baseItems = MySqlFlexBase(cached, skuName, skuTier);
 
         // compute: Consumption + (meter contiene "vCore" | unit contiene "Hour" | meter empieza con "B") + no Storage/Backup/IOPS.
         var compute = PriceSelectors.PreferPrimaryHourly(

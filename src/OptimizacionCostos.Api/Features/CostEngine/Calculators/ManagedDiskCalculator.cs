@@ -132,7 +132,7 @@ public sealed class ManagedDiskCalculator(IPriceRepository prices, IPricingConst
         return set;
     }
 
-    private static string NormalizeRegion(string? location)
+    internal static string NormalizeRegion(string? location)
     {
         if (string.IsNullOrEmpty(location))
         {
@@ -167,7 +167,7 @@ public sealed class ManagedDiskCalculator(IPriceRepository prices, IPricingConst
     /// Deriva el tier (S10 LRS, P10 LRS, E10 LRS, etc.) a partir del SKU + tamaño.
     /// Formato Azure Retail Prices: '&lt;Letter&gt;&lt;Number&gt; &lt;Suffix&gt;'.
     /// </summary>
-    private static string? DeriveDiskTier(string? diskSku, int? sizeGb)
+    internal static string? DeriveDiskTier(string? diskSku, int? sizeGb)
     {
         // if not disk_sku or not size_gb: → size_gb=0 también cuenta como falsy en Python.
         if (string.IsNullOrEmpty(diskSku) || sizeGb is null or 0)

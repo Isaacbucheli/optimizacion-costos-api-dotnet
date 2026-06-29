@@ -59,7 +59,8 @@ public sealed record SqlDbPriceDetails(
     string? UnitOfMeasure,
     string? MeterName,
     string? ProductName,
-    string? SkuName);
+    string? SkuName,
+    string? MatchStrategy = null);
 
 /// <summary>
 /// Retorno de <c>get_sql_managed_instance_prices(region, sku_tier, sku_family, vcores, zone_redundant)</c>
