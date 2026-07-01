@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Features.CostEngine.Pricing;
 using OptimizacionCostos.Api.Features.Inventory;
@@ -43,6 +44,7 @@ public sealed partial class ServiceCatalogController(
     public IActionResult InserterKeys() => Ok(InventoryInserter.InserterKeys.OrderBy(k => k).ToList());
 
     [HttpPost("suggest-from-discovery/{discoveryId:int}")]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> SuggestFromDiscovery(int discoveryId, CancellationToken ct)
     {
         var disc = await store.GetDiscoveryAsync(discoveryId, ct);
@@ -69,6 +71,7 @@ public sealed partial class ServiceCatalogController(
     }
 
     [HttpPost]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> Create([FromBody] ServiceCreateRequest p, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(p.ServiceKey) || string.IsNullOrWhiteSpace(p.DisplayName)
@@ -88,6 +91,7 @@ public sealed partial class ServiceCatalogController(
     }
 
     [HttpPut("{serviceKey}")]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> Update(string serviceKey, [FromBody] ServiceUpdateRequest p, CancellationToken ct)
     {
         if (p.InserterKey is not null && !ValidInserterKey(p.InserterKey, out var err))
@@ -113,6 +117,7 @@ public sealed partial class ServiceCatalogController(
     }
 
     [HttpDelete("{serviceKey}")]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> SoftDelete(string serviceKey, CancellationToken ct)
     {
         var ok = await store.SoftDeleteAsync(serviceKey, ct);
