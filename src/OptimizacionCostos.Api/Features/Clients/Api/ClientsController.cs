@@ -40,8 +40,9 @@ public sealed class ClientsController(
         return Ok(visible);
     }
 
-    // -------------------- POST /clients --------------------
+    // -------------------- POST /clients (admin) --------------------
     [HttpPost]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> Create([FromBody] ClientCreateRequest payload, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(payload.ClientName))
