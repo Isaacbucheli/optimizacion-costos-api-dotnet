@@ -18,10 +18,11 @@ public sealed class SqlCoverageQuery(ISqlConnectionFactory factory, IFinOpsRefDa
     {
         await using var conn = await factory.OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
+        // COUNT(DISTINCT): el % es de RECURSOS costeados — inmune a múltiples cost_results por recurso.
         cmd.CommandText = """
             SELECT LOWER(r.resource_type) AS rt,
-                   COUNT(*) AS total,
-                   SUM(CASE WHEN cr.cost_result_id IS NULL THEN 0 ELSE 1 END) AS costed
+                   COUNT(DISTINCT r.resource_id) AS total,
+                   COUNT(DISTINCT CASE WHEN cr.cost_result_id IS NOT NULL THEN r.resource_id END) AS costed
             FROM dbo.azure_resources r
             LEFT JOIN dbo.cost_results cr
                 ON cr.resource_id = r.resource_id AND cr.analysis_id = r.analysis_id
