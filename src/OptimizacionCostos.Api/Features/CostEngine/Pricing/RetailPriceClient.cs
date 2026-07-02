@@ -370,6 +370,21 @@ public sealed class RetailPriceClient : IRetailPriceClient
         return items.Where(i => (i.ProductName ?? "") == "IP Addresses").ToList();
     }
 
+    /// <inheritdoc/>
+    // Fuente: Microsoft FinOps Toolkit (MIT) — github.com/microsoft/finops-toolkit
+    public IReadOnlyList<PriceRow> FetchSnapshotPrices(string region)
+    {
+        var items = FetchPrices(new[]
+        {
+            Kv("serviceName", "Storage"),
+            Kv("armRegionName", region),
+            Kv("priceType", "Consumption"),
+        });
+        return items.Where(i =>
+            (i.MeterName ?? "").EndsWith("Snapshots", StringComparison.Ordinal)
+            && (i.ProductName ?? "").Contains("Managed Disks", StringComparison.Ordinal)).ToList();
+    }
+
     // -------------------- Helpers --------------------
 
     private static KeyValuePair<string, object> Kv(string key, object value) => new(key, value);

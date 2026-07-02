@@ -63,6 +63,9 @@ public sealed class FakePriceRepository : IPriceRepository
     public Func<string, string, int, string, ElasticPoolPrices?> GetElasticPoolPricesFn { get; set; }
         = (_, _, _, _) => null;
 
+    public Func<string, string?, double?> GetSnapshotPricePerGbFn { get; set; }
+        = (_, _) => null;
+
     // -------------------- IPriceRepository --------------------
 
     public VmPrices GetVmPrices(string armSkuName, string region, string osType)
@@ -101,4 +104,7 @@ public sealed class FakePriceRepository : IPriceRepository
 
     public ElasticPoolPrices? GetElasticPoolPrices(string skuTier, string skuFamily, int capacity, string region)
         => GetElasticPoolPricesFn(skuTier, skuFamily, capacity, region);
+
+    public double? GetSnapshotPricePerGb(string region, string? storageType)
+        => GetSnapshotPricePerGbFn(region, storageType);
 }

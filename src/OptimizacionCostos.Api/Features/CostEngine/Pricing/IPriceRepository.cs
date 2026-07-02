@@ -87,4 +87,11 @@ public interface IPriceRepository
     /// Devuelve null si no hay match exacto verificado (NO aproxima).
     /// </summary>
     ElasticPoolPrices? GetElasticPoolPrices(string skuTier, string skuFamily, int capacity, string region);
+
+    /// <summary>
+    /// Precio mensual por GB de un snapshot de managed disk (serviceName "Storage").
+    /// <paramref name="storageType"/> = sku.name del snapshot ("Standard_LRS", "Premium_LRS",
+    /// "Standard_ZRS"...). Null si no hay meter. Net-new (Fase 2); no altera precios existentes.
+    /// </summary>
+    double? GetSnapshotPricePerGb(string region, string? storageType);
 }

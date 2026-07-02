@@ -81,4 +81,11 @@ public interface IRetailPriceClient
 
     /// <summary>Python: <c>fetch_public_ip_prices(region)</c>. serviceName "Virtual Network", productName "IP Addresses".</summary>
     IReadOnlyList<PriceRow> FetchPublicIpPrices(string region);
+
+    /// <summary>
+    /// Precios de snapshots de managed disk por región (serviceName "Storage", productos
+    /// "* Managed Disks", meter "* Snapshots"). Fuente: Microsoft FinOps Toolkit (MIT) — usa la
+    /// misma API que el toolkit para right-sizing/limpieza. Net-new (Fase 2).
+    /// </summary>
+    IReadOnlyList<PriceRow> FetchSnapshotPrices(string region);
 }
