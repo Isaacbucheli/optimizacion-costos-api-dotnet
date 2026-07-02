@@ -7,15 +7,21 @@ namespace OptimizacionCostos.Api.Features.Waf.Api;
 /// El binder de System.Text.Json mapea snake_case del JSON a estas propiedades. Las validaciones
 /// de rango/longitud replican los Field(...) de Pydantic; las cruzadas las hace el controller.
 /// (WafTrackingUpdate ya vive en WafTrackingDtos.cs — se reutiliza tal cual.)
+///
+/// IMPORTANTE (.NET 8): en records, los atributos de validación DataAnnotations van sobre el
+/// PARÁMETRO del constructor primario (sin target), NUNCA con target de propiedad. Con el target
+/// de propiedad, ASP.NET Core lanza InvalidOperationException en el model-binding ("validation
+/// metadata ... will be ignored ... must be associated with the constructor parameter") en CADA
+/// request con body → el navegador ve "Failed to fetch". (Bug de 2026-07-02, ver commit de fix.)
 /// </summary>
 
 /// <summary>Crear comentario. Port de WafCommentCreate (min 1, max 4000).</summary>
 public sealed record WafCommentCreate(
-    [property: Required, StringLength(4000, MinimumLength = 1)] string CommentText);
+    [Required, StringLength(4000, MinimumLength = 1)] string CommentText);
 
 /// <summary>Descartar recomendación. Port de WafRecommendationDismiss (reason opcional, max 1000).</summary>
 public sealed record WafRecommendationDismiss(
-    [property: StringLength(1000)] string? Reason = null);
+    [StringLength(1000)] string? Reason = null);
 
 /// <summary>
 /// Edición directa del catálogo (admin). Port de WafCanonicalUpdate. Todos opcionales: solo los
@@ -58,17 +64,17 @@ public sealed class WafCanonicalUpdateRequest
 
 /// <summary>Análisis IA por lotes (admin). Port de WafAiBatchRequest (limit 1-200 default 50).</summary>
 public sealed record WafAiBatchRequest(
-    [property: Range(1, 200)] int Limit = 50,
+    [Range(1, 200)] int Limit = 50,
     bool Apply = false);
 
 /// <summary>Sync con Azure Advisor. Port de WafAdvisorSyncRequest (timeout 60-1800 default 600).</summary>
 public sealed record WafAdvisorSyncRequest(
     List<string>? Subscriptions = null,
-    [property: Range(60, 1800)] int TimeoutSecondsPerSubscription = 600);
+    [Range(60, 1800)] int TimeoutSecondsPerSubscription = 600);
 
 /// <summary>Refresh manual de Advisor Score (admin). Port de WafAdvisorScoreRefreshRequest.</summary>
 public sealed record WafAdvisorScoreRefreshRequest(
-    [property: Range(1, int.MaxValue)] int? ClientId = null,
+    [Range(1, int.MaxValue)] int? ClientId = null,
     bool IncludeInReports = false);
 
 /// <summary>
@@ -76,18 +82,18 @@ public sealed record WafAdvisorScoreRefreshRequest(
 /// (decision=exclude ⇒ exclusion_reason) la replica el controller.
 /// </summary>
 public sealed record WafAiSuggestionRequest(
-    [property: Required, RegularExpression("^(include|exclude|review)$")] string Decision,
+    [Required, RegularExpression("^(include|exclude|review)$")] string Decision,
     bool PossibleAdditionalCost,
-    [property: StringLength(1000)] string CostReason,
-    [property: StringLength(200)] string DuplicateGroupKey,
-    [property: Range(1, 5)] int PillarNumber,
-    [property: Required, StringLength(1000, MinimumLength = 3)] string ReviewScopeEs,
-    [property: Required, StringLength(2000, MinimumLength = 3)] string BenefitEs,
-    [property: Required, StringLength(2000, MinimumLength = 3)] string ClientActionEs,
-    [property: Required, StringLength(2000, MinimumLength = 3)] string BitActionEs,
-    [property: StringLength(1000)] string ExclusionReason,
-    [property: Range(0.0, 1.0)] double Confidence,
-    [property: StringLength(4000)] string? RawModelText = null)
+    [StringLength(1000)] string CostReason,
+    [StringLength(200)] string DuplicateGroupKey,
+    [Range(1, 5)] int PillarNumber,
+    [Required, StringLength(1000, MinimumLength = 3)] string ReviewScopeEs,
+    [Required, StringLength(2000, MinimumLength = 3)] string BenefitEs,
+    [Required, StringLength(2000, MinimumLength = 3)] string ClientActionEs,
+    [Required, StringLength(2000, MinimumLength = 3)] string BitActionEs,
+    [StringLength(1000)] string ExclusionReason,
+    [Range(0.0, 1.0)] double Confidence,
+    [StringLength(4000)] string? RawModelText = null)
 {
     public WafAiSuggestionRequest() : this(
         Decision: "review", PossibleAdditionalCost: false, CostReason: "", DuplicateGroupKey: "",
@@ -117,20 +123,20 @@ public sealed record WafAiSuggestionRequest(
 /// llega como ISO string del JSON. El controller convierte a WafExcelApplyItem de dominio.
 /// </summary>
 public sealed record WafExcelApplyItemRequest(
-    [property: Range(1, int.MaxValue)] int RowNumber,
-    [property: RegularExpression("^(update|create)$")] string Action = "update",
-    [property: Range(1, int.MaxValue)] int? CanonicalId = null,
+    [Range(1, int.MaxValue)] int RowNumber,
+    [RegularExpression("^(update|create)$")] string Action = "update",
+    [Range(1, int.MaxValue)] int? CanonicalId = null,
     bool Approved = true,
-    [property: Range(0, 100)] int? CompletionPct = null,
+    [Range(0, 100)] int? CompletionPct = null,
     DateOnly? RemediationStartDate = null,
     string? ExecutionLog = null,
-    [property: Range(1, 5)] int? PillarNumber = null,
-    [property: StringLength(500)] string? Title = null,
-    [property: StringLength(2000)] string? ReviewScope = null,
-    [property: StringLength(2000)] string? Benefit = null,
-    [property: StringLength(2000)] string? Actions = null,
-    [property: StringLength(200)] string? Impact = null,
-    [property: StringLength(500)] string? ProjectedBitEffort = null,
+    [Range(1, 5)] int? PillarNumber = null,
+    [StringLength(500)] string? Title = null,
+    [StringLength(2000)] string? ReviewScope = null,
+    [StringLength(2000)] string? Benefit = null,
+    [StringLength(2000)] string? Actions = null,
+    [StringLength(200)] string? Impact = null,
+    [StringLength(500)] string? ProjectedBitEffort = null,
     List<string>? Resources = null);
 
 /// <summary>Body de apply Excel. Port de WafExcelApplyRequest (rows).</summary>
