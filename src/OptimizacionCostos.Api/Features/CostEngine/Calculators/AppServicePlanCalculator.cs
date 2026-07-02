@@ -115,6 +115,7 @@ public sealed class AppServicePlanCalculator : ICostCalculator
                 result.PaygHourly = @base.BaseHourly;
                 result.PaygMonthly = @base.BaseHourly * hours * skuCapacity;
                 result.RiApplies = false;
+                // ElasticPremiumBase no trae meter (base compuesta vCPU+RAM); queda null -> unknown.
                 result.RiNotApplicableReason = "Plan de consumo (sin RI); solo base reservada";
                 result.CalculationNotes =
                     $"sku={skuName} region={region} capacity={skuCapacity} " +
@@ -152,6 +153,7 @@ public sealed class AppServicePlanCalculator : ICostCalculator
 
             result.PaygHourly = paygHourly.Value;
             result.PaygMonthly = paygHourly.Value * hours * skuCapacity;
+            result.PaygMeterId = priceData.PaygMeterId;
 
             // RI solo en Premium V3.
             if (PremiumV3SkusNormalized.Contains(skuName.ToLowerInvariant()))

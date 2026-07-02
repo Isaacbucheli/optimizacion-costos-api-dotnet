@@ -87,6 +87,7 @@ public sealed class SqlManagedInstanceCalculator(IPriceRepository prices, IPrici
             result.PaygHourly = computeHourly.Value * vcores;
             result.PaygMonthly = computeMonthly + storageMonthly;
             result.StorageMonthly = storageMonthly > 0 ? storageMonthly : null;
+            result.PaygMeterId = price.PaygMeterId;
 
             var ri1y = price.Ri1yTotalPerVcore;
             var ri3y = price.Ri3yTotalPerVcore;

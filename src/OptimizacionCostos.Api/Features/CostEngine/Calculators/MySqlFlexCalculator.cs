@@ -99,6 +99,7 @@ public sealed partial class MySqlFlexCalculator : ICostCalculator
             result.PaygHourly = paygHourly.Value;
             result.PaygMonthly = computeMonthly + storageMonthly;
             result.StorageMonthly = storageMonthly > 0 ? storageMonthly : null;
+            result.PaygMeterId = priceData.PaygMeterId;
 
             // RI: NO aplica en Burstable
             if (skuTier.ToLowerInvariant() == "burstable")

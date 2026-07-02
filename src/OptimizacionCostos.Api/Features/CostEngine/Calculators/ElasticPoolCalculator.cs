@@ -85,6 +85,7 @@ public sealed class ElasticPoolCalculator(IPriceRepository prices, IPricingConst
             var paygHourly = priceData.PaygHourly.Value;
             result.PaygHourly = paygHourly;
             result.PaygMonthly = paygHourly * hours;
+            result.PaygMeterId = priceData.PaygMeterId;
 
             result.RiApplies = false;
             result.RiNotApplicableReason = "RI de pool diferido; solo PAYG";

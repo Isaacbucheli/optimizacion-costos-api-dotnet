@@ -111,9 +111,10 @@ public sealed class ComputeVmCalculator : ICostCalculator
             }
 
             // PAYG. En la rama sin premium, Python vuelve a consultar get_vm_prices(os_type).
+            var primaryPrices = needsWindowsPremium ? null : _prices.GetVmPrices(vmSize, region, osType);
             double? paygHourly = needsWindowsPremium
                 ? winPrices.PaygHourly
-                : _prices.GetVmPrices(vmSize, region, osType).PaygHourly;
+                : primaryPrices!.PaygHourly;
 
             if (paygHourly is null)
             {
@@ -170,6 +171,9 @@ public sealed class ComputeVmCalculator : ICostCalculator
             result.PaygHourly = paygHourly.Value + (sqlAddonMonthly != 0.0 ? sqlAddonMonthly / hours : 0);
             result.PaygMonthly = basePaygMonthly + sqlAddonMonthly;
             result.SqlAddonMonthly = sqlAddonMonthly > 0 ? sqlAddonMonthly : null;
+            result.PaygMeterId = needsWindowsPremium
+                ? (winPrices.PaygHourly is not null ? winPrices.PaygMeterId : lnxPrices.PaygMeterId)
+                : primaryPrices!.PaygMeterId;
 
             // RI total = (RI_base / N años) + Windows premium + SQL add-on
             // SQL y Windows premium NO se descuentan con RI: se siguen pagando por hora

@@ -45,7 +45,8 @@ public sealed class SynapseDedicatedPoolCalculatorTests
                 return new SynapseDwPrices(
                     PaygHourly: 1.20,
                     Ri1yTotal: 6623.0,
-                    Ri3yTotal: 11038.0);
+                    Ri3yTotal: 11038.0,
+                    PaygMeterId: "meter-synapse-1");
             }
         };
 
@@ -62,6 +63,7 @@ public sealed class SynapseDedicatedPoolCalculatorTests
         Assert.Equal(6623.0 / 12.0, result.Ri1yMonthly!.Value, 5);
         Assert.Equal(11038.0 / 36.0, result.Ri3yMonthly!.Value, 5);
         Assert.True(result.RiApplies);
+        Assert.Equal("meter-synapse-1", result.PaygMeterId);
     }
 
     // test_calculator_paused_pool_costs_zero_compute

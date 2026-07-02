@@ -85,6 +85,7 @@ public sealed class RedisCacheCalculator : ICostCalculator
 
             result.PaygHourly = paygHourly.Value;
             result.PaygMonthly = paygHourly.Value * hours;
+            result.PaygMeterId = priceData.PaygMeterId;
 
             // RI: NO aplica en Classic Basic
             var skuLower = skuName.ToLowerInvariant();

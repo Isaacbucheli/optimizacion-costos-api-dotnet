@@ -108,6 +108,7 @@ public sealed class SynapseDedicatedPoolCalculator : ICostCalculator
 
             result.PaygHourly = paygHourly.Value;
             result.PaygMonthly = paygHourly.Value * hours;
+            result.PaygMeterId = priceData.PaygMeterId;
 
             var ri1yTotal = priceData.Ri1yTotal;
             var ri3yTotal = priceData.Ri3yTotal;

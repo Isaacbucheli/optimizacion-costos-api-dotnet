@@ -34,7 +34,7 @@ public sealed class MySqlFlexCalculatorTests
 
         var prices = new FakePriceRepository
         {
-            GetMySqlFlexPricesFn = (_, _, _) => new MySqlFlexPrices(paygHourly, 100.0, 200.0),
+            GetMySqlFlexPricesFn = (_, _, _) => new MySqlFlexPrices(paygHourly, 100.0, 200.0, PaygMeterId: "meter-mysql-1"),
             GetMySqlStoragePricePerGbFn = _ => storageMonthlyPerGb,
         };
 
@@ -52,6 +52,7 @@ public sealed class MySqlFlexCalculatorTests
         Assert.Equal(storageMonthlyPerGb * storageGb, result.StorageMonthly!.Value, 9);
         Assert.False(result.RiApplies);
         Assert.Null(result.Ri1yMonthly);
+        Assert.Equal("meter-mysql-1", result.PaygMeterId);
         Assert.Contains("storage_gb=128", result.CalculationNotes);
     }
 

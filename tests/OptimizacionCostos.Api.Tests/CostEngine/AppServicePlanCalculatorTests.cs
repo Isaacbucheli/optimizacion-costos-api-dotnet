@@ -39,7 +39,7 @@ public sealed class AppServicePlanCalculatorTests
 
         var prices = new FakePriceRepository
         {
-            GetAppServicePricesFn = (_, _, _) => new AppServicePrices(paygHourly, ri1yTotal, ri3yTotal),
+            GetAppServicePricesFn = (_, _, _) => new AppServicePrices(paygHourly, ri1yTotal, ri3yTotal, PaygMeterId: "meter-appservice-1"),
         };
 
         var resource = Res.Row(
@@ -56,6 +56,7 @@ public sealed class AppServicePlanCalculatorTests
         Assert.Equal(MonthlyFrom1y(ri1yTotal) * capacity, result.Ri1yMonthly!.Value, 5);
         Assert.Equal(MonthlyFrom3y(ri3yTotal) * capacity, result.Ri3yMonthly!.Value, 5);
         Assert.True(result.RiApplies);
+        Assert.Equal("meter-appservice-1", result.PaygMeterId);
         Assert.Contains("capacity=2", result.CalculationNotes);
     }
 

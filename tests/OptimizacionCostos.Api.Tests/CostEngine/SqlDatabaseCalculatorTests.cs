@@ -85,7 +85,8 @@ public sealed class SqlDatabaseCalculatorTests
                     UnitOfMeasure: "1 Hour",
                     MeterName: "vCore",
                     ProductName: "SQL Database Hyperscale - Serverless - Compute Gen5",
-                    SkuName: "1 vCore");
+                    SkuName: "1 vCore",
+                    PaygMeterId: "meter-sql-1");
             },
         };
 
@@ -101,6 +102,7 @@ public sealed class SqlDatabaseCalculatorTests
         Assert.Equal("calculated", result.CalculationStatus);
         Assert.Equal(0.378 * 730.0 * 4, result.PaygMonthly!.Value, 5);
         Assert.False(result.RiApplies);
+        Assert.Equal("meter-sql-1", result.PaygMeterId);
         Assert.Contains("capacity=4", result.CalculationNotes);
         Assert.Contains("tope máximo", result.CalculationNotes);
     }

@@ -124,6 +124,7 @@ public sealed class SqlDatabaseCalculator(IPriceRepository prices, IPricingConst
             }
 
             result.PaygHourly = result.PaygMonthly / hours;
+            result.PaygMeterId = priceInfo.PaygMeterId;
 
             // Aplicabilidad RI
             if (isServerless)

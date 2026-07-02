@@ -32,7 +32,7 @@ public sealed class ComputeVmCalculatorTests
         var prices = new FakePriceRepository
         {
             // os_type "Linux" => un solo lookup; RI base 600/1500.
-            GetVmPricesFn = (_, _, _) => new VmPrices(0.10, 600.0, 1500.0),
+            GetVmPricesFn = (_, _, _) => new VmPrices(0.10, 600.0, 1500.0, PaygMeterId: "meter-vm-1"),
         };
         var rows = Res.Rows(Res.Row(
             ("resource_id", 1),
@@ -50,6 +50,7 @@ public sealed class ComputeVmCalculatorTests
         Assert.Equal(1500.0 / 36.0, result.Ri3yMonthly!.Value, 5);         // 41.6667
         Assert.True(result.RiApplies);
         Assert.Null(result.SqlAddonMonthly);
+        Assert.Equal("meter-vm-1", result.PaygMeterId);
         Assert.Contains("sku=Standard_D4s_v5 region=eastus os=Linux match=deterministic", result.CalculationNotes);
     }
 

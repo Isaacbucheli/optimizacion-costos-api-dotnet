@@ -48,7 +48,8 @@ public sealed class SqlManagedInstanceCalculatorTests
                     Ri1yTotalPerVcore: ri1yTotalPerVcore,
                     Ri3yTotalPerVcore: ri3yTotalPerVcore,
                     ComputeMeterName: "vCore",
-                    StorageMeterName: "Data Stored");
+                    StorageMeterName: "Data Stored",
+                    PaygMeterId: "meter-sqlmi-1");
             }
         };
         var constants = new FakePricingConstants { HoursPerMonthValue = hours };
@@ -79,5 +80,6 @@ public sealed class SqlManagedInstanceCalculatorTests
         Assert.Equal(MonthlyFrom1y(ri1yTotalPerVcore) * vcores + storageMonthly,
             result.Ri1yMonthly!.Value, 6);
         Assert.True(result.RiApplies);
+        Assert.Equal("meter-sqlmi-1", result.PaygMeterId);
     }
 }

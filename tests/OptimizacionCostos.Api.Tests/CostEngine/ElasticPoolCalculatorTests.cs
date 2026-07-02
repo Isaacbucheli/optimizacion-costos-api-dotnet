@@ -42,7 +42,8 @@ public sealed class ElasticPoolCalculatorTests
                 capCapacity = capacity;
                 capRegion = region;
                 return new ElasticPoolPrices(
-                    PaygHourly: 1.40, Model: "vCore", MeterName: "8 vCore", MatchedSku: "8 vCore");
+                    PaygHourly: 1.40, Model: "vCore", MeterName: "8 vCore", MatchedSku: "8 vCore",
+                    PaygMeterId: "meter-elasticpool-1");
             },
         };
 
@@ -60,6 +61,7 @@ public sealed class ElasticPoolCalculatorTests
         Assert.NotNull(result.PaygMonthly);
         Assert.Equal(1.40 * 730.0, result.PaygMonthly!.Value, 5); // payg_monthly == 1.40 * 730.0
         Assert.False(result.RiApplies);
+        Assert.Equal("meter-elasticpool-1", result.PaygMeterId);
     }
 
     [Fact]

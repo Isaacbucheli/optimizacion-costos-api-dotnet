@@ -55,7 +55,7 @@ public sealed class RedisCacheCalculatorTests
             // side_effect=price_data: Basic sin RI; resto con RI.
             GetRedisPricesFn = (skuName, _, _) => skuName == "Basic"
                 ? new RedisPrices(basicHourly, null, null)
-                : new RedisPrices(standardHourly, standardRi1y, standardRi3y),
+                : new RedisPrices(standardHourly, standardRi1y, standardRi3y, PaygMeterId: "meter-redis-1"),
         };
         var constants = new FakePricingConstants();
 
@@ -70,6 +70,7 @@ public sealed class RedisCacheCalculatorTests
         Assert.Equal(MonthlyFromHourly(standardHourly, HoursPerMonth), standard.PaygMonthly!.Value, 6);
         Assert.True(standard.RiApplies);
         Assert.Equal(MonthlyFrom1y(standardRi1y), standard.Ri1yMonthly!.Value, 6);
+        Assert.Equal("meter-redis-1", standard.PaygMeterId);
         Assert.Contains("capacity=1", standard.CalculationNotes);
     }
 
