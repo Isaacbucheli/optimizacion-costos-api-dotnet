@@ -13,7 +13,7 @@ public static class OptimizationChecks
     public static IReadOnlyList<CheckDefinition> Registered =>
     [
         OrphanedDisks, OrphanedPublicIps, StoppedNotDeallocatedVms, LongDeallocatedVms,
-        EmptyAppServicePlans, LbAppGwNoBackend, StorageNoRetention, OrphanedNics, EmptySubnets,
+        EmptyAppServicePlans, LbAppGwNoBackend, StorageNoRetention, OrphanedNics, EmptySubnets, VmsWithoutHa,
     ];
 
     private static Finding F(CheckDefinition c, string subId, RgRow r, string defaultType,
@@ -246,6 +246,33 @@ public static class OptimizationChecks
                 if ((r.Int("ipCount") ?? 0) > 0 || (r.Int("delegCount") ?? 0) > 0) continue;
                 outl.Add(F(check, subId, r, "microsoft.network/virtualnetworks/subnets",
                     new Dictionary<string, object?> { ["vnet"] = r.Str("vnet"), ["note"] = "Subnet sin uso." }, null));
+            }
+            return outl;
+        });
+
+    // -------------------- 10. VMs sin alta disponibilidad --------------------
+    // Fuente: Microsoft FinOps Toolkit (MIT) — github.com/microsoft/finops-toolkit
+    public static readonly CheckDefinition VmsWithoutHa = new(
+        "vms_without_ha", "VMs sin alta disponibilidad",
+        "VMs sin zona de disponibilidad, availability set ni VMSS: riesgo de indisponibilidad.",
+        OptCategory.Governance, 5, OptSeverity.Medium,
+        """
+        Resources
+        | where type =~ 'microsoft.compute/virtualmachines'
+        | extend hasZone = isnotnull(zones) and array_length(zones) > 0,
+                 hasAvSet = isnotnull(properties.availabilitySet),
+                 inVmss = isnotnull(properties.virtualMachineScaleSet)
+        | where hasZone == false and hasAvSet == false and inVmss == false
+        | project id, name, type, location, vmSize = tostring(properties.hardwareProfile.vmSize), hasZone, hasAvSet, inVmss
+        """,
+        (check, rows, subId, cost) =>
+        {
+            var outl = new List<Finding>();
+            foreach (var r in rows)
+            {
+                if (r.BoolFalse("hasZone") || r.BoolFalse("hasAvSet") || r.BoolFalse("inVmss")) continue;
+                outl.Add(F(check, subId, r, "microsoft.compute/virtualmachines",
+                    new Dictionary<string, object?> { ["vmSize"] = r.Str("vmSize"), ["note"] = "Sin zona/availability set/VMSS." }, null));
             }
             return outl;
         });

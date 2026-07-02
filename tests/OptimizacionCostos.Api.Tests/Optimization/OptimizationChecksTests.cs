@@ -54,10 +54,11 @@ public sealed class OptimizationChecksTests
     [Fact]
     public void HayChecksRegistrados()
     {
-        Assert.Equal(9, OptimizationChecks.Registered.Count);
+        Assert.Equal(10, OptimizationChecks.Registered.Count);
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "orphaned_disks");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "orphaned_nics");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "empty_subnets");
+        Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "vms_without_ha");
     }
 
     [Fact]
@@ -97,6 +98,20 @@ public sealed class OptimizationChecksTests
         var f = OptimizationChecks.LbAppGwNoBackend.BuildFindings(OptimizationChecks.LbAppGwNoBackend, rows, "sub-1", new FakeCost());
         Assert.Single(f);
         Assert.Equal("lb-vacio", f[0].ResourceName);
+    }
+
+    [Fact]
+    public void VmsWithoutHa_MarcaSinZonaNiAvSetNiVmss()
+    {
+        var rows = Rows("""
+            [{"id":"/vm/1","name":"vm-sola","type":"microsoft.compute/virtualmachines","location":"eastus","vmSize":"Standard_D2s_v3","hasZone":false,"hasAvSet":false,"inVmss":false},
+             {"id":"/vm/2","name":"vm-zonal","type":"microsoft.compute/virtualmachines","location":"eastus","vmSize":"Standard_D2s_v3","hasZone":true,"hasAvSet":false,"inVmss":false}]
+            """);
+        var f = OptimizationChecks.VmsWithoutHa.BuildFindings(OptimizationChecks.VmsWithoutHa, rows, "sub-1", new FakeCost());
+        var only = Assert.Single(f);
+        Assert.Equal("vm-sola", only.ResourceName);
+        Assert.Equal("governance", only.Category);
+        Assert.Null(only.EstimatedMonthlySavings);
     }
 
     [Fact]
