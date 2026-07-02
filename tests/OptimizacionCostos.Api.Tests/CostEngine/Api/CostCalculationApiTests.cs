@@ -146,6 +146,22 @@ public class CostCalculationApiTests : IClassFixture<CostApiTestFactory>
         Assert.True(first.TryGetProperty("power_uptime_pct", out _));
     }
 
+    [Fact]
+    public async Task Results_IncluyeRiEligibility()
+    {
+        _factory.Access.AnalysisToClient[15] = 8;
+        _factory.Access.Assignments["asignado@bit.ec"] = new HashSet<int> { 8 };
+        _factory.Query.ResultsByAnalysis[15] = new()
+        {
+            new CostResultRow { CostResultId = 1, ResourceId = 100, ServiceKey = "vms", RiEligibility = "not_eligible" },
+        };
+        var client = ClientFor("asignado@bit.ec", Roles.Consultor);
+
+        var res = await client.GetAsync("/analysis/15/results");
+        var body = await res.Content.ReadAsStringAsync();
+        Assert.Contains("\"ri_eligibility\":\"not_eligible\"", body);
+    }
+
     // ---- manual-cost: update + 404 ----
 
     [Fact]

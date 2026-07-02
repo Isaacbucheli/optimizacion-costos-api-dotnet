@@ -75,6 +75,9 @@ public sealed class CostResultRow
     public string? RiReservationName { get; set; }
     public string? RiTerm { get; set; }
 
+    /// <summary>"eligible" | "not_eligible" | "unknown" | null (dataset FinOps Toolkit).</summary>
+    public string? RiEligibility { get; set; }
+
     public double? PowerRunningHours { get; set; }
     public double? PowerUptimePct { get; set; }
     public string? PowerPeriodStart { get; set; }

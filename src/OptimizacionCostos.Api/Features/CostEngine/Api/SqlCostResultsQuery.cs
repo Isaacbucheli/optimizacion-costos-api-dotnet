@@ -1,6 +1,7 @@
 using System.Globalization;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Data;
+using OptimizacionCostos.Api.Features.CostEngine.Engine;
 
 namespace OptimizacionCostos.Api.Features.CostEngine.Api;
 
@@ -14,6 +15,7 @@ public sealed class SqlCostResultsQuery(ISqlConnectionFactory factory) : ICostRe
         int analysisId, string? serviceKey, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
+        SqlCostResultStore.EnsureFinOpsColumns(conn);
         await using var cmd = conn.CreateCommand();
 
         var sql = """
@@ -30,6 +32,7 @@ public sealed class SqlCostResultsQuery(ISqlConnectionFactory factory) : ICostRe
                 cr.manual_monthly_cost, cr.manual_cost_note,
                 cr.ri_applies, cr.ri_not_applicable_reason,
                 cr.ri_coverage, cr.ri_reservation_name, cr.ri_term,
+                cr.ri_eligibility,
                 pu.running_hours AS power_running_hours,
                 pu.uptime_pct AS power_uptime_pct,
                 pu.period_start AS power_period_start,
@@ -87,12 +90,13 @@ public sealed class SqlCostResultsQuery(ISqlConnectionFactory factory) : ICostRe
                 RiCoverage = Str(reader, 27),
                 RiReservationName = Str(reader, 28),
                 RiTerm = Str(reader, 29),
-                PowerRunningHours = Dbl(reader, 30),
-                PowerUptimePct = Dbl(reader, 31),
-                PowerPeriodStart = IsoDate(reader, 32),
-                PowerPeriodEnd = IsoDate(reader, 33),
-                CalculationNotes = Str(reader, 34),
-                CalculatedAt = IsoDate(reader, 35),
+                RiEligibility = Str(reader, 30),
+                PowerRunningHours = Dbl(reader, 31),
+                PowerUptimePct = Dbl(reader, 32),
+                PowerPeriodStart = IsoDate(reader, 33),
+                PowerPeriodEnd = IsoDate(reader, 34),
+                CalculationNotes = Str(reader, 35),
+                CalculatedAt = IsoDate(reader, 36),
             });
         }
         return rows;
