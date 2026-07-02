@@ -3,6 +3,7 @@ using System.Net.Http.Headers;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Features.FinOpsData;
 using Xunit;
 
 namespace OptimizacionCostos.Api.Tests.FinOpsData;
@@ -82,5 +83,27 @@ public sealed class FinOpsDataApiTests : IClassFixture<FinOpsApiTestFactory>
         Assert.Equal(HttpStatusCode.OK, res.StatusCode);
 
         Assert.False(cache.TryGetValue("finops:regions", out _));
+    }
+
+    [Fact]
+    public async Task Diagnostics_Consultor_403()
+    {
+        var res = await ClientFor("c@bit.ec", Roles.Consultor).GetAsync("/finops-data/ri-diagnostics?analysis_id=7");
+        Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task Diagnostics_Admin_200ConFilas()
+    {
+        _factory.Access.AnalysisToClient[7] = 100;
+        _factory.Diagnostics.Rows[7] = new List<RiDiagnosticRow>
+        {
+            new(1, "sql", "db-hyperscale", "HS_Gen5_2", "eastus2", "meter-x"),
+        };
+        var res = await ClientFor("a@bit.ec", Roles.Admin).GetAsync("/finops-data/ri-diagnostics?analysis_id=7");
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var body = await res.Content.ReadAsStringAsync();
+        Assert.Contains("db-hyperscale", body);
+        Assert.Contains("payg_meter_id", body);
     }
 }

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Features.CostEngine.Api;
 
 namespace OptimizacionCostos.Api.Features.FinOpsData.Api;
 
@@ -16,7 +17,9 @@ public sealed class FinOpsDataController(
     IFinOpsDataRefreshService refresh,
     IFinOpsDataStore store,
     IFinOpsRefData refData,
-    IMemoryCache cache) : ControllerBase
+    IMemoryCache cache,
+    IRiDiagnosticsQuery diagnostics,
+    IAnalysisAccess access) : ControllerBase
 {
     [HttpPost("refresh")]
     [Authorize(Roles = Roles.Admin)]
@@ -48,5 +51,17 @@ public sealed class FinOpsDataController(
                 kv => new { display_name = kv.Value.DisplayName, service_category = kv.Value.ServiceCategory }),
             service_categories = FinOpsServiceCategoryMap.ByServiceKey,
         });
+    }
+
+    [HttpGet("ri-diagnostics")]
+    [Authorize(Roles = Roles.Admin)]
+    public async Task<IActionResult> RiDiagnostics([FromQuery(Name = "analysis_id")] int analysisId, CancellationToken ct)
+    {
+        var chk = await access.AssertAnalysisAccessAsync(User, analysisId, ct);
+        if (!chk.Ok)
+            return chk.Result == AccessResult.NotFound
+                ? NotFound(new { detail = chk.Detail ?? "Not found" })
+                : StatusCode(StatusCodes.Status403Forbidden, new { detail = chk.Detail ?? "Sin acceso" });
+        return Ok(await diagnostics.ListAsync(analysisId, ct));
     }
 }
