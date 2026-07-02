@@ -11,6 +11,10 @@ public sealed class FakeFinOpsRefData : IFinOpsRefData
     public bool Throws { get; set; }
     public IReadOnlyCollection<string>? LastQuery { get; private set; }
 
+    /// <summary>Seed opcional para GetRegionNamesAsync/GetResourceTypesAsync (default: vacíos).</summary>
+    public Dictionary<string, string> Regions { get; } = new();
+    public Dictionary<string, FinOpsResourceTypeInfo> ResourceTypes { get; } = new();
+
     public Task<IReadOnlyDictionary<string, bool>> GetRiEligibilityAsync(IReadOnlyCollection<string> meterIds, CancellationToken ct = default)
     {
         if (Throws) throw new InvalidOperationException("SQL down");
@@ -21,9 +25,9 @@ public sealed class FakeFinOpsRefData : IFinOpsRefData
     }
 
     public Task<IReadOnlyDictionary<string, string>> GetRegionNamesAsync(CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyDictionary<string, string>>(new Dictionary<string, string>());
+        => Task.FromResult<IReadOnlyDictionary<string, string>>(Regions);
     public Task<IReadOnlyDictionary<string, FinOpsResourceTypeInfo>> GetResourceTypesAsync(CancellationToken ct = default)
-        => Task.FromResult<IReadOnlyDictionary<string, FinOpsResourceTypeInfo>>(new Dictionary<string, FinOpsResourceTypeInfo>());
+        => Task.FromResult<IReadOnlyDictionary<string, FinOpsResourceTypeInfo>>(ResourceTypes);
 }
 
 public sealed class RiEligibilityEnricherTests
