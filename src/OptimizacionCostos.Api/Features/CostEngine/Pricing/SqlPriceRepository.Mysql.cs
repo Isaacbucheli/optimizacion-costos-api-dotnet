@@ -59,6 +59,7 @@ public sealed partial class SqlPriceRepository
                     IsPerVcore = (compute.MeterName ?? string.Empty).ToLowerInvariant().Contains("vcore"),
                     MatchStrategy = compute.AiMatchStrategy,
                     MatchConfidence = compute.AiMatchConfidence,
+                    PaygMeterId = compute.MeterId,
                 };
         }
 
@@ -169,7 +170,8 @@ public sealed partial class SqlPriceRepository
             IsPerVcore: compute is not null
                 && (compute.MeterName ?? string.Empty).ToLowerInvariant().Contains("vcore"),
             MatchStrategy: compute is not null ? null : "deterministic",
-            MatchConfidence: null);
+            MatchConfidence: null,
+            PaygMeterId: compute?.MeterId);
     }
 
     /// <summary>

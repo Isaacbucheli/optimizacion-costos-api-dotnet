@@ -55,6 +55,7 @@ public sealed partial class SqlPriceRepository
                 && (c.SkuName ?? string.Empty).ToUpperInvariant() == level)
             .ToList());
         double? paygHourly = payg?.RetailPrice;
+        string? paygMeterId = payg?.MeterId;
 
         // Fallback al meter genérico "SQL Provisioned DWU" × bloques.
         if (paygHourly is null && dwu != 0)
@@ -66,7 +67,10 @@ public sealed partial class SqlPriceRepository
                 .ToList());
             var per100Dwu = generic?.RetailPrice;
             if (per100Dwu is not null)
+            {
                 paygHourly = (double)per100Dwu * blocks;
+                paygMeterId = generic?.MeterId;
+            }
         }
 
         // Reservas: primera fila Reservation por término dentro del pool.
@@ -80,6 +84,7 @@ public sealed partial class SqlPriceRepository
             Ri1yTotal: ri1yTotal is not null ? (double)ri1yTotal * blocks : null,
             Ri3yTotal: ri3yTotal is not null ? (double)ri3yTotal * blocks : null,
             Dwu: dwu,
-            Blocks: blocks);
+            Blocks: blocks,
+            PaygMeterId: paygMeterId);
     }
 }

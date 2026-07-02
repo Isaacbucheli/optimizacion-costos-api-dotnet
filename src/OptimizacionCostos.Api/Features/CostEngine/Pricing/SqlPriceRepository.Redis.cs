@@ -65,6 +65,7 @@ public sealed partial class SqlPriceRepository
                     PaygHourly = payg.RetailPrice,
                     MatchStrategy = payg.AiMatchStrategy,
                     MatchConfidence = payg.AiMatchConfidence,
+                    PaygMeterId = payg.MeterId,
                 };
         }
 
@@ -117,6 +118,7 @@ public sealed partial class SqlPriceRepository
             Ri1yTotal: ri1y?.RetailPrice,
             Ri3yTotal: ri3y?.RetailPrice,
             MatchStrategy: null,
-            MatchConfidence: null);
+            MatchConfidence: null,
+            PaygMeterId: payg?.MeterId);
     }
 }

@@ -199,6 +199,7 @@ public sealed class PriceSelection_MysqlTests
                 ("product_name", "Azure Database for MySQL Flexible Server General Purpose Ddsv4"),
                 ("sku_name", "D2ds_v4"),
                 ("meter_name", "vCore"),
+                ("meter_id", "meter-mysql-payg"),
                 ("price_type", "Consumption"),
                 ("retail_price", 0.121),
                 ("unit_of_measure", "1 Hour"),
@@ -234,6 +235,7 @@ public sealed class PriceSelection_MysqlTests
         Assert.True(result.IsPerVcore);
         // Paridad Python: con compute encontrado, match_strategy = ai_match_strategy = None (null).
         Assert.Null(result.MatchStrategy);
+        Assert.Equal("meter-mysql-payg", result.PaygMeterId);
     }
 
     /// <summary>

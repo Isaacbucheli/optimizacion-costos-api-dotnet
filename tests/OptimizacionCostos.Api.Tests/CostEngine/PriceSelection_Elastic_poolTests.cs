@@ -29,6 +29,7 @@ public sealed class PriceSelection_Elastic_poolTests
                 ("product_name", "SQL Database Single/Elastic Pool General Purpose - Compute Gen5"),
                 ("sku_name", "8 vCore"),
                 ("meter_name", "8 vCore"),
+                ("meter_id", "meter-ep-payg"),
                 ("price_type", "Consumption"),
                 ("retail_price", 1.40),
                 ("unit_of_measure", "1 Hour"),
@@ -49,6 +50,7 @@ public sealed class PriceSelection_Elastic_poolTests
         Assert.NotNull(selected);
         Assert.Equal(1.40, selected!.PaygHourly);
         Assert.Equal("vCore", selected.Model);
+        Assert.Equal("meter-ep-payg", selected.PaygMeterId);
     }
 
     // Python: test_elastic_pool_dtu_selects_pack_and_normalizes_per_day

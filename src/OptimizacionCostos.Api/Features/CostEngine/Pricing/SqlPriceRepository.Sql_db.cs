@@ -102,7 +102,8 @@ public sealed partial class SqlPriceRepository
             MeterName: item.MeterName ?? string.Empty,
             ProductName: item.ProductName ?? string.Empty,
             SkuName: item.SkuName ?? string.Empty,
-            MatchStrategy: item.AiMatchStrategy);
+            MatchStrategy: item.AiMatchStrategy,
+            PaygMeterId: item.MeterId);
     }
 
     /// <summary>

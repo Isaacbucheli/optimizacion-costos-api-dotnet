@@ -39,12 +39,14 @@ public sealed class PriceSelection_App_serviceTests
             new (string, object?)[]
             {
                 ("product_name", "Azure App Service Linux"), ("sku_name", "P1v3"), ("meter_name", "P1 v3"),
+                ("meter_id", "meter-appservice-linux-payg"),
                 ("price_type", "Consumption"), ("retail_price", linuxPayg), ("unit_of_measure", "1 Hour"),
                 ("is_primary_meter", true),
             },
             new (string, object?)[]
             {
                 ("product_name", "Azure App Service"), ("sku_name", "P1v3"), ("meter_name", "P1 v3"),
+                ("meter_id", "meter-appservice-payg"),
                 ("price_type", "Consumption"), ("retail_price", windowsPayg), ("unit_of_measure", "1 Hour"),
                 ("is_primary_meter", true),
             },
@@ -84,6 +86,8 @@ public sealed class PriceSelection_App_serviceTests
         Assert.Equal(windowsPayg, windows.PaygHourly);
         Assert.Equal(linuxRi1y, linux.Ri1yTotal);
         Assert.Equal(windowsRi3y, windows.Ri3yTotal);
+        Assert.Equal("meter-appservice-linux-payg", linux.PaygMeterId);
+        Assert.Equal("meter-appservice-payg", windows.PaygMeterId);
     }
 
     [Fact]

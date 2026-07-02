@@ -67,6 +67,7 @@ public sealed partial class SqlPriceRepository
                         ProductName = compute.ProductName,
                         MatchStrategy = compute.AiMatchStrategy,
                         MatchConfidence = compute.AiMatchConfidence,
+                        PaygMeterId = compute.MeterId,
                     };
                 }
             }
@@ -195,7 +196,8 @@ public sealed partial class SqlPriceRepository
             // En ruta determinista (Fase 1) las filas cacheadas NO traen "ai_match_strategy", así
             // que: compute ENCONTRADO → None (null); compute NO encontrado → "deterministic".
             MatchStrategy: compute is not null ? null : "deterministic",
-            MatchConfidence: null);
+            MatchConfidence: null,
+            PaygMeterId: compute?.MeterId);
     }
 
     /// <summary>

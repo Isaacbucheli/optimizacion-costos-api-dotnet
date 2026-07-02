@@ -92,7 +92,7 @@ public sealed partial class SqlPriceRepository
         };
         var payg = AssistSelect("appservice", "payg_compute_hourly", ctx, candidates);
         if (payg is not null)
-            return selected with { PaygHourly = payg.RetailPrice, MatchStrategy = payg.AiMatchStrategy };
+            return selected with { PaygHourly = payg.RetailPrice, MatchStrategy = payg.AiMatchStrategy, PaygMeterId = payg.MeterId };
 
         return selected;
     }
@@ -200,7 +200,8 @@ public sealed partial class SqlPriceRepository
         return new AppServicePrices(
             PaygHourly: payg?.RetailPrice,
             Ri1yTotal: ri1y?.RetailPrice,
-            Ri3yTotal: ri3y?.RetailPrice);
+            Ri3yTotal: ri3y?.RetailPrice,
+            PaygMeterId: payg?.MeterId);
     }
 
     /// <summary>

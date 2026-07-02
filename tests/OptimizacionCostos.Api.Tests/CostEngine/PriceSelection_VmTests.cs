@@ -41,6 +41,7 @@ public sealed class PriceSelection_VmTests
             {
                 ("product_name", "Virtual Machines D Series Windows"),
                 ("meter_name", "D2as v5"),
+                ("meter_id", "meter-win-payg"),
                 ("price_type", "Consumption"),
                 ("retail_price", windowsPayg),
                 ("unit_of_measure", "1 Hour"),
@@ -99,6 +100,7 @@ public sealed class PriceSelection_VmTests
         Assert.Equal(baseRi1y, selected.Ri1yTotal);
         Assert.Equal(baseRi3y, selected.Ri3yTotal);
         Assert.Equal("Windows", selected.OsUsed);
+        Assert.Equal("meter-win-payg", selected.PaygMeterId);
     }
 
     [Fact]

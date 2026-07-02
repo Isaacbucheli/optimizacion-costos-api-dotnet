@@ -103,6 +103,7 @@ public sealed class PriceSelection_Sql_dbTests
             ("product_name", "SQL Database Single/Elastic Pool General Purpose - Compute Gen5"),
             ("sku_name", "1 vCore"),
             ("meter_name", "1 vCore"),
+            ("meter_id", "meter-sqldb-payg"),
             ("price_type", "Consumption"),
             ("retail_price", 0.2609),
             ("unit_of_measure", "1 Hour"),
@@ -138,6 +139,7 @@ public sealed class PriceSelection_Sql_dbTests
         Assert.Equal(0.2609, details!.RetailPrice);
         Assert.Equal("1 vCore", details.MeterName);
         Assert.Equal("SQL Database Single/Elastic Pool General Purpose - Compute Gen5", details.ProductName);
+        Assert.Equal("meter-sqldb-payg", details.PaygMeterId);
 
         // mapped_lookup (sku empieza con "gp_gen5"): frescura por fetch_query, query por región.
         Assert.Equal("sql_db GP_Gen5 eastus", Assert.Single(cache.IsFetchQueryFreshCalls));

@@ -27,6 +27,7 @@ public sealed class PriceSelection_Sql_miTests
                 ("product_name", (object?)"SQL Managed Instance General Purpose - Compute Gen5"),
                 ("sku_name", "1 vCore"),
                 ("meter_name", "vCore"),
+                ("meter_id", "meter-sqlmi-payg"),
                 ("price_type", "Consumption"),
                 ("retail_price", 0.15),
                 ("unit_of_measure", "1 Hour"),
@@ -58,6 +59,7 @@ public sealed class PriceSelection_Sql_miTests
         Assert.Equal(0.15, selected.PaygHourlyPerVcore);
         Assert.Equal(0.115, selected.StorageMonthlyPerGb);
         Assert.Equal(867.0, selected.Ri1yTotalPerVcore);
+        Assert.Equal("meter-sqlmi-payg", selected.PaygMeterId);
     }
 
     // Python: test_sql_managed_instance_selection_uses_exact_vcore_sku_and_non_zr_storage

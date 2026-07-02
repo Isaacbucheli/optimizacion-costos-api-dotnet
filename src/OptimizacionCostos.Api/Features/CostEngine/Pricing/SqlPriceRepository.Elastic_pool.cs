@@ -70,7 +70,8 @@ public sealed partial class SqlPriceRepository
                 PaygHourly: (double)pricePerDay / 24.0,
                 Model: "DTU",
                 MeterName: dtuItem.MeterName,
-                MatchedSku: dtuItem.SkuName);
+                MatchedSku: dtuItem.SkuName,
+                PaygMeterId: dtuItem.MeterId);
         }
 
         // Modelo vCore (GeneralPurpose/BusinessCritical/Hyperscale): meter '{N} vCore', por hora.
@@ -94,7 +95,8 @@ public sealed partial class SqlPriceRepository
                 PaygHourly: (double)priceHourly,
                 Model: "vCore",
                 MeterName: vcoreItem.MeterName,
-                MatchedSku: vcoreItem.SkuName);
+                MatchedSku: vcoreItem.SkuName,
+                PaygMeterId: vcoreItem.MeterId);
         }
 
         return null;

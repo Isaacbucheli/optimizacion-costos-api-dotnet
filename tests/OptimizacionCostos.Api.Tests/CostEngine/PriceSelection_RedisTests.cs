@@ -46,6 +46,7 @@ public sealed class PriceSelection_RedisTests
                 ("product_name", "Redis Cache Standard C1"),
                 ("sku_name", "Standard"),
                 ("meter_name", "Standard C1"),
+                ("meter_id", "meter-redis-payg"),
                 ("price_type", "Consumption"),
                 ("retail_price", 0.10),
                 ("unit_of_measure", "1 Hour"),
@@ -65,6 +66,7 @@ public sealed class PriceSelection_RedisTests
 
         Assert.Equal(0.10, selected.PaygHourly);
         Assert.Equal(500.0, selected.Ri1yTotal);
+        Assert.Equal("meter-redis-payg", selected.PaygMeterId);
     }
 
     /// <summary>

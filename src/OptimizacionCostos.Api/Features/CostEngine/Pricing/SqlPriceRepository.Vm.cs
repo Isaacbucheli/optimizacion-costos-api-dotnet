@@ -84,7 +84,7 @@ public sealed partial class SqlPriceRepository
         }
 
         if (payg is not null)
-            return selected with { PaygHourly = payg.RetailPrice, MatchStrategy = payg.AiMatchStrategy };
+            return selected with { PaygHourly = payg.RetailPrice, MatchStrategy = payg.AiMatchStrategy, PaygMeterId = payg.MeterId };
 
         return selected;
     }
@@ -141,6 +141,7 @@ public sealed partial class SqlPriceRepository
             PaygHourly: payg?.RetailPrice,
             Ri1yTotal: ri1y?.RetailPrice,
             Ri3yTotal: ri3y?.RetailPrice,
-            OsUsed: osUsed);
+            OsUsed: osUsed,
+            PaygMeterId: payg?.MeterId);
     }
 }

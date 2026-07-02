@@ -37,6 +37,7 @@ public sealed class PriceSelection_SynapseTests
             ("product_name", "Azure Synapse Analytics Dedicated SQL Pool"),
             ("sku_name", "DW500c"),
             ("meter_name", "100 DWUs"),
+            ("meter_id", "meter-synapse-dw500c-payg"),
             ("price_type", "Consumption"),
             ("retail_price", 6.00),
             ("unit_of_measure", "1/Hour"),
@@ -46,6 +47,7 @@ public sealed class PriceSelection_SynapseTests
             ("product_name", "Azure Synapse Analytics SQL Provisioned DWU"),
             ("sku_name", "DWU"),
             ("meter_name", "100 DWU"),
+            ("meter_id", "meter-synapse-generic-dwu"),
             ("price_type", "Consumption"),
             ("retail_price", 1.20),
             ("unit_of_measure", "1/Hour"),
@@ -82,6 +84,7 @@ public sealed class PriceSelection_SynapseTests
         Assert.Equal(5, selected.Blocks);
         Assert.Equal(6623.0 * 5, selected.Ri1yTotal);
         Assert.Equal(11038.0 * 5, selected.Ri3yTotal);
+        Assert.Equal("meter-synapse-dw500c-payg", selected.PaygMeterId);
     }
 
     /// <summary>
@@ -96,6 +99,7 @@ public sealed class PriceSelection_SynapseTests
 
         Assert.Equal(1.20 * 9, selected.PaygHourly);
         Assert.Equal(6623.0 * 9, selected.Ri1yTotal);
+        Assert.Equal("meter-synapse-generic-dwu", selected.PaygMeterId);
     }
 
     /// <summary>

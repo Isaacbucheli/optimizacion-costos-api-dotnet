@@ -22,7 +22,8 @@ public sealed record VmPrices(
     double? Ri1yTotal,
     double? Ri3yTotal,
     string? OsUsed = null,
-    string? MatchStrategy = null);
+    string? MatchStrategy = null,
+    string? PaygMeterId = null);
 
 /// <summary>
 /// Retorno de <c>get_app_service_prices(arm_sku_name, region, is_linux)</c> y del
@@ -33,7 +34,8 @@ public sealed record AppServicePrices(
     double? PaygHourly,
     double? Ri1yTotal,
     double? Ri3yTotal,
-    string? MatchStrategy = null);
+    string? MatchStrategy = null,
+    string? PaygMeterId = null);
 
 /// <summary>
 /// Retorno de <c>get_elastic_premium_base_price(sku_name, region)</c> (planes EP*/WS*).
@@ -60,7 +62,8 @@ public sealed record SqlDbPriceDetails(
     string? MeterName,
     string? ProductName,
     string? SkuName,
-    string? MatchStrategy = null);
+    string? MatchStrategy = null,
+    string? PaygMeterId = null);
 
 /// <summary>
 /// Retorno de <c>get_sql_managed_instance_prices(region, sku_tier, sku_family, vcores, zone_redundant)</c>
@@ -81,7 +84,8 @@ public sealed record SqlManagedInstancePrices(
     string? StorageSkuName = null,
     string? ProductName = null,
     string? MatchStrategy = null,
-    double? MatchConfidence = null);
+    double? MatchConfidence = null,
+    string? PaygMeterId = null);
 
 /// <summary>
 /// Retorno de <c>get_mysql_flex_prices(arm_sku_name, region, sku_tier)</c> y del
@@ -96,7 +100,8 @@ public sealed record MySqlFlexPrices(
     double? Ri3yTotal,
     bool IsPerVcore = false,
     string? MatchStrategy = null,
-    double? MatchConfidence = null);
+    double? MatchConfidence = null,
+    string? PaygMeterId = null);
 
 /// <summary>
 /// Retorno de <c>get_redis_prices(sku_tier, sku_capacity, region)</c> y del selector
@@ -108,7 +113,8 @@ public sealed record RedisPrices(
     double? Ri1yTotal,
     double? Ri3yTotal,
     string? MatchStrategy = null,
-    double? MatchConfidence = null);
+    double? MatchConfidence = null,
+    string? PaygMeterId = null);
 
 /// <summary>
 /// Retorno de <c>get_synapse_dw_prices(dw_level, region)</c> y del selector
@@ -122,7 +128,8 @@ public sealed record SynapseDwPrices(
     double? Ri1yTotal,
     double? Ri3yTotal,
     int Dwu = 0,
-    int Blocks = 1);
+    int Blocks = 1,
+    string? PaygMeterId = null);
 
 /// <summary>
 /// Retorno de <c>get_elastic_pool_prices(sku_tier, sku_family, capacity, region)</c> y del
@@ -136,4 +143,5 @@ public sealed record ElasticPoolPrices(
     double? PaygHourly,
     string? Model = null,
     string? MeterName = null,
-    string? MatchedSku = null);
+    string? MatchedSku = null,
+    string? PaygMeterId = null);
