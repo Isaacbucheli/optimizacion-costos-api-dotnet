@@ -160,7 +160,8 @@ public sealed class OptimizationChecksTests
         var rows = Rows("""
             [{"id":"/vm/1","name":"win-sin-ahb","type":"microsoft.compute/virtualmachines","location":"eastus","vmSize":"Standard_D2s_v3","osType":"Windows","lic":""},
              {"id":"/vm/2","name":"win-con-ahb","type":"microsoft.compute/virtualmachines","location":"eastus","vmSize":"Standard_D2s_v3","osType":"Windows","lic":"Windows_Server"},
-             {"id":"/vm/3","name":"linux","type":"microsoft.compute/virtualmachines","location":"eastus","vmSize":"Standard_D2s_v3","osType":"Linux","lic":""}]
+             {"id":"/vm/3","name":"linux","type":"microsoft.compute/virtualmachines","location":"eastus","vmSize":"Standard_D2s_v3","osType":"Linux","lic":""},
+             {"id":"/vm/4","name":"win-avd","type":"microsoft.compute/virtualmachines","location":"eastus","vmSize":"Standard_D2s_v3","osType":"Windows","lic":"Windows_Client"}]
             """);
         var f = OptimizationChecks.VmsWithoutAhb.BuildFindings(OptimizationChecks.VmsWithoutAhb, rows, "sub-1", new FakeCost());
         var only = Assert.Single(f); // solo la Windows sin Windows_Server

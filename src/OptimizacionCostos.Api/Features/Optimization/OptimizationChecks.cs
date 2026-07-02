@@ -351,7 +351,7 @@ public static class OptimizationChecks
         | where type =~ 'microsoft.compute/virtualmachines'
         | extend osType = tostring(properties.storageProfile.osDisk.osType), lic = tostring(properties.licenseType)
         | where osType =~ 'Windows'
-        | where isempty(lic) or lic !~ 'Windows_Server'
+        | where isempty(lic) or (lic !~ 'Windows_Server' and lic !~ 'Windows_Client')
         | project id, name, type, location, vmSize = tostring(properties.hardwareProfile.vmSize), osType, lic
         """,
         (check, rows, subId, cost) =>
@@ -363,6 +363,7 @@ public static class OptimizationChecks
                 var lic = r.Str("lic") ?? "";
                 if (os != "windows") continue;
                 if (string.Equals(lic, "Windows_Server", StringComparison.OrdinalIgnoreCase)) continue;
+                if (string.Equals(lic, "Windows_Client", StringComparison.OrdinalIgnoreCase)) continue;
                 var savings = cost.AhbMonthlySavings(r.Str("vmSize") ?? "", r.Str("location") ?? "");
                 outl.Add(F(check, subId, r, "microsoft.compute/virtualmachines",
                     new Dictionary<string, object?> { ["vmSize"] = r.Str("vmSize"), ["licenseType"] = lic, ["note"] = "Aplicar Azure Hybrid Benefit." }, savings));

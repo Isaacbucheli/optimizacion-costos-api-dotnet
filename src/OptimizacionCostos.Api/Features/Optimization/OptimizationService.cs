@@ -11,7 +11,7 @@ public sealed class NoManagedSubscriptionsException() : Exception("El cliente no
 
 /// <summary>
 /// Barrido de optimización de tenant. Port de app/optimization/*.py + routes/optimization.py.
-/// Corre los 7 checks por suscripción vía Resource Graph, estima ahorro, persiste hallazgos y
+/// Corre los 13 checks por suscripción vía Resource Graph, estima ahorro, persiste hallazgos y
 /// reconcilia su estado entre barridos. Solo lectura de Azure.
 /// </summary>
 public interface IOptimizationService
