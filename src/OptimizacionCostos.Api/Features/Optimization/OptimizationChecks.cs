@@ -13,7 +13,7 @@ public static class OptimizationChecks
     public static IReadOnlyList<CheckDefinition> Registered =>
     [
         OrphanedDisks, OrphanedPublicIps, StoppedNotDeallocatedVms, LongDeallocatedVms,
-        EmptyAppServicePlans, LbAppGwNoBackend, StorageNoRetention, OrphanedNics,
+        EmptyAppServicePlans, LbAppGwNoBackend, StorageNoRetention, OrphanedNics, EmptySubnets,
     ];
 
     private static Finding F(CheckDefinition c, string subId, RgRow r, string defaultType,
@@ -217,6 +217,35 @@ public static class OptimizationChecks
                 if (!string.IsNullOrEmpty(r.Str("vmId")) || !string.IsNullOrEmpty(r.Str("peId"))) continue;
                 outl.Add(F(check, subId, r, "microsoft.network/networkinterfaces",
                     new Dictionary<string, object?> { ["note"] = "NIC sin VM ni Private Endpoint. Verificar y eliminar." }, null));
+            }
+            return outl;
+        });
+
+    // -------------------- 9. Subnets vacías --------------------
+    // Fuente: Microsoft FinOps Toolkit (MIT) — github.com/microsoft/finops-toolkit
+    public static readonly CheckDefinition EmptySubnets = new(
+        "empty_subnets", "Subnets vacías",
+        "Subnets sin IP configs, delegaciones ni service endpoints: espacio de red reservado sin uso.",
+        OptCategory.Governance, 5, OptSeverity.Low,
+        """
+        Resources
+        | where type =~ 'microsoft.network/virtualnetworks'
+        | extend vnetName = name
+        | mv-expand subnet = properties.subnets
+        | extend ipCount = array_length(subnet.properties.ipConfigurations),
+                 delegCount = array_length(subnet.properties.delegations),
+                 seCount = array_length(subnet.properties.serviceEndpoints)
+        | where (isnull(ipCount) or ipCount == 0) and (isnull(delegCount) or delegCount == 0) and (isnull(seCount) or seCount == 0)
+        | project id = tostring(subnet.id), name = tostring(subnet.name), type = 'microsoft.network/virtualnetworks/subnets', location, vnet = vnetName, ipCount, delegCount
+        """,
+        (check, rows, subId, cost) =>
+        {
+            var outl = new List<Finding>();
+            foreach (var r in rows)
+            {
+                if ((r.Int("ipCount") ?? 0) > 0 || (r.Int("delegCount") ?? 0) > 0) continue;
+                outl.Add(F(check, subId, r, "microsoft.network/virtualnetworks/subnets",
+                    new Dictionary<string, object?> { ["vnet"] = r.Str("vnet"), ["note"] = "Subnet sin uso." }, null));
             }
             return outl;
         });

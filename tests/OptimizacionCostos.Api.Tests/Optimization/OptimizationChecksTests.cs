@@ -39,11 +39,25 @@ public sealed class OptimizationChecksTests
     }
 
     [Fact]
+    public void EmptySubnets_MarcaSinIpConfigsNiDelegaciones()
+    {
+        var rows = Rows("""
+            [{"id":"/vnet1/subnets/vacia","name":"vacia","type":"microsoft.network/virtualnetworks/subnets","location":"eastus","vnet":"vnet1","ipCount":0,"delegCount":0},
+             {"id":"/vnet1/subnets/usada","name":"usada","type":"microsoft.network/virtualnetworks/subnets","location":"eastus","vnet":"vnet1","ipCount":3,"delegCount":0}]
+            """);
+        var f = OptimizationChecks.EmptySubnets.BuildFindings(OptimizationChecks.EmptySubnets, rows, "sub-1", new FakeCost());
+        var only = Assert.Single(f);
+        Assert.Equal("vacia", only.ResourceName);
+        Assert.Null(only.EstimatedMonthlySavings);
+    }
+
+    [Fact]
     public void HayChecksRegistrados()
     {
-        Assert.Equal(8, OptimizationChecks.Registered.Count);
+        Assert.Equal(9, OptimizationChecks.Registered.Count);
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "orphaned_disks");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "orphaned_nics");
+        Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "empty_subnets");
     }
 
     [Fact]
