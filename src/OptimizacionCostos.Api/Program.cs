@@ -131,6 +131,12 @@ builder.Services.AddScoped<ScenarioService>();
 builder.Services.AddScoped<IAnalysisAccess, SqlAnalysisAccess>();
 builder.Services.AddScoped<ICostResultsQuery, SqlCostResultsQuery>();
 
+// FinOps Toolkit fase 1: datasets de referencia (open data, MIT) + elegibilidad RI.
+builder.Services.AddMemoryCache();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.FinOpsData.IFinOpsDataStore, OptimizacionCostos.Api.Features.FinOpsData.SqlFinOpsDataStore>();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.FinOpsData.IFinOpsRefData, OptimizacionCostos.Api.Features.FinOpsData.SqlFinOpsRefData>();
+builder.Services.AddHttpClient<OptimizacionCostos.Api.Features.FinOpsData.IFinOpsDataRefreshService, OptimizacionCostos.Api.Features.FinOpsData.FinOpsDataRefreshService>(c => c.Timeout = TimeSpan.FromSeconds(120));
+
 // CORS explicito (paridad con CORS_ORIGINS del FastAPI)
 const string CorsPolicy = "BitCors";
 builder.Services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
