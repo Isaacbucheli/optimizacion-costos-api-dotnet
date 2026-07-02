@@ -431,6 +431,7 @@ public sealed class WafController(
             resource_count = rec.ResourceCount,
             completion_pct = tr.CompletionPct,
             remediation_start_date = tr.RemediationStartDate?.ToString("yyyy-MM-dd"),
+            remediation_end_date = tr.RemediationEndDate?.ToString("yyyy-MM-dd"),
             projected_bit_effort = tr.ProjectedBitEffort,
             execution_log = tr.ExecutionLog,
             priority_override = tr.PriorityOverride,
@@ -898,7 +899,7 @@ public sealed class WafController(
     }
 
     private static bool AnyTrackingFieldSet(WafTrackingUpdate p) =>
-        p.CompletionPctSet || p.RemediationStartDateSet || p.ProjectedBitEffortSet
+        p.CompletionPctSet || p.RemediationStartDateSet || p.RemediationEndDateSet || p.ProjectedBitEffortSet
         || p.ExecutionLogSet || p.PriorityOverrideSet || p.InternalNotesSet;
 
     private static double SafeDouble(SqlDataReader r, int ordinal)

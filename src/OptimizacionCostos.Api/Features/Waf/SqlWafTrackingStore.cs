@@ -20,6 +20,7 @@ public sealed class SqlWafTrackingStore(ISqlConnectionFactory factory) : IWafTra
     [
         "completion_pct",
         "remediation_start_date",
+        "remediation_end_date",
         "projected_bit_effort",
         "execution_log",
         "priority_override",
@@ -40,7 +41,7 @@ public sealed class SqlWafTrackingStore(ISqlConnectionFactory factory) : IWafTra
         await using var cmd = conn.CreateCommand();
         if (tx is not null) cmd.Transaction = tx;
         cmd.CommandText = """
-            SELECT completion_pct, remediation_start_date, projected_bit_effort,
+            SELECT completion_pct, remediation_start_date, remediation_end_date, projected_bit_effort,
                    execution_log, priority_override, internal_notes, updated_at, updated_by
             FROM dbo.waf_recommendation_tracking
             WHERE client_id = @client_id AND canonical_id = @canonical_id
@@ -56,18 +57,22 @@ public sealed class SqlWafTrackingStore(ISqlConnectionFactory factory) : IWafTra
                 RemediationStartDate: reader.IsDBNull(1)
                     ? null
                     : DateOnly.FromDateTime(reader.GetDateTime(1)),
-                ProjectedBitEffort: reader.IsDBNull(2) ? null : reader.GetString(2),
-                ExecutionLog: reader.IsDBNull(3) ? null : reader.GetString(3),
-                PriorityOverride: reader.IsDBNull(4) ? null : reader.GetByte(4),
-                InternalNotes: reader.IsDBNull(5) ? null : reader.GetString(5),
-                UpdatedAt: reader.IsDBNull(6) ? default : reader.GetDateTime(6),
-                UpdatedBy: reader.IsDBNull(7) ? null : reader.GetString(7));
+                RemediationEndDate: reader.IsDBNull(2)
+                    ? null
+                    : DateOnly.FromDateTime(reader.GetDateTime(2)),
+                ProjectedBitEffort: reader.IsDBNull(3) ? null : reader.GetString(3),
+                ExecutionLog: reader.IsDBNull(4) ? null : reader.GetString(4),
+                PriorityOverride: reader.IsDBNull(5) ? null : reader.GetByte(5),
+                InternalNotes: reader.IsDBNull(6) ? null : reader.GetString(6),
+                UpdatedAt: reader.IsDBNull(7) ? default : reader.GetDateTime(7),
+                UpdatedBy: reader.IsDBNull(8) ? null : reader.GetString(8));
         }
 
         // Sin fila: defaults (paridad con el dict default de load_tracking).
         return new WafTracking(
             CompletionPct: 0,
             RemediationStartDate: null,
+            RemediationEndDate: null,
             ProjectedBitEffort: null,
             ExecutionLog: null,
             PriorityOverride: null,
@@ -97,6 +102,7 @@ public sealed class SqlWafTrackingStore(ISqlConnectionFactory factory) : IWafTra
                 // se cae a 0 en vez de violar el NOT NULL. El resto de campos sí admiten NULL.
                 CompletionPct: values.CompletionPctSet ? (values.CompletionPct ?? 0) : current.CompletionPct,
                 RemediationStartDate: values.RemediationStartDateSet ? values.RemediationStartDate : current.RemediationStartDate,
+                RemediationEndDate: values.RemediationEndDateSet ? values.RemediationEndDate : current.RemediationEndDate,
                 ProjectedBitEffort: values.ProjectedBitEffortSet ? values.ProjectedBitEffort : current.ProjectedBitEffort,
                 ExecutionLog: values.ExecutionLogSet ? values.ExecutionLog : current.ExecutionLog,
                 PriorityOverride: values.PriorityOverrideSet ? values.PriorityOverride : current.PriorityOverride,
@@ -113,15 +119,16 @@ public sealed class SqlWafTrackingStore(ISqlConnectionFactory factory) : IWafTra
                     ON target.client_id = source.client_id AND target.canonical_id = source.canonical_id
                     WHEN MATCHED THEN
                         UPDATE SET completion_pct = @completion_pct, remediation_start_date = @remediation_start_date,
+                            remediation_end_date = @remediation_end_date,
                             projected_bit_effort = @projected_bit_effort, execution_log = @execution_log,
                             priority_override = @priority_override, internal_notes = @internal_notes,
                             updated_at = SYSUTCDATETIME(), updated_by = @updated_by
                     WHEN NOT MATCHED THEN
                         INSERT (client_id, canonical_id, completion_pct, remediation_start_date,
-                                projected_bit_effort, execution_log, priority_override,
+                                remediation_end_date, projected_bit_effort, execution_log, priority_override,
                                 internal_notes, updated_by)
                         VALUES (@client_id, @canonical_id, @completion_pct, @remediation_start_date,
-                                @projected_bit_effort, @execution_log, @priority_override,
+                                @remediation_end_date, @projected_bit_effort, @execution_log, @priority_override,
                                 @internal_notes, @updated_by);
                     """;
                 merge.Parameters.Add(new SqlParameter("@client_id", clientId));
@@ -129,6 +136,8 @@ public sealed class SqlWafTrackingStore(ISqlConnectionFactory factory) : IWafTra
                 merge.Parameters.Add(new SqlParameter("@completion_pct", merged.CompletionPct));
                 merge.Parameters.Add(new SqlParameter("@remediation_start_date",
                     merged.RemediationStartDate is { } d ? d.ToDateTime(TimeOnly.MinValue) : DBNull.Value));
+                merge.Parameters.Add(new SqlParameter("@remediation_end_date",
+                    merged.RemediationEndDate is { } de ? de.ToDateTime(TimeOnly.MinValue) : DBNull.Value));
                 merge.Parameters.Add(new SqlParameter("@projected_bit_effort", (object?)merged.ProjectedBitEffort ?? DBNull.Value));
                 merge.Parameters.Add(new SqlParameter("@execution_log", (object?)merged.ExecutionLog ?? DBNull.Value));
                 merge.Parameters.Add(new SqlParameter("@priority_override", (object?)merged.PriorityOverride ?? DBNull.Value));
@@ -276,6 +285,9 @@ public sealed class SqlWafTrackingStore(ISqlConnectionFactory factory) : IWafTra
             case "remediation_start_date":
                 value = v.RemediationStartDate;
                 return v.RemediationStartDateSet;
+            case "remediation_end_date":
+                value = v.RemediationEndDate;
+                return v.RemediationEndDateSet;
             case "projected_bit_effort":
                 value = v.ProjectedBitEffort;
                 return v.ProjectedBitEffortSet;
@@ -299,6 +311,7 @@ public sealed class SqlWafTrackingStore(ISqlConnectionFactory factory) : IWafTra
     {
         "completion_pct" => current.CompletionPct,
         "remediation_start_date" => current.RemediationStartDate,
+        "remediation_end_date" => current.RemediationEndDate,
         "projected_bit_effort" => current.ProjectedBitEffort,
         "execution_log" => current.ExecutionLog,
         "priority_override" => current.PriorityOverride,

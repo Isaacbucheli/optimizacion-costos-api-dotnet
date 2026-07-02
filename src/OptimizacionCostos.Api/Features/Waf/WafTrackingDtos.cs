@@ -19,6 +19,7 @@ public sealed class WafTrackingUpdate
 {
     private int? _completionPct;
     private DateOnly? _remediationStartDate;
+    private DateOnly? _remediationEndDate;
     private string? _projectedBitEffort;
     private string? _executionLog;
     private byte? _priorityOverride;
@@ -36,6 +37,13 @@ public sealed class WafTrackingUpdate
     {
         get => _remediationStartDate;
         set { _remediationStartDate = value; RemediationStartDateSet = true; }
+    }
+
+    /// <summary>remediation_end_date / fecha de cierre (DATE). Ver <see cref="RemediationEndDateSet"/>.</summary>
+    public DateOnly? RemediationEndDate
+    {
+        get => _remediationEndDate;
+        set { _remediationEndDate = value; RemediationEndDateSet = true; }
     }
 
     /// <summary>projected_bit_effort (texto libre). Ver <see cref="ProjectedBitEffortSet"/>.</summary>
@@ -69,6 +77,7 @@ public sealed class WafTrackingUpdate
     // Flags de presencia (true solo si el campo vino en el JSON). No se serializan.
     [System.Text.Json.Serialization.JsonIgnore] public bool CompletionPctSet { get; private set; }
     [System.Text.Json.Serialization.JsonIgnore] public bool RemediationStartDateSet { get; private set; }
+    [System.Text.Json.Serialization.JsonIgnore] public bool RemediationEndDateSet { get; private set; }
     [System.Text.Json.Serialization.JsonIgnore] public bool ProjectedBitEffortSet { get; private set; }
     [System.Text.Json.Serialization.JsonIgnore] public bool ExecutionLogSet { get; private set; }
     [System.Text.Json.Serialization.JsonIgnore] public bool PriorityOverrideSet { get; private set; }

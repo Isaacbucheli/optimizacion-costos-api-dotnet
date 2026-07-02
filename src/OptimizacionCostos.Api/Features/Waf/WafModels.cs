@@ -31,7 +31,7 @@ public sealed record WafResourceFinding(
 
 // Tracking (PK compuesta client_id+canonical_id)
 public sealed record WafTracking(
-    int CompletionPct, DateOnly? RemediationStartDate, string? ProjectedBitEffort,
+    int CompletionPct, DateOnly? RemediationStartDate, DateOnly? RemediationEndDate, string? ProjectedBitEffort,
     string? ExecutionLog, byte? PriorityOverride, string? InternalNotes,
     DateTime UpdatedAt, string? UpdatedBy);
 

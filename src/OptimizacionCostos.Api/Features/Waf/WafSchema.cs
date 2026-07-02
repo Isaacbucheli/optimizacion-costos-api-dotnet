@@ -128,6 +128,7 @@ public static class WafSchema
                 canonical_id INT NOT NULL,
                 completion_pct INT NOT NULL CONSTRAINT DF_waf_track_pct DEFAULT 0,
                 remediation_start_date DATE NULL,
+                remediation_end_date DATE NULL,
                 projected_bit_effort NVARCHAR(200) NULL,
                 execution_log NVARCHAR(MAX) NULL,
                 priority_override TINYINT NULL,
@@ -138,6 +139,10 @@ public static class WafSchema
                 CONSTRAINT CK_waf_track_pct CHECK (completion_pct BETWEEN 0 AND 100)
             );
         END
+        """,
+        // soft-migration tracking (tablas preexistentes): fecha de cierre
+        """
+        IF COL_LENGTH('dbo.waf_recommendation_tracking', 'remediation_end_date') IS NULL ALTER TABLE dbo.waf_recommendation_tracking ADD remediation_end_date DATE NULL;
         """,
         // 5. tracking_history
         """
