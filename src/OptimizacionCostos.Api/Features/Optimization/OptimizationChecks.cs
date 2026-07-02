@@ -13,7 +13,7 @@ public static class OptimizationChecks
     public static IReadOnlyList<CheckDefinition> Registered =>
     [
         OrphanedDisks, OrphanedPublicIps, StoppedNotDeallocatedVms, LongDeallocatedVms,
-        EmptyAppServicePlans, LbAppGwNoBackend, StorageNoRetention, OrphanedNics, EmptySubnets, VmsWithoutHa,
+        EmptyAppServicePlans, LbAppGwNoBackend, StorageNoRetention, OrphanedNics, EmptySubnets, VmsWithoutHa, BasicLoadBalancers,
     ];
 
     private static Finding F(CheckDefinition c, string subId, RgRow r, string defaultType,
@@ -273,6 +273,31 @@ public static class OptimizationChecks
                 if (r.BoolFalse("hasZone") || r.BoolFalse("hasAvSet") || r.BoolFalse("inVmss")) continue;
                 outl.Add(F(check, subId, r, "microsoft.compute/virtualmachines",
                     new Dictionary<string, object?> { ["vmSize"] = r.Str("vmSize"), ["note"] = "Sin zona/availability set/VMSS." }, null));
+            }
+            return outl;
+        });
+
+    // -------------------- 11. Load Balancers Basic --------------------
+    // Fuente: Microsoft FinOps Toolkit (MIT) — github.com/microsoft/finops-toolkit
+    public static readonly CheckDefinition BasicLoadBalancers = new(
+        "basic_load_balancers", "Load Balancers Basic (en retiro)",
+        "Load Balancers SKU Basic: el tier se está retirando; planificar migración a Standard.",
+        OptCategory.Governance, 5, OptSeverity.Low,
+        """
+        Resources
+        | where type =~ 'microsoft.network/loadbalancers'
+        | extend skuName = tostring(sku.name)
+        | where tolower(skuName) == 'basic'
+        | project id, name, type, location, sku = skuName
+        """,
+        (check, rows, subId, cost) =>
+        {
+            var outl = new List<Finding>();
+            foreach (var r in rows)
+            {
+                if (!string.Equals(r.Str("sku"), "Basic", StringComparison.OrdinalIgnoreCase)) continue;
+                outl.Add(F(check, subId, r, "microsoft.network/loadbalancers",
+                    new Dictionary<string, object?> { ["sku"] = r.Str("sku"), ["note"] = "Basic LB en retiro; migrar a Standard." }, null));
             }
             return outl;
         });

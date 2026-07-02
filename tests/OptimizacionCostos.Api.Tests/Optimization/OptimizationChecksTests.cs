@@ -54,11 +54,12 @@ public sealed class OptimizationChecksTests
     [Fact]
     public void HayChecksRegistrados()
     {
-        Assert.Equal(10, OptimizationChecks.Registered.Count);
+        Assert.Equal(11, OptimizationChecks.Registered.Count);
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "orphaned_disks");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "orphaned_nics");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "empty_subnets");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "vms_without_ha");
+        Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "basic_load_balancers");
     }
 
     [Fact]
@@ -122,5 +123,18 @@ public sealed class OptimizationChecksTests
         Assert.Equal(a.Fingerprint(7), b.Fingerprint(7));
         var c = a with { AzureResourceId = "/d/2" };
         Assert.NotEqual(a.Fingerprint(7), c.Fingerprint(7));
+    }
+
+    [Fact]
+    public void BasicLoadBalancers_MarcaSoloBasic()
+    {
+        var rows = Rows("""
+            [{"id":"/lb/1","name":"lb-basic","type":"microsoft.network/loadbalancers","location":"eastus","sku":"Basic"},
+             {"id":"/lb/2","name":"lb-standard","type":"microsoft.network/loadbalancers","location":"eastus","sku":"Standard"}]
+            """);
+        var f = OptimizationChecks.BasicLoadBalancers.BuildFindings(OptimizationChecks.BasicLoadBalancers, rows, "sub-1", new FakeCost());
+        var only = Assert.Single(f);
+        Assert.Equal("lb-basic", only.ResourceName);
+        Assert.Null(only.EstimatedMonthlySavings);
     }
 }
