@@ -14,6 +14,8 @@ public interface ICostEstimation
     double? PublicIpMonthlySavings(string skuName, string region);
     double? AppServicePlanMonthlySavings(string skuName, string region, bool isLinux);
     double? VmComputeMonthlySavings(string vmSize, string region, string osType);
+    double? AhbMonthlySavings(string vmSize, string region);
+    double? SnapshotMonthlySavings(string? snapshotSku, int? sizeGb, string region);
 }
 
 public sealed class CostEstimation(IPriceRepository prices, IPricingConstants constants, ILogger<CostEstimation> logger) : ICostEstimation
@@ -53,5 +55,24 @@ public sealed class CostEstimation(IPriceRepository prices, IPricingConstants co
             return hourly is null ? null : hourly.Value * constants.HoursPerMonth();
         }
         catch (Exception ex) { logger.LogWarning(ex, "cost_estimation vm fallo type={Type}", ex.GetType().Name); return null; }
+    }
+
+    public double? AhbMonthlySavings(string vmSize, string region)
+    {
+        try
+        {
+            var win = prices.GetVmPrices(vmSize, region, "Windows").PaygHourly;
+            var lnx = prices.GetVmPrices(vmSize, region, "Linux").PaygHourly;
+            if (win is null || lnx is null || win.Value <= lnx.Value) return null;
+            return (win.Value - lnx.Value) * constants.HoursPerMonth();
+        }
+        catch (Exception ex) { logger.LogWarning(ex, "cost_estimation ahb fallo type={Type}", ex.GetType().Name); return null; }
+    }
+
+    public double? SnapshotMonthlySavings(string? snapshotSku, int? sizeGb, string region)
+    {
+        if (sizeGb is null or <= 0) return null;
+        var perGb = Safe(() => prices.GetSnapshotPricePerGb(region, snapshotSku));
+        return perGb is null ? null : perGb.Value * sizeGb.Value;
     }
 }

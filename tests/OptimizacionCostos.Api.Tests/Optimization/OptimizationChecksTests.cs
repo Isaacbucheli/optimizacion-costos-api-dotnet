@@ -17,6 +17,8 @@ public sealed class OptimizationChecksTests
         public double? PublicIpMonthlySavings(string s, string r) => 3.65;
         public double? AppServicePlanMonthlySavings(string s, string r, bool l) => 50.0;
         public double? VmComputeMonthlySavings(string s, string r, string o) => 100.0;
+        public double? AhbMonthlySavings(string s, string r) => 40.0;
+        public double? SnapshotMonthlySavings(string? sku, int? g, string r) => g is null ? null : 5.0;
     }
 
     private static List<RgRow> Rows(string jsonArray) =>
