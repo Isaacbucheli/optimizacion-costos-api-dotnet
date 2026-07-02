@@ -8,6 +8,7 @@ using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.CostEngine.Engine;
 using OptimizacionCostos.Api.Features.CostEngine.Pricing;
 using OptimizacionCostos.Api.Features.CostEngine.Scenarios;
+using OptimizacionCostos.Api.Features.FinOpsData;
 using OptimizacionCostos.Api.Tests.CostEngine;
 
 namespace OptimizacionCostos.Api.Tests.CostEngine.Api;
@@ -28,6 +29,7 @@ public sealed class CostApiTestFactory : WebApplicationFactory<Program>
     public FakeCostResultsQuery Query { get; } = new();
     public FakePriceCache PriceCache { get; } = new();
     public FakeScenarioDataSource ScenarioData { get; } = new();
+    public FakeFinOpsDataRefreshService FinOpsRefresh { get; } = new();
 
     public CostApiTestFactory()
     {
@@ -59,6 +61,11 @@ public sealed class CostApiTestFactory : WebApplicationFactory<Program>
             services.AddSingleton<ICostResultStore>(new FakeCostResultStore());
             services.RemoveAll<IScenarioDataSource>();
             services.AddSingleton<IScenarioDataSource>(ScenarioData);
+
+            // Fase FinOps: hook best-effort en calculate. Se reemplaza el servicio real
+            // (AddHttpClient -> HTTP/SQL real) por un fake determinista que solo cuenta llamadas.
+            services.RemoveAll<IFinOpsDataRefreshService>();
+            services.AddSingleton<IFinOpsDataRefreshService>(FinOpsRefresh);
         });
     }
 }

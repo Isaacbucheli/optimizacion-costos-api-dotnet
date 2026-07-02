@@ -4,6 +4,7 @@ using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.CostEngine.Engine;
 using OptimizacionCostos.Api.Features.CostEngine.Pricing;
 using OptimizacionCostos.Api.Features.CostEngine.Scenarios;
+using OptimizacionCostos.Api.Features.FinOpsData;
 using CostEngineService = OptimizacionCostos.Api.Features.CostEngine.Engine.CostEngine;
 
 namespace OptimizacionCostos.Api.Features.CostEngine.Api;
@@ -31,7 +32,8 @@ public sealed class CostCalculationController(
     ScenarioService scenarios,
     ICostResultsQuery query,
     IPriceCache priceCache,
-    ILogger<CostCalculationController> logger) : ControllerBase
+    ILogger<CostCalculationController> logger,
+    IFinOpsDataRefreshService? finopsRefresh = null) : ControllerBase
 {
     // -------------------- POST /analysis/{id}/calculate --------------------
 
@@ -50,6 +52,12 @@ public sealed class CostCalculationController(
         var check = await access.AssertAnalysisAccessAsync(User, analysisId, ct);
         if (!check.Ok)
             return Translate(check);
+
+        if (finopsRefresh is not null)
+        {
+            try { await finopsRefresh.EnsureFreshBestEffortAsync(TimeSpan.FromSeconds(30), ct); }
+            catch { /* best-effort: el cálculo continúa con los datos que haya */ }
+        }
 
         CalculationSummary summary;
         try

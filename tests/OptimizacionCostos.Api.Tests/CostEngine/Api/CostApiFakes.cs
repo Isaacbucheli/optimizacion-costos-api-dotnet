@@ -3,6 +3,7 @@ using OptimizacionCostos.Api.Features.CostEngine;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.CostEngine.Engine;
 using OptimizacionCostos.Api.Features.CostEngine.Scenarios;
+using OptimizacionCostos.Api.Features.FinOpsData;
 
 namespace OptimizacionCostos.Api.Tests.CostEngine.Api;
 
@@ -141,4 +142,23 @@ public sealed class FakeScenarioDataSource : IScenarioDataSource
         double totalMonthly, double totalAnnual,
         double savingsMonthly, double savingsAnnual, double savingsPct) => ++_scenarioSeq;
     public void InsertBreakdown(int scenarioId, ScenarioBreakdownLine line) { }
+}
+
+/// <summary>
+/// Fake no-op de <see cref="IFinOpsDataRefreshService"/>: registrado en <see cref="CostApiTestFactory"/>
+/// para que el hook best-effort de POST calculate no dispare HTTP/SQL real en los tests (el servicio
+/// real se resuelve vía AddHttpClient en Program.cs). Solo cuenta invocaciones.
+/// </summary>
+public sealed class FakeFinOpsDataRefreshService : IFinOpsDataRefreshService
+{
+    public int EnsureFreshCalls { get; private set; }
+
+    public Task<IReadOnlyList<FinOpsRefreshResult>> RefreshAllAsync(CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<FinOpsRefreshResult>>([]);
+
+    public Task<bool> EnsureFreshBestEffortAsync(TimeSpan timeout, CancellationToken ct)
+    {
+        EnsureFreshCalls++;
+        return Task.FromResult(true);
+    }
 }

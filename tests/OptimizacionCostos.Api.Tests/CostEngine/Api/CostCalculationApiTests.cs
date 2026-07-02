@@ -293,4 +293,16 @@ public class CostCalculationApiTests : IClassFixture<CostApiTestFactory>
             "/analysis/19/calculate", new { resource_limit = 999 });
         Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
     }
+
+    // ---- calculate: dispara el refresh best-effort de datos FinOps ----
+
+    [Fact]
+    public async Task Calculate_InvocaEnsureFreshBestEffort()
+    {
+        _factory.Access.AnalysisToClient[21] = 8;
+        _factory.Access.Assignments["a@bit.ec"] = new HashSet<int> { 8 };
+        var client = ClientFor("a@bit.ec", Roles.Admin);
+        await client.PostAsync("/analysis/21/calculate", new StringContent("{}", System.Text.Encoding.UTF8, "application/json"));
+        Assert.True(_factory.FinOpsRefresh.EnsureFreshCalls >= 1);
+    }
 }

@@ -7,6 +7,7 @@ using Azure.Core;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.Cdc;
+using OptimizacionCostos.Api.Features.FinOpsData;
 using OptimizacionCostos.Api.Features.Waf;
 
 namespace OptimizacionCostos.Api.Features.Reports;
@@ -40,7 +41,8 @@ public sealed class ReportBuilder(
     IPowerHistoryService power,
     IReportNarrativeService narrative,
     IAdvisorScoreStore advisorStore,
-    ILogger<ReportBuilder> logger) : IReportBuilder
+    ILogger<ReportBuilder> logger,
+    IFinOpsRefData? finopsRefData = null) : IReportBuilder
 {
     private const int SchemaVersion = 2;
     private const string ArmScope = "https://management.azure.com/.default";
@@ -104,6 +106,14 @@ public sealed class ReportBuilder(
         var backupNames = new HashSet<string>(
             backups.Items.Select(i => (i.Servidor ?? "").ToLowerInvariant()), StringComparer.Ordinal);
 
+        // Nombres amigables de región FinOps (best-effort, cargado UNA vez; null si no hay servicio o falla).
+        IReadOnlyDictionary<string, string>? regions = null;
+        if (finopsRefData is not null)
+        {
+            try { regions = await finopsRefData.GetRegionNamesAsync(ct); }
+            catch (Exception ex) { logger.LogWarning(ex, "No se pudieron obtener nombres de region FinOps; se usa el valor crudo"); }
+        }
+
         // Inventario enriquecido (dicts mutables, como el Python): vcpu/ram_gb/has_backup/health.
         var invJson = new List<JsonObject>(vms.Count);
         foreach (var vm in vms)
@@ -114,6 +124,11 @@ public sealed class ReportBuilder(
             o["ram_gb"] = sizeInfo is null ? null : JsonValue.Create(sizeInfo.RamGb);
             o["has_backup"] = backupNames.Contains((vm.Name ?? "").ToLowerInvariant());
             o["health"] = health.TryGetValue(vm.Id ?? "", out var h) ? h : "";
+
+            // region_display: nombre amigable FinOps (fallback silencioso al valor crudo).
+            if (vm.LocationRaw is { } loc)
+                o["region_display"] = regions is not null && regions.TryGetValue(loc.ToLowerInvariant(), out var friendly) ? friendly : loc;
+
             invJson.Add(o);
         }
 

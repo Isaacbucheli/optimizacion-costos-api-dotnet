@@ -5,6 +5,7 @@ using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.AzureIntegration;
 using OptimizacionCostos.Api.Features.CostEngine.Engine;
 using OptimizacionCostos.Api.Features.CostEngine.Pricing;
+using OptimizacionCostos.Api.Features.FinOpsData;
 
 namespace OptimizacionCostos.Api.Features.Inventory;
 
@@ -41,7 +42,8 @@ public sealed class InventoryImportService(
     ISubscriptionSyncService sync,
     IChatCompletionClient chat,
     AppConfig config,
-    ILogger<InventoryImportService> logger) : IInventoryImportService
+    ILogger<InventoryImportService> logger,
+    IFinOpsRefData? refData = null) : IInventoryImportService
 {
     private const string DiscoveryKql =
         "Resources | summarize resource_count=count(), sample_names=make_set(name, 5) by resource_type=tolower(type) | order by resource_count desc";
@@ -247,7 +249,34 @@ public sealed class InventoryImportService(
                 ["resource_type"] = r.IsDBNull(1) ? null : r.GetString(1),
                 ["count"] = r.GetInt32(2),
             });
+
+        if (refData is not null)
+        {
+            try { return EnrichSummary(list, await refData.GetResourceTypesAsync(ct)); }
+            catch (Exception ex) { logger.LogWarning(ex, "Enriquecimiento FinOps del summary fallo; se devuelve sin enriquecer"); }
+        }
         return list;
+    }
+
+    /// <summary>
+    /// Enriquece las filas del GROUP BY del summary con display_name y finops_category del
+    /// catálogo de tipos de recurso FinOps Toolkit (null si el tipo no está en las tablas ref).
+    /// Método puro, sin SQL, para poder probarlo sin BD.
+    /// </summary>
+    internal static List<Dictionary<string, object?>> EnrichSummary(
+        IReadOnlyList<IReadOnlyDictionary<string, object?>> rows,
+        IReadOnlyDictionary<string, FinOpsResourceTypeInfo> types)
+    {
+        var result = new List<Dictionary<string, object?>>(rows.Count);
+        foreach (var row in rows)
+        {
+            var d = new Dictionary<string, object?>(row);
+            var rt = (row["resource_type"] as string)?.ToLowerInvariant() ?? "";
+            d["display_name"] = types.TryGetValue(rt, out var info) ? info.DisplayName : null;
+            d["finops_category"] = types.TryGetValue(rt, out var i2) ? i2.ServiceCategory : null;
+            result.Add(d);
+        }
+        return result;
     }
 
     // -------------------- DISCOVERY --------------------
