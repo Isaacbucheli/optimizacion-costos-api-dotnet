@@ -90,6 +90,20 @@ public sealed class FakeRiDiagnosticsQuery : IRiDiagnosticsQuery
     }
 }
 
+/// <summary>Doble de prueba de <see cref="ICoverageQuery"/> con resultados enlatados por análisis.</summary>
+public sealed class FakeCoverageQuery : ICoverageQuery
+{
+    public Dictionary<int, CoverageResult> Results { get; } = new();
+
+    public Task<CoverageResult> GetAsync(int analysisId, CancellationToken ct)
+    {
+        var result = Results.TryGetValue(analysisId, out var r)
+            ? r
+            : new CoverageResult(0, 0, 0.0, new List<CoverageGap>());
+        return Task.FromResult(result);
+    }
+}
+
 /// <summary>
 /// Levanta la API real en memoria para probar el router /finops-data. Reemplaza SOLO la BD/HTTP:
 /// IUserDirectory (auth), IFinOpsDataRefreshService, IFinOpsDataStore e IFinOpsRefData por fakes.
@@ -106,6 +120,7 @@ public sealed class FinOpsApiTestFactory : WebApplicationFactory<Program>
     public FakeFinOpsRefData RefData { get; } = new();
     public FakeAnalysisAccess Access { get; } = new();
     public FakeRiDiagnosticsQuery Diagnostics { get; } = new();
+    public FakeCoverageQuery Coverage { get; } = new();
 
     public FinOpsApiTestFactory()
     {
@@ -130,6 +145,8 @@ public sealed class FinOpsApiTestFactory : WebApplicationFactory<Program>
             services.AddSingleton<IAnalysisAccess>(Access);
             services.RemoveAll<IRiDiagnosticsQuery>();
             services.AddSingleton<IRiDiagnosticsQuery>(Diagnostics);
+            services.RemoveAll<ICoverageQuery>();
+            services.AddSingleton<ICoverageQuery>(Coverage);
         });
     }
 }

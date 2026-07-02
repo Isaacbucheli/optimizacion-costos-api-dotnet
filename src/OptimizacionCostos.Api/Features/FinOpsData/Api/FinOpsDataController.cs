@@ -19,7 +19,8 @@ public sealed class FinOpsDataController(
     IFinOpsRefData refData,
     IMemoryCache cache,
     IRiDiagnosticsQuery diagnostics,
-    IAnalysisAccess access) : ControllerBase
+    IAnalysisAccess access,
+    ICoverageQuery coverage) : ControllerBase
 {
     [HttpPost("refresh")]
     [Authorize(Roles = Roles.Admin)]
@@ -63,5 +64,17 @@ public sealed class FinOpsDataController(
                 ? NotFound(new { detail = chk.Detail ?? "Not found" })
                 : StatusCode(StatusCodes.Status403Forbidden, new { detail = chk.Detail ?? "Sin acceso" });
         return Ok(await diagnostics.ListAsync(analysisId, ct));
+    }
+
+    /// <summary>% del inventario del análisis con cost_result calculado + huecos de calculadora (Fase 1 FinOps Toolkit).</summary>
+    [HttpGet("/analysis/{analysisId:int}/coverage")]
+    public async Task<IActionResult> Coverage(int analysisId, CancellationToken ct)
+    {
+        var chk = await access.AssertAnalysisAccessAsync(User, analysisId, ct);
+        if (!chk.Ok)
+            return chk.Result == AccessResult.NotFound
+                ? NotFound(new { detail = chk.Detail ?? "Not found" })
+                : StatusCode(StatusCodes.Status403Forbidden, new { detail = chk.Detail ?? "Sin acceso" });
+        return Ok(await coverage.GetAsync(analysisId, ct));
     }
 }

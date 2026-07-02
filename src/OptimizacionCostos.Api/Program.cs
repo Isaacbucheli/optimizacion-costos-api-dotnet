@@ -138,6 +138,7 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.FinOpsData.IFinOpsRef
 builder.Services.AddHttpClient<OptimizacionCostos.Api.Features.FinOpsData.IFinOpsDataRefreshService, OptimizacionCostos.Api.Features.FinOpsData.FinOpsDataRefreshService>(c => c.Timeout = TimeSpan.FromSeconds(120));
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.FinOpsData.IRiEligibilityEnricher, OptimizacionCostos.Api.Features.FinOpsData.RiEligibilityEnricher>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.FinOpsData.IRiDiagnosticsQuery, OptimizacionCostos.Api.Features.FinOpsData.SqlRiDiagnosticsQuery>();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.FinOpsData.ICoverageQuery, OptimizacionCostos.Api.Features.FinOpsData.SqlCoverageQuery>();
 
 // CORS explicito (paridad con CORS_ORIGINS del FastAPI)
 const string CorsPolicy = "BitCors";

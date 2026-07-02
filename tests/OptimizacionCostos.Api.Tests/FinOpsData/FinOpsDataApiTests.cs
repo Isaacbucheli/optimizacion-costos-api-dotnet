@@ -106,4 +106,27 @@ public sealed class FinOpsDataApiTests : IClassFixture<FinOpsApiTestFactory>
         Assert.Contains("db-hyperscale", body);
         Assert.Contains("payg_meter_id", body);
     }
+
+    [Fact]
+    public async Task Coverage_LectorConAcceso_200()
+    {
+        _factory.Access.AnalysisToClient[9] = 3;
+        _factory.Access.Assignments["l@bit.ec"] = new HashSet<int> { 3 };
+        _factory.Coverage.Results[9] = new CoverageResult(100, 80, 80.0,
+            new List<CoverageGap> { new("microsoft.network/virtualnetworks", "Virtual network", "Networking", 12) });
+        var res = await ClientFor("l@bit.ec", Roles.Lector).GetAsync("/analysis/9/coverage");
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var body = await res.Content.ReadAsStringAsync();
+        Assert.Contains("\"coverage_pct\":80", body);
+        Assert.Contains("virtualnetworks", body);
+    }
+
+    [Fact]
+    public async Task Coverage_SinAccesoAlCliente_403()
+    {
+        _factory.Access.AnalysisToClient[9] = 3;
+        _factory.Access.Assignments["otro@bit.ec"] = new HashSet<int> { 99 };
+        var res = await ClientFor("otro@bit.ec", Roles.Consultor).GetAsync("/analysis/9/coverage");
+        Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+    }
 }
