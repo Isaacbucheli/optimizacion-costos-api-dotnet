@@ -298,7 +298,7 @@ public sealed class WafController(
                 c.pillar_number, c.review_scope_es, c.benefit_es,
                 r.business_impact, r.resource_count, r.is_active,
                 COALESCE(t.completion_pct, 0) AS completion_pct,
-                t.remediation_start_date, t.projected_bit_effort,
+                t.remediation_start_date, t.remediation_end_date, t.projected_bit_effort,
                 r.first_seen_at, r.last_seen_at
             FROM dbo.waf_recommendation r
             INNER JOIN dbo.waf_recommendation_canonical c ON c.canonical_id = r.canonical_id
@@ -325,9 +325,10 @@ public sealed class WafController(
                 is_active = rd.GetBoolean(8),
                 completion_pct = rd.GetInt32(9),
                 remediation_start_date = rd.IsDBNull(10) ? null : rd.GetDateTime(10).ToString("yyyy-MM-dd"),
-                projected_bit_effort = rd.IsDBNull(11) ? null : rd.GetString(11),
-                first_seen_at = rd.GetDateTime(12),
-                last_seen_at = rd.GetDateTime(13),
+                remediation_end_date = rd.IsDBNull(11) ? null : rd.GetDateTime(11).ToString("yyyy-MM-dd"),
+                projected_bit_effort = rd.IsDBNull(12) ? null : rd.GetString(12),
+                first_seen_at = rd.GetDateTime(13),
+                last_seen_at = rd.GetDateTime(14),
             });
         }
         return Ok(rows);
