@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Data;
 
@@ -23,15 +24,53 @@ public sealed class SqlFinOpsDataStore(ISqlConnectionFactory factory) : IFinOpsD
             del.CommandText = $"DELETE FROM dbo.{table}";
             await del.ExecuteNonQueryAsync(ct);
         }
-        foreach (var row in rows)
+
+        if (datasetKey == "commitment_eligibility")
         {
-            await using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandText = insertSql;
-            mapper(cmd, row);
-            await cmd.ExecuteNonQueryAsync(ct);
+            await BulkInsertEligibilityAsync(conn, tx, rows, ct);
+        }
+        else
+        {
+            foreach (var row in rows)
+            {
+                await using var cmd = conn.CreateCommand();
+                cmd.Transaction = tx;
+                cmd.CommandText = insertSql;
+                mapper(cmd, row);
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
         }
         await tx.CommitAsync(ct);
+    }
+
+    /// <summary>
+    /// commitment_eligibility trae ~121k filas: el INSERT fila-a-fila tarda 1-3 min contra Azure SQL
+    /// (rompe el presupuesto de 30s del refresh-on-calculate y arriesga el timeout del gateway del
+    /// App Service en el refresh manual). SqlBulkCopy dentro de la MISMA transacción mantiene la
+    /// semántica atómica DELETE+INSERT.
+    /// </summary>
+    private static async Task BulkInsertEligibilityAsync(
+        SqlConnection conn, SqlTransaction tx, IReadOnlyList<string[]> rows, CancellationToken ct)
+    {
+        var table = new DataTable();
+        table.Columns.Add("meter_id", typeof(string));
+        table.Columns.Add("ri_eligible", typeof(bool));
+        table.Columns.Add("sp_eligible", typeof(bool));
+        foreach (var r in rows)
+        {
+            var (ri, sp) = MapEligibility(r[1], r[2]);
+            table.Rows.Add(r[0], ri, sp);
+        }
+
+        using var bulk = new SqlBulkCopy(conn, SqlBulkCopyOptions.Default, tx)
+        {
+            DestinationTableName = "dbo.finops_commitment_eligibility",
+            BatchSize = 5000,
+        };
+        bulk.ColumnMappings.Add("meter_id", "meter_id");
+        bulk.ColumnMappings.Add("ri_eligible", "ri_eligible");
+        bulk.ColumnMappings.Add("sp_eligible", "sp_eligible");
+        await bulk.WriteToServerAsync(table, ct);
     }
 
     public async Task RecordRefreshAsync(string datasetKey, int rowCount, string status, CancellationToken ct)
@@ -63,7 +102,7 @@ public sealed class SqlFinOpsDataStore(ISqlConnectionFactory factory) : IFinOpsD
         while (await r.ReadAsync(ct))
             list.Add(new FinOpsRefreshStatus(
                 r.GetString(0),
-                r.IsDBNull(1) ? null : r.GetDateTime(1),
+                r.IsDBNull(1) ? null : DateTime.SpecifyKind(r.GetDateTime(1), DateTimeKind.Utc),
                 r.IsDBNull(2) ? null : r.GetInt32(2),
                 r.IsDBNull(3) ? null : r.GetString(3)));
         return list;

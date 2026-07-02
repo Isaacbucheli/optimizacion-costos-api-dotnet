@@ -1,5 +1,6 @@
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Data;
+using OptimizacionCostos.Api.Features.CostEngine.Engine;
 
 namespace OptimizacionCostos.Api.Features.FinOpsData;
 
@@ -17,6 +18,7 @@ public sealed class SqlRiDiagnosticsQuery(ISqlConnectionFactory factory) : IRiDi
     public async Task<IReadOnlyList<RiDiagnosticRow>> ListAsync(int analysisId, CancellationToken ct)
     {
         await using var conn = await factory.OpenAsync(ct);
+        SqlCostResultStore.EnsureFinOpsColumns(conn);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT cr.cost_result_id, cr.service_key, r.resource_name, r.sku_name, r.location, cr.payg_meter_id

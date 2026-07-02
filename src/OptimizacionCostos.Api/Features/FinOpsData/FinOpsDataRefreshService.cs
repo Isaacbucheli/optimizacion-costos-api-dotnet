@@ -85,6 +85,9 @@ public sealed class FinOpsDataRefreshService(HttpClient http, IFinOpsDataStore s
 
     private async Task<FinOpsRefreshResult> FailAsync(FinOpsDataset ds, string detail, CancellationToken ct)
     {
+        // status es NVARCHAR(400): un detail gigante (ej. header inesperado con HTML) desborda la
+        // columna y RecordRefresh lanza, que quedaba silenciado por el catch de abajo -> ni log quedaba.
+        if (detail.Length > 300) detail = detail[..300];
         try { await store.RecordRefreshAsync(ds.Key, 0, $"error:{detail}", ct); } catch { /* best effort */ }
         return new FinOpsRefreshResult(ds.Key, $"error:{detail}", 0);
     }

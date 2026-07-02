@@ -119,6 +119,24 @@ public sealed class FinOpsDataRefreshServiceTests
     }
 
     [Fact]
+    public async Task RefreshAll_HeaderInesperadoGigante_TruncaDetalleAntesDeRegistrar()
+    {
+        var csvs = HappyCsvs();
+        // Header absurdamente largo (columna de 2000 chars): sin truncar, "error:{detail}" desborda
+        // status NVARCHAR(400) y RecordRefreshAsync lanzaría (silenciado -> sin fila de log).
+        csvs["PricingUnits.csv"] = $"\"{new string('X', 2000)}\"\n\"1\"";
+        var store = new FakeFinOpsDataStore();
+        var svc = Build(store, csvs);
+        var results = await svc.RefreshAllAsync(CancellationToken.None);
+
+        var pricingUnits = results.Single(r => r.Dataset == "pricing_units");
+        Assert.StartsWith("error:", pricingUnits.Status);
+
+        var logEntry = Assert.Single(store.Log, l => l.Dataset == "pricing_units");
+        Assert.True(logEntry.Status.Length <= 310, $"Status length {logEntry.Status.Length} > 310");
+    }
+
+    [Fact]
     public async Task EnsureFresh_EligibilityRancio_RefrescaSoloLosRancios()
     {
         var store = new FakeFinOpsDataStore
