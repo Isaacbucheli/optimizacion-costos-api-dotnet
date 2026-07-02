@@ -13,7 +13,7 @@ public static class OptimizationChecks
     public static IReadOnlyList<CheckDefinition> Registered =>
     [
         OrphanedDisks, OrphanedPublicIps, StoppedNotDeallocatedVms, LongDeallocatedVms,
-        EmptyAppServicePlans, LbAppGwNoBackend, StorageNoRetention,
+        EmptyAppServicePlans, LbAppGwNoBackend, StorageNoRetention, OrphanedNics,
     ];
 
     private static Finding F(CheckDefinition c, string subId, RgRow r, string defaultType,
@@ -192,6 +192,31 @@ public static class OptimizationChecks
                 if (r.BoolFalse("hasRetention")) continue;
                 outl.Add(F(check, subId, r, "microsoft.storage/storageaccounts",
                     new Dictionary<string, object?> { ["note"] = "Sin política de retención/soft-delete de blobs detectada. Verificar y habilitar." }, null));
+            }
+            return outl;
+        });
+
+    // -------------------- 8. NICs huérfanas --------------------
+    // Fuente: Microsoft FinOps Toolkit (MIT) — github.com/microsoft/finops-toolkit
+    public static readonly CheckDefinition OrphanedNics = new(
+        "orphaned_nics", "Interfaces de red huérfanas",
+        "NICs sin VM ni Private Endpoint asociado: recursos remanentes que conviene eliminar.",
+        OptCategory.Governance, 5, OptSeverity.Low,
+        """
+        Resources
+        | where type =~ 'microsoft.network/networkinterfaces'
+        | extend vmId = tostring(properties.virtualMachine.id), peId = tostring(properties.privateEndpoint.id)
+        | where isempty(vmId) and isempty(peId)
+        | project id, name, type, location, vmId, peId
+        """,
+        (check, rows, subId, cost) =>
+        {
+            var outl = new List<Finding>();
+            foreach (var r in rows)
+            {
+                if (!string.IsNullOrEmpty(r.Str("vmId")) || !string.IsNullOrEmpty(r.Str("peId"))) continue;
+                outl.Add(F(check, subId, r, "microsoft.network/networkinterfaces",
+                    new Dictionary<string, object?> { ["note"] = "NIC sin VM ni Private Endpoint. Verificar y eliminar." }, null));
             }
             return outl;
         });

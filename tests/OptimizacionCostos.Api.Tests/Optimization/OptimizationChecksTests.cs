@@ -25,10 +25,25 @@ public sealed class OptimizationChecksTests
         (JsonNode.Parse(jsonArray) as JsonArray)!.Select(n => new RgRow(n)).ToList();
 
     [Fact]
-    public void HayChecksRegistrados_Siete()
+    public void OrphanedNics_MarcaLasSinVmNiPrivateEndpoint()
     {
-        Assert.Equal(7, OptimizationChecks.Registered.Count);
+        var rows = Rows("""
+            [{"id":"/n/1","name":"nic-huerfana","type":"microsoft.network/networkinterfaces","location":"eastus"},
+             {"id":"/n/2","name":"nic-en-uso","type":"microsoft.network/networkinterfaces","location":"eastus","vmId":"/vm/x"}]
+            """);
+        var f = OptimizationChecks.OrphanedNics.BuildFindings(OptimizationChecks.OrphanedNics, rows, "sub-1", new FakeCost());
+        var only = Assert.Single(f);
+        Assert.Equal("nic-huerfana", only.ResourceName);
+        Assert.Equal("governance", only.Category);
+        Assert.Null(only.EstimatedMonthlySavings);
+    }
+
+    [Fact]
+    public void HayChecksRegistrados()
+    {
+        Assert.Equal(8, OptimizationChecks.Registered.Count);
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "orphaned_disks");
+        Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "orphaned_nics");
     }
 
     [Fact]
