@@ -54,13 +54,14 @@ public sealed class OptimizationChecksTests
     [Fact]
     public void HayChecksRegistrados()
     {
-        Assert.Equal(12, OptimizationChecks.Registered.Count);
+        Assert.Equal(13, OptimizationChecks.Registered.Count);
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "orphaned_disks");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "orphaned_nics");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "empty_subnets");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "vms_without_ha");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "basic_load_balancers");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "old_snapshots");
+        Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "vms_without_ahb");
     }
 
     [Fact]
@@ -151,5 +152,20 @@ public sealed class OptimizationChecksTests
         Assert.Equal("snap-viejo", only.ResourceName);
         Assert.Equal("cost_waste", only.Category);
         Assert.Equal(5.0, only.EstimatedMonthlySavings); // FakeCost.SnapshotMonthlySavings = 5.0 con size no nulo
+    }
+
+    [Fact]
+    public void VmsWithoutAhb_MarcaWindowsSinLicencia_ConAhorro()
+    {
+        var rows = Rows("""
+            [{"id":"/vm/1","name":"win-sin-ahb","type":"microsoft.compute/virtualmachines","location":"eastus","vmSize":"Standard_D2s_v3","osType":"Windows","lic":""},
+             {"id":"/vm/2","name":"win-con-ahb","type":"microsoft.compute/virtualmachines","location":"eastus","vmSize":"Standard_D2s_v3","osType":"Windows","lic":"Windows_Server"},
+             {"id":"/vm/3","name":"linux","type":"microsoft.compute/virtualmachines","location":"eastus","vmSize":"Standard_D2s_v3","osType":"Linux","lic":""}]
+            """);
+        var f = OptimizationChecks.VmsWithoutAhb.BuildFindings(OptimizationChecks.VmsWithoutAhb, rows, "sub-1", new FakeCost());
+        var only = Assert.Single(f); // solo la Windows sin Windows_Server
+        Assert.Equal("win-sin-ahb", only.ResourceName);
+        Assert.Equal("cost_waste", only.Category);
+        Assert.Equal(40.0, only.EstimatedMonthlySavings); // FakeCost.AhbMonthlySavings = 40.0
     }
 }

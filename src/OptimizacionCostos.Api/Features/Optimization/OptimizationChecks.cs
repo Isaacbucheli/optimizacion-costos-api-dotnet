@@ -3,7 +3,7 @@ using OptimizacionCostos.Api.Features.Inventory;
 namespace OptimizacionCostos.Api.Features.Optimization;
 
 /// <summary>
-/// Registro de los 7 checks del barrido. Port 1:1 de app/optimization/checks/*.py + registry.py.
+/// Registro de los 13 checks del barrido. Port 1:1 de app/optimization/checks/*.py + registry.py.
 /// Cada check trae su KQL (Resource Graph) y la función que arma los hallazgos (con ahorro estimado).
 /// </summary>
 public static class OptimizationChecks
@@ -14,7 +14,7 @@ public static class OptimizationChecks
     [
         OrphanedDisks, OrphanedPublicIps, StoppedNotDeallocatedVms, LongDeallocatedVms,
         EmptyAppServicePlans, LbAppGwNoBackend, StorageNoRetention, OrphanedNics, EmptySubnets, VmsWithoutHa, BasicLoadBalancers,
-        OldSnapshots,
+        OldSnapshots, VmsWithoutAhb,
     ];
 
     private static Finding F(CheckDefinition c, string subId, RgRow r, string defaultType,
@@ -339,4 +339,34 @@ public static class OptimizationChecks
     private static DateTime? ParseUtc(string? s) =>
         DateTime.TryParse(s, System.Globalization.CultureInfo.InvariantCulture,
             System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var d) ? d : null;
+
+    // -------------------- 13. Azure Hybrid Benefit no aplicado --------------------
+    // Fuente: Microsoft FinOps Toolkit (MIT) — github.com/microsoft/finops-toolkit
+    public static readonly CheckDefinition VmsWithoutAhb = new(
+        "vms_without_ahb", "Azure Hybrid Benefit no aplicado",
+        "VMs Windows sin Azure Hybrid Benefit (licenseType != 'Windows_Server'): pagan el premium de licencia evitable.",
+        OptCategory.CostWaste, 5, OptSeverity.Medium,
+        """
+        Resources
+        | where type =~ 'microsoft.compute/virtualmachines'
+        | extend osType = tostring(properties.storageProfile.osDisk.osType), lic = tostring(properties.licenseType)
+        | where osType =~ 'Windows'
+        | where isempty(lic) or lic !~ 'Windows_Server'
+        | project id, name, type, location, vmSize = tostring(properties.hardwareProfile.vmSize), osType, lic
+        """,
+        (check, rows, subId, cost) =>
+        {
+            var outl = new List<Finding>();
+            foreach (var r in rows)
+            {
+                var os = (r.Str("osType") ?? "").ToLowerInvariant();
+                var lic = r.Str("lic") ?? "";
+                if (os != "windows") continue;
+                if (string.Equals(lic, "Windows_Server", StringComparison.OrdinalIgnoreCase)) continue;
+                var savings = cost.AhbMonthlySavings(r.Str("vmSize") ?? "", r.Str("location") ?? "");
+                outl.Add(F(check, subId, r, "microsoft.compute/virtualmachines",
+                    new Dictionary<string, object?> { ["vmSize"] = r.Str("vmSize"), ["licenseType"] = lic, ["note"] = "Aplicar Azure Hybrid Benefit." }, savings));
+            }
+            return outl;
+        });
 }
