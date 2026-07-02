@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using OptimizacionCostos.Api.Features.CostEngine.Calculators;
 using OptimizacionCostos.Api.Features.CostEngine.Pricing;
+using OptimizacionCostos.Api.Features.FinOpsData;
 
 namespace OptimizacionCostos.Api.Features.CostEngine.Engine;
 
@@ -16,7 +17,8 @@ public sealed class CostEngine(
     ICostResultStore store,
     IPriceRepository prices,
     IPricingConstants constants,
-    ILogger<CostEngine> logger)
+    ILogger<CostEngine> logger,
+    IRiEligibilityEnricher? riEnricher = null)
 {
     /// <summary>Ejecuta el motor y PERSISTE los cost_results. Devuelve el resumen por servicio.</summary>
     public CalculationSummary CalculateAnalysis(
@@ -137,6 +139,7 @@ public sealed class CostEngine(
         try
         {
             results = calculator.Calculate(resources, analysisId);
+            riEnricher?.Enrich(results);
             if (persist)
             {
                 store.Insert(results);
@@ -169,7 +172,9 @@ public sealed class CostEngine(
             return [];
         }
         var resources = LoadAndEnrich(analysisId, service, offset, limit);
-        return calculator.Calculate(resources, analysisId);
+        var computed = calculator.Calculate(resources, analysisId);
+        riEnricher?.Enrich(computed);
+        return computed;
     }
 
     /// <summary>Carga recursos y aplica el enriquecimiento por servicio (vms / disks).</summary>

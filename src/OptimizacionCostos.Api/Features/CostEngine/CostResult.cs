@@ -43,6 +43,12 @@ public sealed class CostResult(int resourceId, int analysisId, string serviceKey
 
     public string? CalculationNotes { get; set; }
 
+    /// <summary>MeterId del precio PAYG elegido (Retail API). Null si no hubo precio/DTO sin meter.</summary>
+    public string? PaygMeterId { get; set; }
+
+    /// <summary>"eligible" | "not_eligible" | "unknown" (ver RiEligibility). Lo asigna el enricher.</summary>
+    public string? RiEligibility { get; set; }
+
     /// <summary>Calcula ahorros como fracción decimal a partir de payg/ri.</summary>
     public void ComputeSavings()
     {
