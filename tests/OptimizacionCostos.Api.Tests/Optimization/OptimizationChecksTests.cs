@@ -54,12 +54,13 @@ public sealed class OptimizationChecksTests
     [Fact]
     public void HayChecksRegistrados()
     {
-        Assert.Equal(11, OptimizationChecks.Registered.Count);
+        Assert.Equal(12, OptimizationChecks.Registered.Count);
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "orphaned_disks");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "orphaned_nics");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "empty_subnets");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "vms_without_ha");
         Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "basic_load_balancers");
+        Assert.Contains(OptimizationChecks.Registered, c => c.CheckId == "old_snapshots");
     }
 
     [Fact]
@@ -136,5 +137,19 @@ public sealed class OptimizationChecksTests
         var only = Assert.Single(f);
         Assert.Equal("lb-basic", only.ResourceName);
         Assert.Null(only.EstimatedMonthlySavings);
+    }
+
+    [Fact]
+    public void OldSnapshots_MarcaAntiguosConAhorro_OmiteRecientes()
+    {
+        var rows = Rows("""
+            [{"id":"/s/1","name":"snap-viejo","type":"microsoft.compute/snapshots","location":"eastus","created":"2020-01-01T00:00:00Z","sku":"Standard_LRS","diskSizeGB":128,"incremental":false},
+             {"id":"/s/2","name":"snap-futuro","type":"microsoft.compute/snapshots","location":"eastus","created":"2099-01-01T00:00:00Z","sku":"Standard_LRS","diskSizeGB":64,"incremental":true}]
+            """);
+        var f = OptimizationChecks.OldSnapshots.BuildFindings(OptimizationChecks.OldSnapshots, rows, "sub-1", new FakeCost());
+        var only = Assert.Single(f); // el "futuro" (reciente) se omite
+        Assert.Equal("snap-viejo", only.ResourceName);
+        Assert.Equal("cost_waste", only.Category);
+        Assert.Equal(5.0, only.EstimatedMonthlySavings); // FakeCost.SnapshotMonthlySavings = 5.0 con size no nulo
     }
 }

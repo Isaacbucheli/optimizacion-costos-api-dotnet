@@ -14,6 +14,7 @@ public static class OptimizationChecks
     [
         OrphanedDisks, OrphanedPublicIps, StoppedNotDeallocatedVms, LongDeallocatedVms,
         EmptyAppServicePlans, LbAppGwNoBackend, StorageNoRetention, OrphanedNics, EmptySubnets, VmsWithoutHa, BasicLoadBalancers,
+        OldSnapshots,
     ];
 
     private static Finding F(CheckDefinition c, string subId, RgRow r, string defaultType,
@@ -301,4 +302,41 @@ public static class OptimizationChecks
             }
             return outl;
         });
+
+    // -------------------- 12. Snapshots antiguos --------------------
+    private const int OldSnapshotDays = 90;
+    // Fuente: Microsoft FinOps Toolkit (MIT) — github.com/microsoft/finops-toolkit
+    public static readonly CheckDefinition OldSnapshots = new(
+        "old_snapshots", "Snapshots antiguos",
+        "Snapshots de disco con más de 90 días: revisar y eliminar. Ahorro es cota superior (los snapshots incrementales facturan menos).",
+        OptCategory.CostWaste, 5, OptSeverity.Low,
+        """
+        Resources
+        | where type =~ 'microsoft.compute/snapshots'
+        | project id, name, type, location, created = tostring(properties.timeCreated),
+                  sku = tostring(sku.name), diskSizeGB = toint(properties.diskSizeGB), incremental = tobool(properties.incremental)
+        """,
+        (check, rows, subId, cost) =>
+        {
+            var outl = new List<Finding>();
+            var threshold = DateTime.UtcNow.AddDays(-OldSnapshotDays);
+            foreach (var r in rows)
+            {
+                var created = ParseUtc(r.Str("created"));
+                if (created is null || created.Value > threshold) continue; // sin fecha o reciente → omitir
+                var savings = cost.SnapshotMonthlySavings(r.Str("sku"), r.Int("diskSizeGB"), r.Str("location") ?? "");
+                outl.Add(F(check, subId, r, "microsoft.compute/snapshots",
+                    new Dictionary<string, object?>
+                    {
+                        ["created"] = r.Str("created"), ["diskSizeGB"] = r.Int("diskSizeGB"),
+                        ["sku"] = r.Str("sku"), ["incremental"] = r.BoolN("incremental"),
+                        ["note"] = "Ahorro es cota superior; los snapshots incrementales facturan menos.",
+                    }, savings));
+            }
+            return outl;
+        });
+
+    private static DateTime? ParseUtc(string? s) =>
+        DateTime.TryParse(s, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var d) ? d : null;
 }
