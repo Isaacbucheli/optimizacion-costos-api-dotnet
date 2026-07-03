@@ -54,6 +54,8 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.IPowerHistoryJobS
 builder.Services.AddHostedService<OptimizacionCostos.Api.Features.Cdc.PowerHistoryBackgroundService>();
 // Optimización / barrido de tenant (B6): 7 checks KQL + estimación de ahorro + hallazgos/estado.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.ICostEstimation, OptimizacionCostos.Api.Features.Optimization.CostEstimation>();
+// Right-sizing (Fase 2.5, Grupo B): reusa IReportMetrics (Azure Monitor). Requiere Monitoring Reader.
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.IRightSizingAnalyzer, OptimizacionCostos.Api.Features.Optimization.RightSizingAnalyzer>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.IOptimizationService, OptimizacionCostos.Api.Features.Optimization.OptimizationService>();
 
 // Módulo WAF (B7). Schema lazy en cada store. Reusa IChatCompletionClient, IAzureCredentialFactory,

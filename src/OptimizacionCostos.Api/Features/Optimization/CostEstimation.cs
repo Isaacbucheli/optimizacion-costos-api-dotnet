@@ -16,6 +16,7 @@ public interface ICostEstimation
     double? VmComputeMonthlySavings(string vmSize, string region, string osType);
     double? AhbMonthlySavings(string vmSize, string region);
     double? SnapshotMonthlySavings(string? snapshotSku, int? sizeGb, string region);
+    double? RightSizeMonthlySavings(string vmSize, string region, string osType);
 }
 
 public sealed class CostEstimation(IPriceRepository prices, IPricingConstants constants, ILogger<CostEstimation> logger) : ICostEstimation
@@ -74,5 +75,15 @@ public sealed class CostEstimation(IPriceRepository prices, IPricingConstants co
         if (sizeGb is null or <= 0) return null;
         var perGb = Safe(() => prices.GetSnapshotPricePerGb(region, snapshotSku));
         return perGb is null ? null : perGb.Value * sizeGb.Value;
+    }
+
+    /// <summary>
+    /// Ahorro estimado de right-sizing: bajar un nivel de tamaño reduce ~50% el compute (mitad de
+    /// vCPU/RAM). Cota ORIENTATIVA — el consultor valida el SKU destino. Devuelve null si no hay precio.
+    /// </summary>
+    public double? RightSizeMonthlySavings(string vmSize, string region, string osType)
+    {
+        var full = VmComputeMonthlySavings(vmSize, region, osType);
+        return full is null ? null : Math.Round(full.Value * 0.5, 2, MidpointRounding.ToEven);
     }
 }

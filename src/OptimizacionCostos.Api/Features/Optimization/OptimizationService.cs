@@ -28,7 +28,7 @@ public interface IOptimizationService
 
 public sealed class OptimizationService(
     ISqlConnectionFactory factory, IResourceGraphRunner rg, IAzureCredentialFactory credentials,
-    ICostEstimation cost, AppConfig config, ILogger<OptimizationService> logger) : IOptimizationService
+    ICostEstimation cost, IRightSizingAnalyzer rightSizing, AppConfig config, ILogger<OptimizationService> logger) : IOptimizationService
 {
     public bool AccessAllowed(string? email)
     {
@@ -85,6 +85,17 @@ public sealed class OptimizationService(
                                 logger.LogWarning(ex, "check falló check_id={Check} sub={Sub}", check.CheckId, subId);
                                 allErrors.Add(new { check_id = check.CheckId, error = ex.GetType().Name });
                             }
+                        }
+                        // Right-sizing (Grupo B): métricas de Azure Monitor. Best-effort — un fallo (p.ej. sin
+                        // Monitoring Reader) no aborta el barrido ni pierde los hallazgos ARG ya recolectados.
+                        try
+                        {
+                            allFindings.AddRange(await rightSizing.AnalyzeAsync(cred, subId, ct));
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning(ex, "right-sizing falló sub={Sub}", subId);
+                            allErrors.Add(new { check_id = RightSizing.CheckId, error = ex.GetType().Name });
                         }
                         subsScanned++;
                     }

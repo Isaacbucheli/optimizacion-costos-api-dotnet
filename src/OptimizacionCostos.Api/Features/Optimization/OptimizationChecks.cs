@@ -201,33 +201,44 @@ public static class OptimizationChecks
     // Fuente: Microsoft FinOps Toolkit (MIT) — github.com/microsoft/finops-toolkit
     public static readonly CheckDefinition OrphanedNics = new(
         "orphaned_nics", "Interfaces de red huérfanas",
-        "NICs sin VM ni Private Endpoint asociado: recursos remanentes que conviene eliminar.",
+        "NICs sin VM, Private Endpoint, Private Link Service ni workload asociado: remanentes que conviene eliminar.",
         OptCategory.Governance, 5, OptSeverity.Low,
+        // Fase 2.5: excluir también privateLinkService y hostedWorkloads (NetApp/otros servicios),
+        // según la query estándar (dolevshor/azure-orphan-resources) — reduce falsos positivos.
         """
         Resources
         | where type =~ 'microsoft.network/networkinterfaces'
-        | extend vmId = tostring(properties.virtualMachine.id), peId = tostring(properties.privateEndpoint.id)
-        | where isempty(vmId) and isempty(peId)
-        | project id, name, type, location, vmId, peId
+        | extend vmId = tostring(properties.virtualMachine.id), peId = tostring(properties.privateEndpoint.id),
+                 plsId = tostring(properties.privateLinkService.id), hostedCount = array_length(properties.hostedWorkloads)
+        | where isempty(vmId) and isempty(peId) and isempty(plsId) and (isnull(hostedCount) or hostedCount == 0)
+        | project id, name, type, location, vmId, peId, plsId, hostedCount
         """,
         (check, rows, subId, cost) =>
         {
             var outl = new List<Finding>();
             foreach (var r in rows)
             {
-                if (!string.IsNullOrEmpty(r.Str("vmId")) || !string.IsNullOrEmpty(r.Str("peId"))) continue;
+                if (!string.IsNullOrEmpty(r.Str("vmId")) || !string.IsNullOrEmpty(r.Str("peId"))
+                    || !string.IsNullOrEmpty(r.Str("plsId")) || (r.Int("hostedCount") ?? 0) > 0) continue;
                 outl.Add(F(check, subId, r, "microsoft.network/networkinterfaces",
-                    new Dictionary<string, object?> { ["note"] = "NIC sin VM ni Private Endpoint. Verificar y eliminar." }, null));
+                    new Dictionary<string, object?> { ["note"] = "NIC sin VM, Private Endpoint, Private Link Service ni workload. Verificar y eliminar." }, null));
             }
             return outl;
         });
 
     // -------------------- 9. Subnets vacías --------------------
     // Fuente: Microsoft FinOps Toolkit (MIT) — github.com/microsoft/finops-toolkit
+    // Subnets reservadas de infraestructura: aunque estén "vacías" NO son desperdicio (Fase 2.5).
+    private static readonly HashSet<string> ReservedSubnetNames = new(StringComparer.OrdinalIgnoreCase)
+        { "GatewaySubnet", "AzureBastionSubnet", "AzureFirewallSubnet", "AzureFirewallManagementSubnet", "RouteServerSubnet" };
+
     public static readonly CheckDefinition EmptySubnets = new(
         "empty_subnets", "Subnets vacías",
-        "Subnets sin IP configs, delegaciones ni service endpoints: espacio de red reservado sin uso.",
+        "Subnets sin IP configs, delegaciones, service endpoints ni App Gateway: red reservada sin uso (excluye subnets de infraestructura).",
         OptCategory.Governance, 5, OptSeverity.Low,
+        // Fase 2.5: excluir applicationGatewayIPConfigurations y serviceAssociationLinks (subnet delegada a un
+        // servicio) + subnets reservadas por nombre. La ausencia de applicationGatewayIPConfigurations era el
+        // falso positivo típico (subnets de App Gateway).
         """
         Resources
         | where type =~ 'microsoft.network/virtualnetworks'
@@ -235,16 +246,24 @@ public static class OptimizationChecks
         | mv-expand subnet = properties.subnets
         | extend ipCount = array_length(subnet.properties.ipConfigurations),
                  delegCount = array_length(subnet.properties.delegations),
-                 seCount = array_length(subnet.properties.serviceEndpoints)
-        | where (isnull(ipCount) or ipCount == 0) and (isnull(delegCount) or delegCount == 0) and (isnull(seCount) or seCount == 0)
-        | project id = tostring(subnet.id), name = tostring(subnet.name), type = 'microsoft.network/virtualnetworks/subnets', location, vnet = vnetName, ipCount, delegCount
+                 seCount = array_length(subnet.properties.serviceEndpoints),
+                 agwCount = array_length(subnet.properties.applicationGatewayIPConfigurations),
+                 salCount = array_length(subnet.properties.serviceAssociationLinks),
+                 subnetName = tostring(subnet.name)
+        | where (isnull(ipCount) or ipCount == 0) and (isnull(delegCount) or delegCount == 0)
+                and (isnull(seCount) or seCount == 0) and (isnull(agwCount) or agwCount == 0)
+                and (isnull(salCount) or salCount == 0)
+                and subnetName !in~ ('GatewaySubnet', 'AzureBastionSubnet', 'AzureFirewallSubnet', 'AzureFirewallManagementSubnet', 'RouteServerSubnet')
+        | project id = tostring(subnet.id), name = subnetName, type = 'microsoft.network/virtualnetworks/subnets', location, vnet = vnetName, ipCount, delegCount, agwCount, salCount
         """,
         (check, rows, subId, cost) =>
         {
             var outl = new List<Finding>();
             foreach (var r in rows)
             {
-                if ((r.Int("ipCount") ?? 0) > 0 || (r.Int("delegCount") ?? 0) > 0) continue;
+                if ((r.Int("ipCount") ?? 0) > 0 || (r.Int("delegCount") ?? 0) > 0
+                    || (r.Int("agwCount") ?? 0) > 0 || (r.Int("salCount") ?? 0) > 0) continue;
+                if (ReservedSubnetNames.Contains(r.Str("name") ?? "")) continue;
                 outl.Add(F(check, subId, r, "microsoft.network/virtualnetworks/subnets",
                     new Dictionary<string, object?> { ["vnet"] = r.Str("vnet"), ["note"] = "Subnet sin uso." }, null));
             }
@@ -346,13 +365,16 @@ public static class OptimizationChecks
         "vms_without_ahb", "Azure Hybrid Benefit no aplicado",
         "VMs Windows sin Azure Hybrid Benefit (licenseType != 'Windows_Server'): pagan el premium de licencia evitable.",
         OptCategory.CostWaste, 5, OptSeverity.Medium,
+        // Fase 2.5: proyectar powerState. Una VM desasignada no incurre costo de licencia ahora → se reporta
+        // (gobernanza) pero sin ahorro cuantificado; una encendida/detenida sí paga el premium evitable.
         """
         Resources
         | where type =~ 'microsoft.compute/virtualmachines'
-        | extend osType = tostring(properties.storageProfile.osDisk.osType), lic = tostring(properties.licenseType)
+        | extend osType = tostring(properties.storageProfile.osDisk.osType), lic = tostring(properties.licenseType),
+                 powerState = tostring(properties.extended.instanceView.powerState.code)
         | where osType =~ 'Windows'
         | where isempty(lic) or (lic !~ 'Windows_Server' and lic !~ 'Windows_Client')
-        | project id, name, type, location, vmSize = tostring(properties.hardwareProfile.vmSize), osType, lic
+        | project id, name, type, location, vmSize = tostring(properties.hardwareProfile.vmSize), osType, lic, powerState
         """,
         (check, rows, subId, cost) =>
         {
@@ -364,9 +386,13 @@ public static class OptimizationChecks
                 if (os != "windows") continue;
                 if (string.Equals(lic, "Windows_Server", StringComparison.OrdinalIgnoreCase)) continue;
                 if (string.Equals(lic, "Windows_Client", StringComparison.OrdinalIgnoreCase)) continue;
-                var savings = cost.AhbMonthlySavings(r.Str("vmSize") ?? "", r.Str("location") ?? "");
+                var deallocated = string.Equals(r.Str("powerState"), "PowerState/deallocated", StringComparison.OrdinalIgnoreCase);
+                var savings = deallocated ? (double?)null : cost.AhbMonthlySavings(r.Str("vmSize") ?? "", r.Str("location") ?? "");
+                var note = deallocated
+                    ? "VM desasignada: sin costo de licencia actual; aplicar Azure Hybrid Benefit antes de encenderla."
+                    : "Aplicar Azure Hybrid Benefit.";
                 outl.Add(F(check, subId, r, "microsoft.compute/virtualmachines",
-                    new Dictionary<string, object?> { ["vmSize"] = r.Str("vmSize"), ["licenseType"] = lic, ["note"] = "Aplicar Azure Hybrid Benefit." }, savings));
+                    new Dictionary<string, object?> { ["vmSize"] = r.Str("vmSize"), ["licenseType"] = lic, ["powerState"] = r.Str("powerState"), ["note"] = note }, savings));
             }
             return outl;
         });

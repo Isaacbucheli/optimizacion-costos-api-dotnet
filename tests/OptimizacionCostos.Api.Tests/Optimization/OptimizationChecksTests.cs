@@ -19,6 +19,7 @@ public sealed class OptimizationChecksTests
         public double? VmComputeMonthlySavings(string s, string r, string o) => 100.0;
         public double? AhbMonthlySavings(string s, string r) => 40.0;
         public double? SnapshotMonthlySavings(string? sku, int? g, string r) => g is null ? null : 5.0;
+        public double? RightSizeMonthlySavings(string s, string r, string o) => 60.0;
     }
 
     private static List<RgRow> Rows(string jsonArray) =>
@@ -115,6 +116,49 @@ public sealed class OptimizationChecksTests
         Assert.Equal("vm-sola", only.ResourceName);
         Assert.Equal("governance", only.Category);
         Assert.Null(only.EstimatedMonthlySavings);
+    }
+
+    [Fact]
+    public void OrphanedNics_ExcluyePrivateLinkServiceYHostedWorkloads()
+    {
+        // Fase 2.5: además de VM/Private Endpoint, excluir NICs de Private Link Service y con hostedWorkloads
+        // (NetApp u otros servicios) — falsos positivos de la query original.
+        var rows = Rows("""
+            [{"id":"/n/1","name":"nic-huerfana","type":"microsoft.network/networkinterfaces","location":"eastus"},
+             {"id":"/n/2","name":"nic-pls","type":"microsoft.network/networkinterfaces","location":"eastus","plsId":"/pls/x"},
+             {"id":"/n/3","name":"nic-hosted","type":"microsoft.network/networkinterfaces","location":"eastus","hostedCount":1}]
+            """);
+        var f = OptimizationChecks.OrphanedNics.BuildFindings(OptimizationChecks.OrphanedNics, rows, "sub-1", new FakeCost());
+        var only = Assert.Single(f);
+        Assert.Equal("nic-huerfana", only.ResourceName);
+    }
+
+    [Fact]
+    public void EmptySubnets_ExcluyeAppGatewayYSubnetsReservadas()
+    {
+        // Fase 2.5: excluir subnets con applicationGatewayIPConfigurations y las reservadas por nombre.
+        var rows = Rows("""
+            [{"id":"/v/subnets/vacia","name":"vacia","type":"microsoft.network/virtualnetworks/subnets","location":"eastus","vnet":"v","ipCount":0,"delegCount":0},
+             {"id":"/v/subnets/appgw","name":"appgw-subnet","type":"microsoft.network/virtualnetworks/subnets","location":"eastus","vnet":"v","ipCount":0,"delegCount":0,"agwCount":1},
+             {"id":"/v/subnets/gw","name":"GatewaySubnet","type":"microsoft.network/virtualnetworks/subnets","location":"eastus","vnet":"v","ipCount":0,"delegCount":0}]
+            """);
+        var f = OptimizationChecks.EmptySubnets.BuildFindings(OptimizationChecks.EmptySubnets, rows, "sub-1", new FakeCost());
+        var only = Assert.Single(f);
+        Assert.Equal("vacia", only.ResourceName);
+    }
+
+    [Fact]
+    public void VmsWithoutAhb_VmDesasignadaSeReportaSinAhorro()
+    {
+        // Fase 2.5: una VM desasignada no incurre costo de licencia ahora → se reporta pero sin ahorro cuantificado.
+        var rows = Rows("""
+            [{"id":"/vm/1","name":"win-running","type":"microsoft.compute/virtualmachines","location":"eastus","vmSize":"D2s_v3","osType":"Windows","lic":"","powerState":"PowerState/running"},
+             {"id":"/vm/2","name":"win-dealloc","type":"microsoft.compute/virtualmachines","location":"eastus","vmSize":"D2s_v3","osType":"Windows","lic":"","powerState":"PowerState/deallocated"}]
+            """);
+        var f = OptimizationChecks.VmsWithoutAhb.BuildFindings(OptimizationChecks.VmsWithoutAhb, rows, "sub-1", new FakeCost());
+        Assert.Equal(2, f.Count);
+        Assert.Equal(40.0, f.Single(x => x.ResourceName == "win-running").EstimatedMonthlySavings);
+        Assert.Null(f.Single(x => x.ResourceName == "win-dealloc").EstimatedMonthlySavings);
     }
 
     [Fact]
