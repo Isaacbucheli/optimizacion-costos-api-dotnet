@@ -18,6 +18,11 @@ public interface IPowerHistoryJobStore
     Task MarkFailedAsync(int analysisId, string error, CancellationToken ct);
     Task<PowerHistoryJobStatus?> GetStatusAsync(int analysisId, CancellationToken ct);
     Task<bool> IsRunningAsync(int analysisId, CancellationToken ct);
+
+    /// <summary>Marca como 'failed' toda fila 'running' huérfana (p.ej. tras reinicio del worker,
+    /// cuando la cola en memoria se perdió). Devuelve cuántas filas se marcaron. Permite que el guard
+    /// IsRunning no bloquee reintentos permanentemente.</summary>
+    Task<int> MarkOrphanedRunningAsFailedAsync(string error, CancellationToken ct);
 }
 
 public sealed class SqlPowerHistoryJobStore(ISqlConnectionFactory factory) : IPowerHistoryJobStore
@@ -99,6 +104,22 @@ public sealed class SqlPowerHistoryJobStore(ISqlConnectionFactory factory) : IPo
     {
         var status = await GetStatusAsync(analysisId, ct);
         return status?.Status == "running";
+    }
+
+    public async Task<int> MarkOrphanedRunningAsFailedAsync(string error, CancellationToken ct)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+        var now = DateTimeOffset.UtcNow.UtcDateTime;
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dbo.power_history_job
+            SET status = 'failed', finished_at = @ts, error = @err, summary_json = NULL, updated_at = @ts
+            WHERE status = 'running'
+            """;
+        cmd.Parameters.Add(new SqlParameter("@ts", now));
+        cmd.Parameters.Add(new SqlParameter("@err", (object?)error ?? DBNull.Value));
+        return await cmd.ExecuteNonQueryAsync(ct);
     }
 
     private static async Task EnsureSchemaAsync(SqlConnection conn, CancellationToken ct)

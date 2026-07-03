@@ -43,6 +43,17 @@ public sealed class FakePowerHistoryJobStore : IPowerHistoryJobStore
 
     public Task<bool> IsRunningAsync(int analysisId, CancellationToken ct) =>
         Task.FromResult(_byAnalysis.TryGetValue(analysisId, out var s) && s.Status == "running");
+
+    public Task<int> MarkOrphanedRunningAsFailedAsync(string error, CancellationToken ct)
+    {
+        var ids = _byAnalysis.Where(kv => kv.Value.Status == "running").Select(kv => kv.Key).ToList();
+        foreach (var id in ids)
+        {
+            var s = _byAnalysis[id];
+            _byAnalysis[id] = new PowerHistoryJobStatus("failed", s.StartedAt, Now, null, error);
+        }
+        return Task.FromResult(ids.Count);
+    }
 }
 
 /// <summary>

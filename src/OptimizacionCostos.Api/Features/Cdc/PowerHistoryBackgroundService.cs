@@ -13,6 +13,22 @@ public sealed class PowerHistoryBackgroundService(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Reconciliación de arranque: en un proceso nuevo la cola en memoria está vacía, así que
+        // cualquier fila 'running' quedó huérfana por un reinicio del worker. Márcalas 'failed' para
+        // que el guard IsRunning no bloquee reintentos permanentemente (spec §6: el front reintenta).
+        try
+        {
+            using var scope = scopes.CreateScope();
+            var store = scope.ServiceProvider.GetRequiredService<IPowerHistoryJobStore>();
+            var reconciled = await store.MarkOrphanedRunningAsFailedAsync("Interrumpido por reinicio del worker", stoppingToken);
+            if (reconciled > 0)
+                logger.LogWarning("PowerHistory: {N} job(s) 'running' huerfanos marcados como failed al arrancar", reconciled);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "PowerHistory: fallo la reconciliacion de arranque");
+        }
+
         while (!stoppingToken.IsCancellationRequested)
         {
             PowerHistoryJob job;

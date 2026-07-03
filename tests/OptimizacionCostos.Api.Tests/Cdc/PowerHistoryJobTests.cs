@@ -116,6 +116,37 @@ public sealed class PowerHistoryJobTests
     }
 
     [Fact]
+    public async Task Store_MarkOrphanedRunning_MarcaSoloRunning()
+    {
+        var store = new FakePowerHistoryJobStore();
+        await store.MarkRunningAsync(1, "x", CancellationToken.None);
+        await store.MarkRunningAsync(2, "x", CancellationToken.None);
+        await store.MarkCompletedAsync(2, "{}", CancellationToken.None); // completed no se toca
+        var n = await store.MarkOrphanedRunningAsFailedAsync("reinicio", CancellationToken.None);
+        Assert.Equal(1, n);
+        Assert.Equal("failed", (await store.GetStatusAsync(1, CancellationToken.None))!.Status);
+        Assert.Equal("completed", (await store.GetStatusAsync(2, CancellationToken.None))!.Status);
+    }
+
+    [Fact]
+    public async Task Background_AlArrancar_MarcaRunningHuerfanoComoFailed()
+    {
+        var queue = new PowerHistoryJobQueue();
+        var store = new FakePowerHistoryJobStore();
+        var svc = new FakePowerHistoryService();
+        await store.MarkRunningAsync(55, "x", CancellationToken.None); // running sin job en cola = huérfano
+        var bg = new PowerHistoryBackgroundService(queue, ScopeFactoryWith(svc, store), NullLogger<PowerHistoryBackgroundService>.Instance);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await bg.StartAsync(cts.Token);
+        for (var i = 0; i < 200 && store.Peek(55)?.Status == "running"; i++)
+            await Task.Delay(10, cts.Token);
+        await bg.StopAsync(CancellationToken.None);
+
+        Assert.Equal("failed", store.Peek(55)!.Status);
+    }
+
+    [Fact]
     public async Task Gather_AcumulaPorVm_YRegistraErroresBestEffort()
     {
         var units = new[] { "subA", "subB", "subC" };
