@@ -39,7 +39,7 @@ public sealed class PowerHistoryBackgroundService(
                 catch (Exception ex)
                 {
                     logger.LogError(ex, "Power history job falló analysis={Aid} type={Type}", job.AnalysisId, ex.GetType().Name);
-                    await store.MarkFailedAsync(job.AnalysisId, ex.Message, stoppingToken);
+                    await store.MarkFailedAsync(job.AnalysisId, $"Error interno: {ex.GetType().Name}", stoppingToken);
                 }
             }
             catch (Exception ex)

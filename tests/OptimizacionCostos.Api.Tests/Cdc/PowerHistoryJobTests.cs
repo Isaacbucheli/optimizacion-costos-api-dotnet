@@ -57,7 +57,7 @@ public sealed class PowerHistoryJobTests
 
         var status = store.Peek(22);
         Assert.Equal("failed", status!.Status);
-        Assert.Equal("boom", status.Error);
+        Assert.Equal("Error interno: InvalidOperationException", status.Error);
     }
 
     [Fact]
