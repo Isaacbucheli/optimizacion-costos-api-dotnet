@@ -87,15 +87,21 @@ public sealed class ComputeVmCalculatorTests
     }
 
     // ----------------------------------------------------------------------------
-    // Windows CON AHB ('Windows_Server'): un solo lookup os_type; sin premium;
-    // RI base puro Linux/OS-agnostic prorrateado.
+    // Windows CON AHB ('Windows_Server'): el cliente trae su propia licencia y Azure factura
+    // SOLO el compute base = tarifa LINUX. El PAYG debe cotizarse a Linux (0.10), NO a Windows
+    // (0.20): el premium de licencia NO se cobra. RI base sigue siendo Linux/OS-agnostic.
+    // (Regresión histórica corregida 2026-07-03: antes cotizaba el PAYG a la tarifa Windows,
+    //  sobreestimando el costo de cada VM con beneficio híbrido por el premium de licencia.)
     // ----------------------------------------------------------------------------
     [Fact]
-    public void Windows_ahb_uses_single_lookup_no_premium()
+    public void Windows_ahb_prices_payg_at_linux_rate_no_premium()
     {
         var prices = new FakePriceRepository
         {
-            GetVmPricesFn = (_, _, _) => new VmPrices(0.20, 600.0, 1500.0),
+            // Windows 0.20 (compute + licencia) vs Linux 0.10 (compute base). AHB debe usar Linux.
+            GetVmPricesFn = (_, _, os) => os == "Windows"
+                ? new VmPrices(0.20, 600.0, 1500.0)
+                : new VmPrices(0.10, 600.0, 1500.0),
         };
         var rows = Res.Rows(Res.Row(
             ("resource_id", 3),
@@ -108,8 +114,9 @@ public sealed class ComputeVmCalculatorTests
         var result = Build(prices).Calculate(rows, 99)[0];
 
         Assert.Equal("calculated", result.CalculationStatus);
-        Assert.Equal(0.20 * Hours, result.PaygMonthly!.Value, 5);          // 146.0
-        Assert.Equal(600.0 / 12.0, result.Ri1yMonthly!.Value, 5);          // 50.0 (sin premium)
+        Assert.Equal(0.10 * Hours, result.PaygMonthly!.Value, 5);          // 73.0 = tarifa Linux (SIN premium)
+        Assert.Equal(0.10, result.PaygHourly!.Value, 5);
+        Assert.Equal(600.0 / 12.0, result.Ri1yMonthly!.Value, 5);          // 50.0 (RI base Linux/OS-agnostic)
         Assert.Equal(1500.0 / 36.0, result.Ri3yMonthly!.Value, 5);
         Assert.Contains("Windows AHB activo (sin premium)", result.CalculationNotes);
     }

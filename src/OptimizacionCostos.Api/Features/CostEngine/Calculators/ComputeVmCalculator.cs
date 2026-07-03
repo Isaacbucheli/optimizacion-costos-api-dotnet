@@ -5,7 +5,7 @@ using OptimizacionCostos.Api.Features.CostEngine.Pricing;
 namespace OptimizacionCostos.Api.Features.CostEngine.Calculators;
 
 /// <summary>
-/// Calculadora de Virtual Machines. Port 1:1 de app/calculators/compute_vm.py
+/// Calculadora de Virtual Machines. Port de app/calculators/compute_vm.py
 /// (clase ComputeVMCalculator, service_key "vms").
 ///
 /// FIX v0.5.2 — Windows License Premium en RI:
@@ -17,6 +17,15 @@ namespace OptimizacionCostos.Api.Features.CostEngine.Calculators;
 ///
 /// Si la VM tiene AHB Windows activo (licenseType = 'Windows_Server'), entonces
 /// sí pagas solo el RI base Linux puro.
+///
+/// FIX AHB en PAYG (2026-07-03) — divergencia intencional del port Python:
+/// Con AHB Windows activo el cliente aporta su propia licencia y Azure factura SOLO el
+/// compute base = tarifa Linux de la misma SKU. AHB no existe como meter en la Azure Retail
+/// Prices API: pedir "Windows" devuelve el meter CON licencia. Antes el PAYG de una VM con AHB
+/// se cotizaba a la tarifa Windows (con premium), sobreestimando su costo mensual por exactamente
+/// ese premium — justo el ahorro que el propio módulo declara en CostEstimation.AhbMonthlySavings.
+/// Ahora el PAYG de una VM con AHB se cotiza a la tarifa Linux (paygOs = "Linux"). El .py NO se
+/// toca (regla "solo .NET"): este calculador deja de ser 1:1 con Python para VMs Windows con AHB.
 ///
 /// Reglas:
 /// - payg_hourly = precio API según armSkuName + región + OS.
@@ -84,6 +93,13 @@ public sealed class ComputeVmCalculator : ICostCalculator
             var isWindows = osType.ToLowerInvariant() == "windows";
             var needsWindowsPremium = isWindows && !isAhbWindows;
 
+            // OS de tarificación del PAYG. Con AHB Windows activo el cliente aporta su propia licencia
+            // y Azure factura SOLO el compute base = tarifa Linux de la misma SKU. AHB no está
+            // representado como meter en la Azure Retail Prices API: pedir "Windows" devolvería el meter
+            // CON licencia (inflando el costo por el premium). Por eso una VM con AHB se cotiza a la
+            // tarifa Linux. Las VMs Linux nativas conservan su OS; Windows SIN AHB usa la rama de premium.
+            var paygOs = isAhbWindows ? "Linux" : osType;
+
             VmPrices winPrices;
             VmPrices lnxPrices;
             try
@@ -96,8 +112,8 @@ public sealed class ComputeVmCalculator : ICostCalculator
                 }
                 else
                 {
-                    // AHB activo o VM Linux: el OS que pidamos ya incluye el descuento correcto
-                    var primary = _prices.GetVmPrices(vmSize, region, osType);
+                    // AHB activo (paygOs="Linux", compute base sin premium de licencia) o VM Linux nativa.
+                    var primary = _prices.GetVmPrices(vmSize, region, paygOs);
                     winPrices = primary;
                     lnxPrices = primary;
                 }
@@ -110,8 +126,9 @@ public sealed class ComputeVmCalculator : ICostCalculator
                 continue;
             }
 
-            // PAYG. En la rama sin premium, Python vuelve a consultar get_vm_prices(os_type).
-            var primaryPrices = needsWindowsPremium ? null : _prices.GetVmPrices(vmSize, region, osType);
+            // PAYG. En la rama sin premium se reconsulta get_vm_prices con el OS de tarificación
+            // (Linux si AHB, para que la VM con beneficio híbrido no pague el premium de licencia).
+            var primaryPrices = needsWindowsPremium ? null : _prices.GetVmPrices(vmSize, region, paygOs);
             double? paygHourly = needsWindowsPremium
                 ? winPrices.PaygHourly
                 : primaryPrices!.PaygHourly;
