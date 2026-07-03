@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
@@ -5,15 +6,16 @@ using OptimizacionCostos.Api.Features.CostEngine.Api;
 namespace OptimizacionCostos.Api.Features.Cdc.Api;
 
 /// <summary>
-/// Refrescos a nivel de análisis que dependen de Azure (B5). Port de los endpoints
-/// ri-coverage/refresh y power-history/refresh de app/routes/cost_calculation.py, que el
-/// controller de costos había omitido por depender de la capa Azure (ya disponible: B1).
+/// Refrescos a nivel de análisis que dependen de Azure (B5). power-history/refresh corre como job en
+/// background (202 + polling): el POST encola y responde 202; GET status expone el resultado. ri-coverage
+/// sigue síncrono (fuera de alcance de la conversión a job).
 /// </summary>
 [ApiController]
 [Authorize]
 public sealed class AnalysisRefreshController(
     IRiCoverageService riCoverage,
-    IPowerHistoryService powerHistory,
+    IPowerHistoryJobQueue powerQueue,
+    IPowerHistoryJobStore powerStore,
     IAnalysisAccess access,
     ILogger<AnalysisRefreshController> logger) : ControllerBase
 {
@@ -30,17 +32,46 @@ public sealed class AnalysisRefreshController(
         }
     }
 
+    /// <summary>Encola un refresh de encendido/apagado (202). Guard: no encola doble si ya corre.</summary>
     [HttpPost("analysis/{analysisId:int}/power-history/refresh")]
     public async Task<IActionResult> RefreshPowerHistory(int analysisId, CancellationToken ct)
     {
         var chk = await access.AssertAnalysisAccessAsync(User, analysisId, ct);
         if (!chk.Ok) return Translate(chk);
-        try { return Ok(await powerHistory.ComputeAsync(analysisId, ct)); }
-        catch (Exception ex)
+
+        if (await powerStore.IsRunningAsync(analysisId, ct))
+            return StatusCode(StatusCodes.Status202Accepted, new { status = "running", message = "Ya hay un refresh en proceso" });
+
+        var actor = User.FindFirst("sub")?.Value;
+        await powerStore.MarkRunningAsync(analysisId, actor, ct);
+        powerQueue.Enqueue(new PowerHistoryJob(analysisId, actor));
+        return StatusCode(StatusCodes.Status202Accepted, new { status = "running" });
+    }
+
+    /// <summary>Estado del último refresh de encendido/apagado (para polling del front).</summary>
+    [HttpGet("analysis/{analysisId:int}/power-history/status")]
+    public async Task<IActionResult> GetPowerHistoryStatus(int analysisId, CancellationToken ct)
+    {
+        var chk = await access.AssertAnalysisAccessAsync(User, analysisId, ct);
+        if (!chk.Ok) return Translate(chk);
+
+        var status = await powerStore.GetStatusAsync(analysisId, ct);
+        if (status is null) return Ok(new { status = "none" });
+
+        return Ok(new
         {
-            logger.LogError(ex, "Power history refresh failed type={Type}", ex.GetType().Name);
-            return Problem(statusCode: 500, detail: $"Power history refresh failed: {ex.GetType().Name}");
-        }
+            status = status.Status,
+            started_at = status.StartedAt,
+            finished_at = status.FinishedAt,
+            summary = ParseJson(status.SummaryJson),
+            error = status.Error,
+        });
+    }
+
+    private static JsonNode? ParseJson(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try { return JsonNode.Parse(json); } catch { return null; }
     }
 
     private IActionResult Translate(AccessCheck check) => check.Result switch

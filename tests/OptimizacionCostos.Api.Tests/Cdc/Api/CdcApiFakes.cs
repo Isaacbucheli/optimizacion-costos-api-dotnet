@@ -69,3 +69,22 @@ public sealed class FakePowerHistoryService : IPowerHistoryService
         IReadOnlyDictionary<string, bool> runningByArm, DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default) =>
         Task.FromResult<IReadOnlyDictionary<string, (double, double)>>(new Dictionary<string, (double, double)>());
 }
+
+/// <summary>Doble de la cola: registra los jobs encolados; DequeueAsync no completa hasta el ct.</summary>
+public sealed class FakePowerHistoryJobQueue : IPowerHistoryJobQueue
+{
+    public List<PowerHistoryJob> Enqueued { get; } = new();
+    public void Enqueue(PowerHistoryJob job) => Enqueued.Add(job);
+    public async ValueTask<PowerHistoryJob> DequeueAsync(CancellationToken ct)
+    {
+        await Task.Delay(Timeout.Infinite, ct); // idle hasta shutdown; nunca entrega jobs en tests
+        throw new OperationCanceledException(ct);
+    }
+}
+
+/// <summary>Doble de IRiCoverageService: el controller lo requiere en el ctor, no se ejercita aquí.</summary>
+public sealed class FakeRiCoverageService : IRiCoverageService
+{
+    public Task<IReadOnlyDictionary<string, object?>> ComputeAsync(int analysisId, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyDictionary<string, object?>>(new Dictionary<string, object?>());
+}
