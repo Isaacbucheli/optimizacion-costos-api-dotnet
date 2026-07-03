@@ -24,15 +24,17 @@ public sealed class FakePowerHistoryJobStore : IPowerHistoryJobStore
 
     public Task MarkCompletedAsync(int analysisId, string summaryJson, CancellationToken ct)
     {
-        var started = _byAnalysis.TryGetValue(analysisId, out var s) ? s.StartedAt : Now;
-        _byAnalysis[analysisId] = new PowerHistoryJobStatus("completed", started, Now, summaryJson, null);
+        // Mirror de UPDATE ... WHERE analysis_id = @id: sin fila previa, no-op (no crea fila).
+        if (_byAnalysis.TryGetValue(analysisId, out var s))
+            _byAnalysis[analysisId] = new PowerHistoryJobStatus("completed", s.StartedAt, Now, summaryJson, null);
         return Task.CompletedTask;
     }
 
     public Task MarkFailedAsync(int analysisId, string error, CancellationToken ct)
     {
-        var started = _byAnalysis.TryGetValue(analysisId, out var s) ? s.StartedAt : Now;
-        _byAnalysis[analysisId] = new PowerHistoryJobStatus("failed", started, Now, null, error);
+        // Mirror de UPDATE ... WHERE analysis_id = @id: sin fila previa, no-op (no crea fila).
+        if (_byAnalysis.TryGetValue(analysisId, out var s))
+            _byAnalysis[analysisId] = new PowerHistoryJobStatus("failed", s.StartedAt, Now, null, error);
         return Task.CompletedTask;
     }
 

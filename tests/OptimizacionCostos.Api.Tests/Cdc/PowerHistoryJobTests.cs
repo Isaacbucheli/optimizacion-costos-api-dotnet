@@ -51,4 +51,12 @@ public sealed class PowerHistoryJobTests
         Assert.Null(await store.GetStatusAsync(999, CancellationToken.None));
         Assert.False(await store.IsRunningAsync(999, CancellationToken.None));
     }
+
+    [Fact]
+    public async Task Store_MarkCompletedSinRunning_EsNoOp()
+    {
+        var store = new FakePowerHistoryJobStore();
+        await store.MarkCompletedAsync(999, "{\"updated_count\":1}", CancellationToken.None);
+        Assert.Null(await store.GetStatusAsync(999, CancellationToken.None)); // sin fila previa → no-op, como UPDATE WHERE
+    }
 }
