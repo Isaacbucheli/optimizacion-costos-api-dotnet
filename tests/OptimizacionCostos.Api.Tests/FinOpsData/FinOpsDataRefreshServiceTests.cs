@@ -10,9 +10,14 @@ public sealed class FakeFinOpsDataStore : IFinOpsDataStore
     public Dictionary<string, IReadOnlyList<string[]>> Replaced { get; } = new();
     public List<(string Dataset, int Rows, string Status)> Log { get; } = new();
     public List<FinOpsRefreshStatus> Status { get; set; } = new();
+    /// <summary>Simula un fallo de persistencia (ej. SqlException) por dataset.</summary>
+    public Dictionary<string, Exception> ThrowOnReplace { get; } = new();
 
     public Task ReplaceDatasetAsync(string key, IReadOnlyList<string[]> rows, CancellationToken ct)
-    { Replaced[key] = rows; return Task.CompletedTask; }
+    {
+        if (ThrowOnReplace.TryGetValue(key, out var ex)) throw ex;
+        Replaced[key] = rows; return Task.CompletedTask;
+    }
     public Task RecordRefreshAsync(string key, int rowCount, string status, CancellationToken ct)
     { Log.Add((key, rowCount, status)); return Task.CompletedTask; }
     public Task<IReadOnlyList<FinOpsRefreshStatus>> GetStatusAsync(CancellationToken ct)
@@ -102,6 +107,25 @@ public sealed class FinOpsDataRefreshServiceTests
 
         Assert.StartsWith("error:", results.Single(r => r.Dataset == "pricing_units").Status);
         Assert.False(store.Replaced.ContainsKey("pricing_units"));
+    }
+
+    [Fact]
+    public async Task RefreshAll_ExcepcionAlReemplazar_PersisteElMensajeRealNoSoloElTipo()
+    {
+        // Regresión: FailAsync guardaba solo ex.GetType().Name ("SqlException") -> el detalle real
+        // (ej. "Violation of PRIMARY KEY", "timeout") se perdía y volábamos a ciegas en prod.
+        var store = new FakeFinOpsDataStore();
+        store.ThrowOnReplace["pricing_units"] =
+            new InvalidOperationException("Violation of PRIMARY KEY constraint 'PK_finops_pricing_units'");
+        var svc = Build(store, HappyCsvs());
+
+        var results = await svc.RefreshAllAsync(CancellationToken.None);
+
+        var pu = results.Single(r => r.Dataset == "pricing_units");
+        Assert.StartsWith("error:", pu.Status);
+        Assert.Contains("PRIMARY KEY", pu.Status);                 // el mensaje real, no solo el tipo
+        var log = Assert.Single(store.Log, l => l.Dataset == "pricing_units");
+        Assert.Contains("PRIMARY KEY", log.Status);                // y queda persistido en el log
     }
 
     [Fact]

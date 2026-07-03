@@ -79,7 +79,9 @@ public sealed class FinOpsDataRefreshService(HttpClient http, IFinOpsDataStore s
         catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
-            return await FailAsync(ds, ex.GetType().Name, ct);
+            // Incluir el mensaje (no solo el tipo): un SqlException sin detalle ("SqlException" a secas)
+            // nos dejaba sin saber si fue PK duplicada, truncamiento o timeout. FailAsync lo trunca a 300.
+            return await FailAsync(ds, $"{ex.GetType().Name}: {ex.Message}", ct);
         }
     }
 

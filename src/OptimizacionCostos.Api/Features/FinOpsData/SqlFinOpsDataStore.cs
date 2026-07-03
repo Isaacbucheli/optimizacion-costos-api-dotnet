@@ -31,7 +31,10 @@ public sealed class SqlFinOpsDataStore(ISqlConnectionFactory factory) : IFinOpsD
         }
         else
         {
-            foreach (var row in rows)
+            // pricing_units: la PK unit_of_measure choca bajo la colación por defecto (CI_AS)
+            // porque el open data trae '1'/'1 ' y '1 GB'/'1 Gb'. Dedup antes de insertar.
+            var toInsert = datasetKey == "pricing_units" ? DedupePricingUnits(rows) : rows;
+            foreach (var row in toInsert)
             {
                 await using var cmd = conn.CreateCommand();
                 cmd.Transaction = tx;
@@ -66,6 +69,8 @@ public sealed class SqlFinOpsDataStore(ISqlConnectionFactory factory) : IFinOpsD
         {
             DestinationTableName = "dbo.finops_commitment_eligibility",
             BatchSize = 5000,
+            // 121k filas contra Azure SQL: el default de 30s se agotaba -> SqlException. 0 = sin límite.
+            BulkCopyTimeout = 0,
         };
         bulk.ColumnMappings.Add("meter_id", "meter_id");
         bulk.ColumnMappings.Add("ri_eligible", "ri_eligible");
@@ -140,6 +145,23 @@ public sealed class SqlFinOpsDataStore(ISqlConnectionFactory factory) : IFinOpsD
     internal static (bool Ri, bool Sp) MapEligibility(string spend, string usage) => (
         string.Equals(spend, "Eligible", StringComparison.OrdinalIgnoreCase),
         string.Equals(usage, "Eligible", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Elimina filas cuya clave chocaría en la PRIMARY KEY de finops_pricing_units. La colación
+    /// por defecto de SQL Server (CI_AS) compara case-insensitive e ignora los espacios FINALES
+    /// (no los iniciales), así que '1'/'1 ' y '1 GB'/'1 Gb' son la misma clave. El open data de
+    /// PricingUnits trae esos casos; sin dedup el INSERT fila-a-fila revienta con violación de PK.
+    /// Conserva la PRIMERA aparición.
+    /// </summary>
+    internal static IReadOnlyList<string[]> DedupePricingUnits(IReadOnlyList<string[]> rows)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var kept = new List<string[]>(rows.Count);
+        foreach (var r in rows)
+            if (r.Length > 0 && seen.Add(r[0].TrimEnd()))
+                kept.Add(r);
+        return kept;
+    }
 
     private static string? At(string[] row, int i) => i < row.Length && row[i].Length > 0 ? row[i] : null;
     private static object ParseDouble(string s) =>
