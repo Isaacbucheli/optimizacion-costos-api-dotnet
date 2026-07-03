@@ -44,3 +44,28 @@ public sealed class FakePowerHistoryJobStore : IPowerHistoryJobStore
     public Task<bool> IsRunningAsync(int analysisId, CancellationToken ct) =>
         Task.FromResult(_byAnalysis.TryGetValue(analysisId, out var s) && s.Status == "running");
 }
+
+/// <summary>
+/// Doble de <see cref="IPowerHistoryService"/>: devuelve un summary configurable y cuenta llamadas;
+/// si <see cref="Throw"/> está set, lanza (para probar el camino MarkFailed).
+/// ComputeUptimeMapAsync no se usa en estos tests → devuelve mapa vacío.
+/// </summary>
+public sealed class FakePowerHistoryService : IPowerHistoryService
+{
+    public int ComputeCalls { get; private set; }
+    public Exception? Throw { get; set; }
+    public IReadOnlyDictionary<string, object?> Summary { get; set; } =
+        new Dictionary<string, object?> { ["updated_count"] = 3, ["source"] = "activity_log" };
+
+    public Task<IReadOnlyDictionary<string, object?>> ComputeAsync(int analysisId, CancellationToken ct = default)
+    {
+        ComputeCalls++;
+        if (Throw is not null) throw Throw;
+        return Task.FromResult(Summary);
+    }
+
+    public Task<IReadOnlyDictionary<string, (double RunningHours, double UptimePct)>> ComputeUptimeMapAsync(
+        Azure.Core.TokenCredential credential, IReadOnlyList<string> subscriptions,
+        IReadOnlyDictionary<string, bool> runningByArm, DateTimeOffset start, DateTimeOffset end, CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyDictionary<string, (double, double)>>(new Dictionary<string, (double, double)>());
+}

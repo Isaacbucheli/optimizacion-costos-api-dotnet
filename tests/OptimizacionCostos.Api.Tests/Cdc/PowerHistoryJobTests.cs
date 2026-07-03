@@ -1,11 +1,65 @@
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
 using OptimizacionCostos.Api.Features.Cdc;
-using OptimizacionCostos.Api.Tests.Cdc.Api; // FakePowerHistoryJobStore
+using OptimizacionCostos.Api.Tests.Cdc.Api; // FakePowerHistoryJobStore, FakePowerHistoryService
 using Xunit;
 
 namespace OptimizacionCostos.Api.Tests.Cdc;
 
 public sealed class PowerHistoryJobTests
 {
+    private static IServiceScopeFactory ScopeFactoryWith(IPowerHistoryService svc, IPowerHistoryJobStore store)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(svc);
+        services.AddSingleton(store);
+        return services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>();
+    }
+
+    private static async Task DrainUntilFinishedAsync(PowerHistoryBackgroundService svc, FakePowerHistoryJobStore store, int analysisId)
+    {
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        await svc.StartAsync(cts.Token);
+        for (var i = 0; i < 200 && store.Peek(analysisId)?.FinishedAt is null; i++)
+            await Task.Delay(10, cts.Token);
+        await svc.StopAsync(CancellationToken.None);
+    }
+
+    [Fact]
+    public async Task Background_ProcesaJob_MarcaCompletedConSummary()
+    {
+        var queue = new PowerHistoryJobQueue();
+        var store = new FakePowerHistoryJobStore();
+        var svc = new FakePowerHistoryService();
+        await store.MarkRunningAsync(11, "x", CancellationToken.None); // el controller ya marca running
+        queue.Enqueue(new PowerHistoryJob(11, "x"));
+
+        var bg = new PowerHistoryBackgroundService(queue, ScopeFactoryWith(svc, store), NullLogger<PowerHistoryBackgroundService>.Instance);
+        await DrainUntilFinishedAsync(bg, store, 11);
+
+        Assert.Equal(1, svc.ComputeCalls);
+        var status = store.Peek(11);
+        Assert.Equal("completed", status!.Status);
+        Assert.Contains("updated_count", status.SummaryJson);
+    }
+
+    [Fact]
+    public async Task Background_JobQueFalla_MarcaFailed()
+    {
+        var queue = new PowerHistoryJobQueue();
+        var store = new FakePowerHistoryJobStore();
+        var svc = new FakePowerHistoryService { Throw = new InvalidOperationException("boom") };
+        await store.MarkRunningAsync(22, "x", CancellationToken.None);
+        queue.Enqueue(new PowerHistoryJob(22, "x"));
+
+        var bg = new PowerHistoryBackgroundService(queue, ScopeFactoryWith(svc, store), NullLogger<PowerHistoryBackgroundService>.Instance);
+        await DrainUntilFinishedAsync(bg, store, 22);
+
+        var status = store.Peek(22);
+        Assert.Equal("failed", status!.Status);
+        Assert.Equal("boom", status.Error);
+    }
+
     [Fact]
     public async Task Queue_EnqueueDequeue_DevuelveElMismoJob()
     {

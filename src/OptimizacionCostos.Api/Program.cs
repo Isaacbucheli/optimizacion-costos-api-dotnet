@@ -51,6 +51,7 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.IPowerHistoryServ
 // B5 background: refresh de encendido/apagado como job (202 + polling), calcado de ReportGeneration.
 builder.Services.AddSingleton<OptimizacionCostos.Api.Features.Cdc.IPowerHistoryJobQueue, OptimizacionCostos.Api.Features.Cdc.PowerHistoryJobQueue>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.IPowerHistoryJobStore, OptimizacionCostos.Api.Features.Cdc.SqlPowerHistoryJobStore>();
+builder.Services.AddHostedService<OptimizacionCostos.Api.Features.Cdc.PowerHistoryBackgroundService>();
 // Optimización / barrido de tenant (B6): 7 checks KQL + estimación de ahorro + hallazgos/estado.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.ICostEstimation, OptimizacionCostos.Api.Features.Optimization.CostEstimation>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.IOptimizationService, OptimizacionCostos.Api.Features.Optimization.OptimizationService>();
