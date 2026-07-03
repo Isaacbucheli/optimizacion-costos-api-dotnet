@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using OptimizacionCostos.Api.Features.Cdc;
@@ -112,5 +113,54 @@ public sealed class PowerHistoryJobTests
         var store = new FakePowerHistoryJobStore();
         await store.MarkCompletedAsync(999, "{\"updated_count\":1}", CancellationToken.None);
         Assert.Null(await store.GetStatusAsync(999, CancellationToken.None)); // sin fila previa → no-op, como UPDATE WHERE
+    }
+
+    [Fact]
+    public async Task Gather_AcumulaPorVm_YRegistraErroresBestEffort()
+    {
+        var units = new[] { "subA", "subB", "subC" };
+        Task<IReadOnlyList<PowerHistoryService.PowerEvent>> Fetch(string u, CancellationToken _)
+        {
+            if (u == "subB") throw new InvalidOperationException("403");
+            IReadOnlyList<PowerHistoryService.PowerEvent> evs =
+            [
+                new("/vm/known", "start", new DateTimeOffset(2026, 5, 2, 0, 0, 0, TimeSpan.Zero), null),
+                new("/vm/other", "start", new DateTimeOffset(2026, 5, 2, 0, 0, 0, TimeSpan.Zero), null),
+            ];
+            return Task.FromResult(evs);
+        }
+
+        var (eventsByVm, errors) = await PowerHistoryService.GatherConcurrentlyAsync(
+            units, Fetch, u => new { sub = u }, arm => arm == "/vm/known", 5, CancellationToken.None);
+
+        // Solo la VM conocida se acumula; subA y subC aportan 1 evento cada una = 2.
+        Assert.True(eventsByVm.ContainsKey("/vm/known"));
+        Assert.Equal(2, eventsByVm["/vm/known"].Count);
+        Assert.False(eventsByVm.ContainsKey("/vm/other"));
+        // subB falló → 1 error, sin abortar el resto.
+        Assert.Single(errors);
+    }
+
+    [Fact]
+    public async Task Gather_RespetaTopeDeConcurrencia()
+    {
+        var units = Enumerable.Range(0, 20).Select(i => i.ToString()).ToArray();
+        var current = 0;
+        var maxObserved = 0;
+        var gate = new object();
+        async Task<IReadOnlyList<PowerHistoryService.PowerEvent>> Fetch(string u, CancellationToken ct)
+        {
+            var now = Interlocked.Increment(ref current);
+            lock (gate) maxObserved = Math.Max(maxObserved, now);
+            await Task.Delay(20, ct);
+            Interlocked.Decrement(ref current);
+            return Array.Empty<PowerHistoryService.PowerEvent>();
+        }
+
+        await PowerHistoryService.GatherConcurrentlyAsync(
+            units, Fetch, u => new { sub = u }, _ => false, 5, CancellationToken.None);
+
+        Assert.True(maxObserved <= 5, $"concurrencia observada {maxObserved} > 5");
+        Assert.True(maxObserved >= 2, "no hubo paralelismo real");
     }
 }

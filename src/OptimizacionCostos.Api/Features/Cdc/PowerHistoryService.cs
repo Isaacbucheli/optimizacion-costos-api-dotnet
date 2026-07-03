@@ -36,6 +36,7 @@ public sealed class PowerHistoryService(
     private const string ArmScope = "https://management.azure.com/.default";
     private const string Arm = "https://management.azure.com";
     private const string ActivityLogApi = "2015-04-01";
+    internal const int MaxParallelSubs = 5;
 
     private static readonly HashSet<string> StartOps = new(StringComparer.OrdinalIgnoreCase)
     { "microsoft.compute/virtualmachines/start/action" };
@@ -96,6 +97,8 @@ public sealed class PowerHistoryService(
 
         if (vmByArm.Count > 0 && subsByCred.Count > 0)
         {
+            // Fase A: token por credencial (secuencial; pocas credenciales). Arma unidades (sub + token).
+            var units = new List<(int CredentialId, string Sub, string Token)>();
             foreach (var (credentialId, subIds) in subsByCred)
             {
                 string token;
@@ -110,25 +113,22 @@ public sealed class PowerHistoryService(
                     errors.Add(new { credential_id = credentialId });
                     continue;
                 }
+                foreach (var sub in subIds) units.Add((credentialId, sub, token));
+            }
+
+            // Fase B: lectura concurrente del Activity Log (tope MaxParallelSubs), best-effort por sub.
+            if (units.Count > 0)
+            {
                 var http = httpFactory.CreateClient();
                 http.Timeout = TimeSpan.FromSeconds(30);
-                foreach (var sub in subIds)
-                {
-                    try
-                    {
-                        foreach (var ev in await FetchSubscriptionEventsAsync(http, token, sub, start, end, ct))
-                            if (vmByArm.ContainsKey(ev.ResourceId))
-                            {
-                                if (!eventsByVm.TryGetValue(ev.ResourceId, out var l)) l = eventsByVm[ev.ResourceId] = [];
-                                l.Add(ev);
-                            }
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogWarning(ex, "PowerHistory: Activity Log sub falló type={Type}", ex.GetType().Name);
-                        errors.Add(new { credential_id = credentialId });
-                    }
-                }
+                var (gathered, gatherErrors) = await GatherConcurrentlyAsync(
+                    units,
+                    (u, c) => FetchSubscriptionEventsAsync(http, u.Token, u.Sub, start, end, c),
+                    u => new { credential_id = u.CredentialId },
+                    vmByArm.ContainsKey,
+                    MaxParallelSubs, ct);
+                foreach (var kv in gathered) eventsByVm[kv.Key] = kv.Value;
+                errors.AddRange(gatherErrors);
             }
         }
 
@@ -240,6 +240,58 @@ public sealed class PowerHistoryService(
         return (Math.Round(runningSeconds / 3600.0, 4), Math.Round(periodHours, 4), Math.Round(uptime, 4));
     }
 
+    /// <summary>
+    /// Lee eventos de N unidades (suscripciones) en paralelo con tope <paramref name="maxParallel"/>,
+    /// filtra por <paramref name="known"/> (arm_lower de una VM del análisis) y acumula por VM de forma
+    /// thread-safe. Best-effort: si <paramref name="fetch"/> lanza para una unidad se registra en errors
+    /// (vía <paramref name="errorTag"/>) y NO aborta el resto. Port de MAX_PARALLEL_SUBS de power_history.py.
+    /// </summary>
+    internal static async Task<(Dictionary<string, List<PowerEvent>> EventsByVm, List<object> Errors)> GatherConcurrentlyAsync<T>(
+        IReadOnlyList<T> units,
+        Func<T, CancellationToken, Task<IReadOnlyList<PowerEvent>>> fetch,
+        Func<T, object> errorTag,
+        Func<string, bool> known,
+        int maxParallel,
+        CancellationToken ct)
+    {
+        var eventsByVm = new Dictionary<string, List<PowerEvent>>();
+        var errors = new List<object>();
+        var gate = new object();
+        using var sem = new SemaphoreSlim(maxParallel);
+
+        async Task One(T unit)
+        {
+            await sem.WaitAsync(ct);
+            try
+            {
+                IReadOnlyList<PowerEvent> evs;
+                try
+                {
+                    evs = await fetch(unit, ct);
+                }
+                catch (Exception)
+                {
+                    lock (gate) errors.Add(errorTag(unit));
+                    return;
+                }
+                lock (gate)
+                    foreach (var ev in evs)
+                        if (known(ev.ResourceId))
+                        {
+                            if (!eventsByVm.TryGetValue(ev.ResourceId, out var l)) l = eventsByVm[ev.ResourceId] = [];
+                            l.Add(ev);
+                        }
+            }
+            finally
+            {
+                sem.Release();
+            }
+        }
+
+        await Task.WhenAll(units.Select(One));
+        return (eventsByVm, errors);
+    }
+
     /// <summary>De un evento crudo del Activity Log extrae el evento de energía normalizado, o null.</summary>
     internal static PowerEvent? NormalizeEvent(JsonElement raw)
     {
@@ -265,7 +317,7 @@ public sealed class PowerHistoryService(
         return DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dt) ? dt : null;
     }
 
-    private async Task<List<PowerEvent>> FetchSubscriptionEventsAsync(HttpClient http, string token, string sub, DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
+    private async Task<IReadOnlyList<PowerEvent>> FetchSubscriptionEventsAsync(HttpClient http, string token, string sub, DateTimeOffset start, DateTimeOffset end, CancellationToken ct)
     {
         var filter = $"eventTimestamp ge '{start:yyyy-MM-ddTHH:mm:ssZ}' and eventTimestamp le '{end:yyyy-MM-ddTHH:mm:ssZ}' and resourceProvider eq 'Microsoft.Compute'";
         string? url = $"{Arm}/subscriptions/{sub}/providers/Microsoft.Insights/eventtypes/management/values"
