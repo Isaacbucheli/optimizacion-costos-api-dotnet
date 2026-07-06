@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace OptimizacionCostos.Api.Tests.AzureIntegration.UserSessions;
 
+[Collection("UserSessionsEnv")]
 public class AppConfigUserSessionTests
 {
     private static AppConfig Build(Dictionary<string, string?> env)
