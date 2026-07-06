@@ -23,6 +23,7 @@ public interface IClientSubscriptionStore
     Task<string> UpsertAsync(int clientId, int credentialId, string subscriptionId, string? subscriptionName, CancellationToken ct = default);
     Task<int> DeactivateMissingAsync(int clientId, IReadOnlyCollection<string> keepSubscriptionIds, CancellationToken ct = default);
     Task<int?> ClientIdForCredentialAsync(int credentialId, CancellationToken ct = default);
+    Task<int?> ClientIdForSubscriptionAsync(int clientSubscriptionId, CancellationToken ct = default);
     Task<int> InsertManualAsync(int clientId, int credentialId, string subscriptionId, string? subscriptionName, CancellationToken ct = default);
     Task<bool> UpdateAsync(int clientSubscriptionId, string? name, bool? isActive, bool? isManaged, CancellationToken ct = default);
 }
@@ -166,6 +167,16 @@ public sealed class SqlClientSubscriptionStore(ISqlConnectionFactory factory) : 
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "SELECT client_id FROM dbo.client_azure_credentials WHERE credential_id = @id";
         cmd.Parameters.Add(new SqlParameter("@id", credentialId));
+        var v = await cmd.ExecuteScalarAsync(ct);
+        return v is null or DBNull ? null : Convert.ToInt32(v);
+    }
+
+    public async Task<int?> ClientIdForSubscriptionAsync(int clientSubscriptionId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT client_id FROM dbo.client_azure_subscriptions WHERE client_subscription_id = @id";
+        cmd.Parameters.Add(new SqlParameter("@id", clientSubscriptionId));
         var v = await cmd.ExecuteScalarAsync(ct);
         return v is null or DBNull ? null : Convert.ToInt32(v);
     }

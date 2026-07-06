@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 
 namespace OptimizacionCostos.Api.Features.AzureIntegration.Api;
@@ -32,8 +33,12 @@ public sealed class AzureSubscriptionsController(
 
     // -------------------- POST /azure/subscriptions/sync-client/{clientId} --------------------
     [HttpPost("sync-client/{clientId:int}")]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> SyncClient(int clientId, CancellationToken ct)
     {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+
         try
         {
             var summary = await sync.SyncAsync(clientId, ct);
@@ -56,8 +61,12 @@ public sealed class AzureSubscriptionsController(
 
     // -------------------- POST /azure/subscriptions --------------------
     [HttpPost]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> Create([FromBody] SubscriptionCreateRequest payload, CancellationToken ct)
     {
+        var chk = await access.AssertClientAccessAsync(User, payload.ClientId, ct);
+        if (!chk.Ok) return Translate(chk);
+
         if (string.IsNullOrWhiteSpace(payload.SubscriptionId))
             return BadRequest(new { detail = "subscription_id es requerido" });
 
@@ -72,10 +81,18 @@ public sealed class AzureSubscriptionsController(
 
     // -------------------- PUT /azure/subscriptions/{id} --------------------
     [HttpPut("{clientSubscriptionId:int}")]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> Update(int clientSubscriptionId, [FromBody] SubscriptionUpdateRequest payload, CancellationToken ct)
     {
         if (payload.SubscriptionName is null && payload.IsActive is null && payload.IsManaged is null)
             return BadRequest(new { detail = "Nada que actualizar" });
+
+        // Resuelve el cliente dueño de la suscripción y verifica acceso antes de mutar
+        // is_active/is_managed (que gobiernan qué entra a costos/informes).
+        var ownerClientId = await store.ClientIdForSubscriptionAsync(clientSubscriptionId, ct);
+        if (ownerClientId is null) return NotFound(new { detail = "Suscripción no encontrada" });
+        var chk = await access.AssertClientAccessAsync(User, ownerClientId.Value, ct);
+        if (!chk.Ok) return Translate(chk);
 
         var ok = await store.UpdateAsync(clientSubscriptionId, payload.SubscriptionName, payload.IsActive, payload.IsManaged, ct);
         if (!ok) return NotFound(new { detail = "Suscripción no encontrada" });

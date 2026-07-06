@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 
 namespace OptimizacionCostos.Api.Features.AzureIntegration.Api;
@@ -35,8 +36,14 @@ public sealed class AzureCredentialsController(
 
     // -------------------- POST /azure/credentials --------------------
     [HttpPost]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> Create([FromBody] CredentialCreateRequest payload, CancellationToken ct)
     {
+        // Control de acceso por cliente (paridad con List/Audit): el usuario debe poder operar
+        // sobre el cliente indicado antes de tocar Key Vault o SQL.
+        var accessChk = await access.AssertClientAccessAsync(User, payload.ClientId, ct);
+        if (!accessChk.Ok) return Translate(accessChk);
+
         if (string.IsNullOrWhiteSpace(payload.CredentialName) || string.IsNullOrWhiteSpace(payload.TenantId)
             || string.IsNullOrWhiteSpace(payload.AppClientId) || string.IsNullOrEmpty(payload.ClientSecret))
             return BadRequest(new { detail = "credential_name, tenant_id, app_client_id y client_secret son requeridos" });
@@ -75,10 +82,14 @@ public sealed class AzureCredentialsController(
 
     // -------------------- PUT /azure/credentials/{id}/secret --------------------
     [HttpPut("{credentialId:int}/secret")]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> RotateSecret(int credentialId, [FromBody] RotateSecretRequest payload, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(payload.ClientSecret))
             return BadRequest(new { detail = "client_secret es requerido" });
+
+        var accessError = await AssertCredentialAccessAsync(credentialId, ct);
+        if (accessError is not null) return accessError;
 
         var secretName = await store.GetSecretNameAsync(credentialId, ct);
         if (secretName is null) return NotFound(new { detail = "Credencial no encontrada" });
@@ -94,10 +105,14 @@ public sealed class AzureCredentialsController(
 
     // -------------------- PUT /azure/credentials/{id} --------------------
     [HttpPut("{credentialId:int}")]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> Update(int credentialId, [FromBody] CredentialUpdateRequest payload, CancellationToken ct)
     {
         if (payload.CredentialName is null && payload.IsActive is null)
             return BadRequest(new { detail = "Nada que actualizar" });
+
+        var accessError = await AssertCredentialAccessAsync(credentialId, ct);
+        if (accessError is not null) return accessError;
 
         var ok = await store.UpdateMetaAsync(credentialId, payload.CredentialName, payload.IsActive, ct);
         if (!ok) return NotFound(new { detail = "Credencial no encontrada" });
@@ -109,8 +124,12 @@ public sealed class AzureCredentialsController(
 
     // -------------------- POST /azure/credentials/{id}/test --------------------
     [HttpPost("{credentialId:int}/test")]
+    [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> Test(int credentialId, CancellationToken ct)
     {
+        var accessError = await AssertCredentialAccessAsync(credentialId, ct);
+        if (accessError is not null) return accessError;
+
         var result = await factory.TestCredentialAuthAsync(credentialId, ct);
         await factory.UpdateValidationStatusAsync(credentialId, result.Success, result.Error, ct);
         await factory.WriteAuditLogAsync(credentialId, "validated", details: $"success={result.Success}", ct: ct);
@@ -126,6 +145,19 @@ public sealed class AzureCredentialsController(
         var chk = await access.AssertClientAccessAsync(User, clientId.Value, ct);
         if (!chk.Ok) return Translate(chk);
         return Ok(await store.GetAuditAsync(credentialId, limit, ct));
+    }
+
+    /// <summary>
+    /// Resuelve el cliente dueño de la credencial y verifica el acceso del usuario (mismo patrón
+    /// que Audit). Devuelve null si puede operar; 404 si la credencial no existe; 403 si el cliente
+    /// no es accesible. Evita el IDOR de operar sobre credenciales de otros clientes por id.
+    /// </summary>
+    private async Task<IActionResult?> AssertCredentialAccessAsync(int credentialId, CancellationToken ct)
+    {
+        var clientId = await store.ClientIdForAsync(credentialId, ct);
+        if (clientId is null) return NotFound(new { detail = "Credencial no encontrada" });
+        var chk = await access.AssertClientAccessAsync(User, clientId.Value, ct);
+        return chk.Ok ? null : Translate(chk);
     }
 
     private IActionResult Translate(AccessCheck check) => check.Result switch
