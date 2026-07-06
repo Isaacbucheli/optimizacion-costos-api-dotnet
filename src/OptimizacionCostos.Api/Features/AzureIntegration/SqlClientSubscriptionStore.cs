@@ -9,7 +9,7 @@ public sealed record SubscriptionListItem(
     string SubscriptionId, string? SubscriptionName, bool IsActive, bool IsManaged,
     string? CreatedAt, string? LastSyncedAt);
 
-public sealed record ActiveCredential(int CredentialId, string? CredentialName);
+public sealed record ActiveCredential(int CredentialId, string? CredentialName, string AuthType);
 
 /// <summary>
 /// Acceso a dbo.client_azure_subscriptions. Port de los accesos SQL de
@@ -84,16 +84,18 @@ public sealed class SqlClientSubscriptionStore(ISqlConnectionFactory factory) : 
     public async Task<IReadOnlyList<ActiveCredential>> ActiveCredentialsAsync(int clientId, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
+        await AzureCredentialSchema.EnsureAsync(conn, ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT credential_id, credential_name FROM dbo.client_azure_credentials
+            SELECT credential_id, credential_name, COALESCE(auth_type, 'app_secret')
+            FROM dbo.client_azure_credentials
             WHERE client_id = @cid AND is_active = 1 ORDER BY created_at DESC
             """;
         cmd.Parameters.Add(new SqlParameter("@cid", clientId));
         var list = new List<ActiveCredential>();
         await using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct))
-            list.Add(new ActiveCredential(r.GetInt32(0), r.IsDBNull(1) ? null : r.GetString(1)));
+            list.Add(new ActiveCredential(r.GetInt32(0), r.IsDBNull(1) ? null : r.GetString(1), r.GetString(2)));
         return list;
     }
 
@@ -153,6 +155,8 @@ public sealed class SqlClientSubscriptionStore(ISqlConnectionFactory factory) : 
             UPDATE dbo.client_azure_subscriptions
             SET is_active = 0, updated_at = SYSUTCDATETIME(), last_synced_at = SYSUTCDATETIME()
             WHERE client_id = @cid AND is_active = 1 AND subscription_id NOT IN ({string.Join(", ", inParams)})
+              AND credential_id IN (SELECT credential_id FROM dbo.client_azure_credentials
+                                    WHERE COALESCE(auth_type, 'app_secret') = 'app_secret')
             """;
         cmd.Parameters.Add(new SqlParameter("@cid", clientId));
         var i = 0;

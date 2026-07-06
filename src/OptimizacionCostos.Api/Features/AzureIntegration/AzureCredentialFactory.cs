@@ -49,15 +49,18 @@ public sealed class SqlAzureCredentialFactory(
 
     private sealed record CredentialRow(
         int CredentialId, int ClientId, string? CredentialName,
-        string TenantId, string AppClientId, string KeyVaultSecretName);
+        string TenantId, string AppClientId, string KeyVaultSecretName,
+        string AuthType, string? SessionUserEmail);
 
     private async Task<CredentialRow> FetchCredentialRowAsync(int credentialId, CancellationToken ct)
     {
         await using var conn = await factory.OpenAsync(ct);
+        await AzureCredentialSchema.EnsureAsync(conn, ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT credential_id, client_id, credential_name, tenant_id,
-                   app_client_id, key_vault_secret_name, is_active
+                   app_client_id, key_vault_secret_name, is_active,
+                   COALESCE(auth_type, 'app_secret'), session_user_email
             FROM dbo.client_azure_credentials
             WHERE credential_id = @id
             """;
@@ -77,7 +80,9 @@ public sealed class SqlAzureCredentialFactory(
             CredentialName: reader.IsDBNull(2) ? null : reader.GetString(2),
             TenantId: reader.GetString(3),
             AppClientId: reader.GetString(4),
-            KeyVaultSecretName: reader.GetString(5));
+            KeyVaultSecretName: reader.IsDBNull(5) ? "" : reader.GetString(5),
+            AuthType: reader.GetString(7),
+            SessionUserEmail: reader.IsDBNull(8) ? null : reader.GetString(8));
     }
 
     public async Task<TokenCredential> GetClientSecretCredentialAsync(int credentialId, CancellationToken ct = default)

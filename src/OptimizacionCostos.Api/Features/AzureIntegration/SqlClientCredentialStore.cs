@@ -25,6 +25,9 @@ public interface IClientCredentialStore
     Task<bool> UpdateMetaAsync(int credentialId, string? name, bool? isActive, CancellationToken ct = default);
     Task<int?> ClientIdForAsync(int credentialId, CancellationToken ct = default);
     Task<IReadOnlyList<CredentialAuditItem>> GetAuditAsync(int credentialId, int limit, CancellationToken ct = default);
+
+    /// <summary>Credencial efímera de sesión de usuario (Lighthouse). Sin secreto en Key Vault.</summary>
+    Task<int> InsertUserSessionAsync(int clientId, string name, string tenantId, string appClientId, string sessionUserEmail, CancellationToken ct = default);
 }
 
 public sealed class SqlClientCredentialStore(ISqlConnectionFactory factory) : IClientCredentialStore
@@ -144,5 +147,26 @@ public sealed class SqlClientCredentialStore(ISqlConnectionFactory factory) : IC
                 r.GetInt32(0), r.IsDBNull(2) ? null : r.GetString(2),
                 r.IsDBNull(3) ? null : r.GetString(3), r.IsDBNull(4) ? null : r.GetString(4), D(r, 5)));
         return list;
+    }
+
+    public async Task<int> InsertUserSessionAsync(
+        int clientId, string name, string tenantId, string appClientId, string sessionUserEmail, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await AzureCredentialSchema.EnsureAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        // key_vault_secret_name = '' : no hay secreto (la factory ni toca Key Vault para user_session).
+        cmd.CommandText = """
+            INSERT INTO dbo.client_azure_credentials
+                (client_id, credential_name, tenant_id, app_client_id, key_vault_secret_name, auth_type, session_user_email)
+            OUTPUT INSERTED.credential_id
+            VALUES (@cid, @name, @tenant, @app, '', 'user_session', @mail)
+            """;
+        cmd.Parameters.Add(new SqlParameter("@cid", clientId));
+        cmd.Parameters.Add(new SqlParameter("@name", name));
+        cmd.Parameters.Add(new SqlParameter("@tenant", tenantId));
+        cmd.Parameters.Add(new SqlParameter("@app", appClientId));
+        cmd.Parameters.Add(new SqlParameter("@mail", sessionUserEmail));
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
     }
 }
