@@ -42,6 +42,7 @@ public interface IAzureCredentialFactory
 public sealed class SqlAzureCredentialFactory(
     ISqlConnectionFactory factory,
     IKeyVaultService keyVault,
+    OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.IAzureUserSessionService sessions,
     ILogger<SqlAzureCredentialFactory> logger) : IAzureCredentialFactory
 {
     // Scope estándar para ARM. No requiere permisos extra.
@@ -89,6 +90,14 @@ public sealed class SqlAzureCredentialFactory(
     {
         var row = await FetchCredentialRowAsync(credentialId, ct);
 
+        // Credencial de sesión de usuario (Lighthouse): resuelve la sesión viva del dueño.
+        if (string.Equals(row.AuthType, "user_session", StringComparison.OrdinalIgnoreCase))
+        {
+            if (string.IsNullOrEmpty(row.SessionUserEmail))
+                throw new UserSessions.UserSessionExpiredException("(sin dueño)");
+            return sessions.GetCredentialForEmail(row.SessionUserEmail);
+        }
+
         // El secreto se lee y se inyecta directo; la variable local sale de scope al retornar.
         var secretValue = await keyVault.ReadSecretAsync(row.KeyVaultSecretName, ct);
         return new ClientSecretCredential(row.TenantId, row.AppClientId, secretValue);
@@ -107,6 +116,10 @@ public sealed class SqlAzureCredentialFactory(
             return new CredentialAuthResult(false, null, ex.Message);
         }
         catch (CredentialInactiveException ex)
+        {
+            return new CredentialAuthResult(false, null, ex.Message);
+        }
+        catch (UserSessions.UserSessionExpiredException ex)
         {
             return new CredentialAuthResult(false, null, ex.Message);
         }

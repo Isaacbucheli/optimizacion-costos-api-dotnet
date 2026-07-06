@@ -33,6 +33,12 @@ builder.Services.AddSingleton<ISqlConnectionFactory, SqlConnectionFactory>();
 //   - ResourceGraphRunner: ejecuta KQL del catálogo contra Resource Graph con paginación.
 // Aditivos: aún no hay rutas que los consuman; resuelven vía DI para las fases siguientes.
 builder.Services.AddSingleton<IKeyVaultService, KeyVaultService>();
+// Sesiones Azure con cuenta de usuario (Lighthouse, clientes temporales). Singleton en memoria;
+// el token nunca se persiste. Gateado por USER_SESSION_AUTH_ENABLED en los endpoints.
+builder.Services.AddSingleton<OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.IDeviceCodeFlow,
+    OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.AzureDeviceCodeFlow>();
+builder.Services.AddSingleton<OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.IAzureUserSessionService,
+    OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.AzureUserSessionService>();
 builder.Services.AddScoped<IAzureCredentialFactory, SqlAzureCredentialFactory>();
 builder.Services.AddSingleton<IResourceGraphRunner, ResourceGraphRunner>();
 // Credenciales + suscripciones por cliente (B3): CRUD + sync ARM. Usan B1 (KV + factory).

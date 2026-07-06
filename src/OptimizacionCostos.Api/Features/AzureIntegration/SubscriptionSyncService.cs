@@ -45,6 +45,12 @@ public sealed class SubscriptionSyncService(
 
         foreach (var cred in credentials)
         {
+            // Las credenciales de sesión de usuario no se sincronizan: sus suscripciones
+            // se administran solo vía /azure/user-sessions/current/link (si no, el sync
+            // metería TODO el portafolio Lighthouse del usuario a este cliente).
+            if (string.Equals(cred.AuthType, "user_session", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             List<(string Id, string? Name)> subs;
             try
             {
