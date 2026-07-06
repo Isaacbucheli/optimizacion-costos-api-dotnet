@@ -39,6 +39,9 @@ builder.Services.AddSingleton<OptimizacionCostos.Api.Features.AzureIntegration.U
     OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.AzureDeviceCodeFlow>();
 builder.Services.AddSingleton<OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.IAzureUserSessionService,
     OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.AzureUserSessionService>();
+// Catálogo Lighthouse (clientes agrupados por tenant) para la sesión del usuario. Cachea 10 min.
+builder.Services.AddSingleton<OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.ILighthouseCatalogService,
+    OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.LighthouseCatalogService>();
 builder.Services.AddScoped<IAzureCredentialFactory, SqlAzureCredentialFactory>();
 builder.Services.AddSingleton<IResourceGraphRunner, ResourceGraphRunner>();
 // Credenciales + suscripciones por cliente (B3): CRUD + sync ARM. Usan B1 (KV + factory).

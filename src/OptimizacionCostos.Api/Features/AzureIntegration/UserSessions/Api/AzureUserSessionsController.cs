@@ -15,7 +15,8 @@ namespace OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.Api;
 [Route("azure/user-sessions")]
 public sealed class AzureUserSessionsController(
     IAzureUserSessionService sessions,
-    AppConfig config) : ControllerBase
+    AppConfig config,
+    ILighthouseCatalogService catalog) : ControllerBase
 {
     private string? Email => User.FindFirst("sub")?.Value;
 
@@ -44,6 +45,21 @@ public sealed class AzureUserSessionsController(
         if (Gate() is { } blocked) return blocked;
         sessions.Disconnect(Email!);
         return Ok(new { message = "Sesión desconectada" });
+    }
+
+    // -------------------- GET /azure/user-sessions/current/clients --------------------
+    [HttpGet("current/clients")]
+    public async Task<IActionResult> Clients([FromQuery] bool refresh = false, CancellationToken ct = default)
+    {
+        if (Gate() is { } blocked) return blocked;
+        try
+        {
+            return Ok(await catalog.GetClientsAsync(Email!, refresh, ct));
+        }
+        catch (UserSessionExpiredException ex)
+        {
+            return Conflict(new { detail = ex.Message }); // 409 → el front pide reconectar
+        }
     }
 
     /// <summary>404 si el feature está apagado; 403 si el usuario no es admin ni está en la lista.</summary>
