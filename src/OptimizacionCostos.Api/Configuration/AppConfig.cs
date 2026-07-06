@@ -20,6 +20,14 @@ public sealed class AppConfig
     // Lista blanca de emails con acceso al módulo Optimización (B6). Vacía = abierto a todos.
     public string[] OptimizationAllowedEmails { get; init; } = [];
 
+    // Sesiones Azure con cuenta de usuario (Lighthouse, clientes temporales). Ver spec 2026-07-06.
+    // Flag default false; client id default = Azure CLI first-party (sin app registration propio).
+    public bool UserSessionAuthEnabled { get; init; }
+    public string UserSessionClientId { get; init; } = "04b07795-8ddb-461a-bbee-02f9e1bf7b46";
+    public string UserSessionTenantId { get; init; } = "24884996-6863-4925-a1ba-f1a160b581e2";
+    // Vacía = solo rol admin puede usar el feature; con emails = esos usuarios + admins.
+    public string[] UserSessionAllowedEmails { get; init; } = [];
+
     // Scheduler semanal de Advisor Score (B7/WAF). Default deshabilitado (lo activa el env en prod).
     public bool AdvisorScoreSchedulerEnabled { get; init; }
     public string AdvisorScoreSchedulerTz { get; init; } = "America/Bogota";
@@ -89,6 +97,11 @@ public sealed class AppConfig
             AzureOpenAiDeployment = Get("AZURE_OPENAI_DEPLOYMENT"),
             AzureOpenAiApiVersion = Get("AZURE_OPENAI_API_VERSION", "2025-04-01-preview"),
             PricingAssistMode = Get("AZURE_OPENAI_PRICING_ASSIST_MODE", "assist_match"),
+            UserSessionAuthEnabled = Get("USER_SESSION_AUTH_ENABLED").Trim().ToLowerInvariant() is "true" or "1",
+            UserSessionClientId = Get("USER_SESSION_CLIENT_ID", "04b07795-8ddb-461a-bbee-02f9e1bf7b46"),
+            UserSessionTenantId = Get("USER_SESSION_TENANT_ID", "24884996-6863-4925-a1ba-f1a160b581e2"),
+            UserSessionAllowedEmails = Get("USER_SESSION_ALLOWED_EMAILS")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
         };
     }
 }
