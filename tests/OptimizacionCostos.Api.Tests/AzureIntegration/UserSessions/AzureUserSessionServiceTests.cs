@@ -107,4 +107,20 @@ public class AzureUserSessionServiceTests
         await WaitFor(() => svc.GetStatus("isaac@bit.ec")?.Status == "authenticated");
         Assert.NotNull(svc.GetCredentialForEmail("isaac@bit.ec"));
     }
+
+    [Fact]
+    public async Task Disconnect_invalida_credenciales_ya_entregadas()
+    {
+        var flow = new FakeDeviceCodeFlow();
+        var svc = new AzureUserSessionService(flow, NullLogger<AzureUserSessionService>.Instance);
+        svc.Start("isaac@bit.ec");
+        flow.Tcs.SetResult(new DeviceFlowResult(new FakeTokenCredential(Token()), Token(), null));
+        await WaitFor(() => svc.GetStatus("isaac@bit.ec")?.Status == "authenticated");
+
+        var cred = svc.GetCredentialForEmail("isaac@bit.ec");
+        svc.Disconnect("isaac@bit.ec");
+
+        await Assert.ThrowsAsync<UserSessionExpiredException>(
+            async () => await cred.GetTokenAsync(new TokenRequestContext(["x"]), default));
+    }
 }

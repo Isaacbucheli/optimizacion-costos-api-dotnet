@@ -63,7 +63,15 @@ public sealed class AzureUserSessionService(IDeviceCodeFlow flow, ILogger<AzureU
     public UserSessionSnapshot? GetStatus(string email)
         => _sessions.TryGetValue(email, out var s) ? Snapshot(s) : null;
 
-    public void Disconnect(string email) => _sessions.TryRemove(email, out _);
+    public void Disconnect(string email)
+    {
+        if (_sessions.TryRemove(email, out var s))
+        {
+            // Invalida credenciales ya entregadas: SessionTokenCredential re-chequea
+            // el estado bajo lock en cada GetToken y lanzará UserSessionExpiredException.
+            lock (s.Lock) s.State = UserSessionState.Expired;
+        }
+    }
 
     public TokenCredential GetCredentialForEmail(string email)
     {
