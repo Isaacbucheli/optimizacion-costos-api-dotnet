@@ -2,6 +2,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Configuration;
+using OptimizacionCostos.Api.Features.Clients;
+using OptimizacionCostos.Api.Features.CostEngine.Api;
 
 namespace OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.Api;
 
@@ -16,7 +18,12 @@ namespace OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.Api;
 public sealed class AzureUserSessionsController(
     IAzureUserSessionService sessions,
     AppConfig config,
-    ILighthouseCatalogService catalog) : ControllerBase
+    ILighthouseCatalogService catalog,
+    IClientStore clients,
+    IClientCredentialStore credStore,
+    IClientSubscriptionStore subStore,
+    IAzureCredentialFactory credFactory,
+    IAnalysisAccess access) : ControllerBase
 {
     private string? Email => User.FindFirst("sub")?.Value;
 
@@ -61,6 +68,64 @@ public sealed class AzureUserSessionsController(
             return Conflict(new { detail = ex.Message }); // 409 → el front pide reconectar
         }
     }
+
+    public sealed record LinkSubscriptionDto(string? SubscriptionId, string? DisplayName);
+    public sealed record LinkRequest(int? ClientId, string? NewClientName, string? TenantId, List<LinkSubscriptionDto>? Subscriptions);
+
+    // -------------------- POST /azure/user-sessions/current/link --------------------
+    [HttpPost("current/link")]
+    public async Task<IActionResult> Link([FromBody] LinkRequest payload, CancellationToken ct)
+    {
+        if (Gate() is { } blocked) return blocked;
+        var email = Email!;
+
+        if (sessions.GetStatus(email)?.Status != "authenticated")
+            return Conflict(new { detail = "No hay sesión Azure autenticada; conecta tu cuenta primero" });
+
+        var subs = (payload.Subscriptions ?? [])
+            .Where(s => !string.IsNullOrWhiteSpace(s.SubscriptionId)).ToList();
+        if (string.IsNullOrWhiteSpace(payload.TenantId) || subs.Count == 0)
+            return BadRequest(new { detail = "tenant_id y subscriptions son requeridos" });
+        if ((payload.ClientId is null) == string.IsNullOrWhiteSpace(payload.NewClientName))
+            return BadRequest(new { detail = "Indica client_id O new_client_name (exactamente uno)" });
+
+        int clientId;
+        if (payload.ClientId is int existing)
+        {
+            var chk = await access.AssertClientAccessAsync(User, existing, ct);
+            if (!chk.Ok) return Translate(chk);
+            clientId = existing;
+        }
+        else
+        {
+            var name = payload.NewClientName!.Trim();
+            if (await clients.NameExistsAsync(name, excludeClientId: 0, ct))
+                return BadRequest(new { detail = $"Ya existe un cliente llamado '{name}'" });
+            clientId = await clients.CreateAsync(name, null, null, null, "Cliente temporal (Lighthouse)", ct);
+        }
+
+        var credId = await credStore.InsertUserSessionAsync(
+            clientId, $"Sesión de {email}", payload.TenantId!.Trim(), config.UserSessionClientId, email, ct);
+
+        var linked = 0;
+        foreach (var s in subs)
+        {
+            await subStore.UpsertAsync(clientId, credId, s.SubscriptionId!.Trim(), s.DisplayName, ct);
+            linked++;
+        }
+
+        await credFactory.WriteAuditLogAsync(credId, "created", actor: email,
+            details: $"user_session link: {linked} suscripciones, tenant {payload.TenantId}", ct: ct);
+
+        return Ok(new { client_id = clientId, credential_id = credId, subscriptions_linked = linked });
+    }
+
+    private IActionResult Translate(AccessCheck check) => check.Result switch
+    {
+        AccessResult.NotFound => NotFound(new { detail = check.Detail ?? "Not found" }),
+        AccessResult.Forbidden => StatusCode(StatusCodes.Status403Forbidden, new { detail = check.Detail ?? "No tiene acceso a este cliente" }),
+        _ => Ok(),
+    };
 
     /// <summary>404 si el feature está apagado; 403 si el usuario no es admin ni está en la lista.</summary>
     private IActionResult? Gate()

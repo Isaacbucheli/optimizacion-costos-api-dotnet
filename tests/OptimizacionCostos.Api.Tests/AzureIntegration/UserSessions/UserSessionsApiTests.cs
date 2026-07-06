@@ -11,7 +11,7 @@ using OptimizacionCostos.Api.Features.AzureIntegration.UserSessions;
 
 namespace OptimizacionCostos.Api.Tests.AzureIntegration.UserSessions;
 
-public sealed class UserSessionsApiTestFactory : WebApplicationFactory<Program>
+public class UserSessionsApiTestFactory : WebApplicationFactory<Program>
 {
     public const string Secret = "test-secret-con-mas-de-32-caracteres-1234567890";
 
