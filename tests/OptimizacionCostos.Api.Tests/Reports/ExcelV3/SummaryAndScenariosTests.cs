@@ -60,4 +60,24 @@ public class SummaryAndScenariosTests
         var ws = wb.Worksheet("Resumen Ejecutivo");
         Assert.DoesNotContain(ws.CellsUsed().Select(c => c.GetString()), s => s == "Virtual Machines");
     }
+
+    [Fact]
+    public void Encabezados_de_tablas_del_resumen_con_estilo_y_titulo_sin_autofiltro()
+    {
+        using var wb = new XLWorkbook();
+        var services = new List<(string, IReadOnlyList<Dictionary<string, object?>>)>
+        {
+            ("Virtual Machines", new List<Dictionary<string, object?>> { Row(100, 60) }),
+        };
+        SummarySheetWriter.Write(wb, "C", "A", null, DateTime.Today, services,
+            new List<ScenarioV3> { Esc(1, "Esc 1", 380, 50) }, 0, 0);
+        var ws = wb.Worksheet("Resumen Ejecutivo");
+
+        // la celda de encabezado "Servicio" (donde arranca la tabla) debe ir en bold
+        var headerCell = ws.CellsUsed().First(c => c.GetString() == "Servicio");
+        Assert.True(headerCell.Style.Font.Bold);
+
+        // y la hoja NO debe tener autofiltro (es tipo documento)
+        Assert.Null(ws.AutoFilter.Range);
+    }
 }

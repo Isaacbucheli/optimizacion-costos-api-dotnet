@@ -69,7 +69,7 @@ public static class SummarySheetWriter
         var headerRow = startRow;
         for (var col = 0; col < headers.Length; col++)
             ws.Cell(headerRow, col + 1).SetValue(headers[col]);
-        ExcelStyles.Header(ws, headers.Length);
+        ExcelStyles.HeaderRow(ws, headerRow, headers.Length);
 
         var row = headerRow + 1;
         var allRows = new List<Dictionary<string, object?>>();
@@ -122,7 +122,7 @@ public static class SummarySheetWriter
         string[] headers = ["Escenario", "Total mensual", "Ahorro mensual", "% ahorro"];
         for (var col = 0; col < headers.Length; col++)
             ws.Cell(headerRow, col + 1).SetValue(headers[col]);
-        ExcelStyles.Header(ws, headers.Length);
+        ExcelStyles.HeaderRow(ws, headerRow, headers.Length);
 
         var bestNumber = scenarios.OrderByDescending(s => s.SavingsMonthly).First().Number;
 

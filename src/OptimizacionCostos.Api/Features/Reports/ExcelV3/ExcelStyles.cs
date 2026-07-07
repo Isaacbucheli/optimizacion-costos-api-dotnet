@@ -16,10 +16,11 @@ public static class ExcelStyles
     public const string Percent = "0.0%";
     public const string Int = "#,##0";
 
-    /// <summary>Fila 1: bold + texto blanco + fill de marca, freeze de la fila 1 y autofiltro A1..colCount.</summary>
-    public static void Header(IXLWorksheet ws, int colCount)
+    /// <summary>Estiliza una fila de encabezado de tabla en cualquier fila (sin freeze ni autofiltro —
+    /// para hojas tipo documento como el Resumen Ejecutivo, donde la fila 1 es el título).</summary>
+    public static void HeaderRow(IXLWorksheet ws, int row, int colCount)
     {
-        var headerRow = ws.Row(1);
+        var headerRow = ws.Row(row);
         for (var col = 1; col <= colCount; col++)
         {
             var cell = headerRow.Cell(col);
@@ -28,6 +29,12 @@ public static class ExcelStyles
             cell.Style.Fill.PatternType = XLFillPatternValues.Solid;
             cell.Style.Fill.BackgroundColor = XLColor.FromHtml(HeaderHex);
         }
+    }
+
+    /// <summary>Fila 1: bold + texto blanco + fill de marca, freeze de la fila 1 y autofiltro A1..colCount.</summary>
+    public static void Header(IXLWorksheet ws, int colCount)
+    {
+        HeaderRow(ws, 1, colCount);
         ws.SheetView.FreezeRows(1);
         ws.Range(1, 1, 1, colCount).SetAutoFilter();
     }
