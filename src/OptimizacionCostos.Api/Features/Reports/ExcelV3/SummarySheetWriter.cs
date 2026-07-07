@@ -88,12 +88,28 @@ public static class SummarySheetWriter
         grandTotals = ComparableTotalsCalculator.Compute(allRows.Select(SheetWriter.ToTotalsInput).ToList());
         if (allRows.Count > 0)
         {
-            WriteServiceRow(ws, row, "TOTAL", allRows.Count, grandTotals);
+            // Fila TOTAL como fórmulas SUM intra-hoja sobre las filas de servicio: al editar un
+            // servicio, el total recalcula. La tabla del Resumen NO tiene autofiltro, así que SUM
+            // basta (no hace falta SUBTOTAL como en las hojas de detalle filtrables).
+            WriteTotalRowFormulas(ws, row, firstRow: headerRow + 1, lastRow: row - 1, resourceCount: allRows.Count);
             ExcelStyles.SubtotalRow(ws.Row(row), grand: true);
             row++;
         }
 
         return row;
+    }
+
+    private static void WriteTotalRowFormulas(IXLWorksheet ws, int row, int firstRow, int lastRow, int resourceCount)
+    {
+        ws.Cell(row, 1).SetValue("TOTAL");
+        ws.Cell(row, 2).SetValue(resourceCount);
+        SetMoneyFormula(ws.Cell(row, 3), $"=SUM(C{firstRow}:C{lastRow})");   // PAYG mensual
+        SetMoneyFormula(ws.Cell(row, 4), $"=SUM(D{firstRow}:D{lastRow})");   // Total optimizado 1A
+        SetMoneyFormula(ws.Cell(row, 5), $"=SUM(E{firstRow}:E{lastRow})");   // Total optimizado 3A
+        SetMoneyFormula(ws.Cell(row, 6), $"=SUM(F{firstRow}:F{lastRow})");   // Ahorro 1A $
+        SetPercentFormula(ws.Cell(row, 7), $"=IF(C{row}>0,F{row}/C{row},0)"); // Ahorro 1A %
+        SetMoneyFormula(ws.Cell(row, 8), $"=SUM(H{firstRow}:H{lastRow})");   // Ahorro 3A $
+        SetPercentFormula(ws.Cell(row, 9), $"=IF(C{row}>0,H{row}/C{row},0)"); // Ahorro 3A %
     }
 
     private static void WriteServiceRow(IXLWorksheet ws, int row, string label, int resourceCount, ComparableTotals totals)
@@ -188,6 +204,18 @@ public static class SummarySheetWriter
     private static void SetPercent(IXLCell cell, double value)
     {
         cell.SetValue(value);
+        cell.Style.NumberFormat.Format = ExcelStyles.Percent;
+    }
+
+    private static void SetMoneyFormula(IXLCell cell, string formulaA1)
+    {
+        cell.FormulaA1 = formulaA1;
+        cell.Style.NumberFormat.Format = ExcelStyles.Money;
+    }
+
+    private static void SetPercentFormula(IXLCell cell, string formulaA1)
+    {
+        cell.FormulaA1 = formulaA1;
         cell.Style.NumberFormat.Format = ExcelStyles.Percent;
     }
 }

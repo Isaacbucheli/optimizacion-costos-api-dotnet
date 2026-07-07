@@ -33,6 +33,29 @@ public class SummaryAndScenariosTests
     }
 
     [Fact]
+    public void Resumen_total_general_es_formula_SUM()
+    {
+        using var wb = new XLWorkbook();
+        var services = new List<(string, IReadOnlyList<Dictionary<string, object?>>)>
+        {
+            ("Virtual Machines", new List<Dictionary<string, object?>> { Row(100, 60), Row(50, null) }),
+            ("SQL Database",     new List<Dictionary<string, object?>> { Row(30, null) }),
+        };
+        SummarySheetWriter.Write(wb, "C", "A", null, DateTime.Today, services, new List<ScenarioV3>(), 0, 0);
+        var ws = wb.Worksheet("Resumen Ejecutivo");
+
+        var totalRow = ws.RowsUsed().First(r => r.Cell(1).GetString() == "TOTAL");
+        // PAYG y Total optimizado del TOTAL = fórmula SUM de las filas de servicio (recalcula al editar).
+        Assert.True(totalRow.Cell(3).HasFormula);
+        Assert.Contains("SUM(", totalRow.Cell(3).FormulaA1);   // PAYG mensual
+        Assert.True(totalRow.Cell(4).HasFormula);
+        Assert.Contains("SUM(", totalRow.Cell(4).FormulaA1);   // Total optimizado 1A
+        // Ahorro % del TOTAL = IF(...) sobre las propias celdas del TOTAL.
+        Assert.True(totalRow.Cell(7).HasFormula);
+        Assert.Contains("IF(", totalRow.Cell(7).FormulaA1);
+    }
+
+    [Fact]
     public void Escenarios_layout_comparativo_con_valores_escritos()
     {
         using var wb = new XLWorkbook();
