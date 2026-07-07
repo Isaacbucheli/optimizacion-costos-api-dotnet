@@ -96,7 +96,7 @@ public static class SheetCatalog
         columns.Add(new("VM dueña", ColKind.Text, r => Get(r, "attached_vm_name")));
         columns.Add(new("Tier", ColKind.Text, r => Get(r, "disk_sku") ?? Get(r, "sku_name") ?? Get(r, "disk_tier")));
         columns.Add(new("GB", ColKind.Number, r => Get(r, "disk_size_gb")));
-        columns.AddRange(BaseColumns());
+        columns.AddRange(BaseColumns(includeRi: false)); // discos no son elegibles a RI: sin bloque RI/ahorro
         return new SheetSpec("VMs apagadas – discos", columns);
     }
 
@@ -112,7 +112,7 @@ public static class SheetCatalog
         columns.Add(new("Rol", ColKind.Text, r => DiskRole(Get(r, "resource_name") as string ?? "")));
         columns.Add(new("Tier", ColKind.Text, r => Get(r, "disk_sku") ?? Get(r, "sku_name") ?? Get(r, "disk_tier")));
         columns.Add(new("GB", ColKind.Number, r => Get(r, "disk_size_gb")));
-        columns.AddRange(BaseColumns());
+        columns.AddRange(BaseColumns(includeRi: false)); // discos no son elegibles a RI: sin bloque RI/ahorro
         return new SheetSpec("Discos huérfanos y ASR", columns);
     }
 
@@ -191,7 +191,7 @@ public static class SheetCatalog
         columns.Add(new("Dirección IP", ColKind.Text, r => Get(r, "ip_address")));
         columns.Add(new("Versión", ColKind.Text, r => Get(r, "ip_version")));
         columns.Add(new("Asociada a", ColKind.Text, r => Get(r, "associated_to")));
-        columns.AddRange(BaseColumns());
+        columns.AddRange(BaseColumns(includeRi: false)); // IP pública no es elegible a RI: sin bloque RI/ahorro
         return new SheetSpec("IP Pública", columns);
     }
 
@@ -207,32 +207,47 @@ public static class SheetCatalog
         new("Región", ColKind.Text, r => Get(r, "location")),
     ];
 
-    /// <summary>Columnas base de dinero/estado que comparten todas las hojas de servicio, en el
-    /// orden fijo con el que se muestran al final de cada hoja.</summary>
-    private static List<ColumnSpec> BaseColumns() =>
-    [
-        new("Reservado", ColKind.Text, r => CostLabels.ReservedLabel(r)),
-        new("PAYG mes", ColKind.Money, r => Get(r, "payg_monthly") ?? Get(r, "manual_monthly_cost"), Role: MoneyRole.Payg),
-        new("RI 1A mes", ColKind.Money, r => Get(r, "ri_1y_monthly"), Role: MoneyRole.Ri1),
-        new("RI 3A mes", ColKind.Money, r => Get(r, "ri_3y_monthly"), Role: MoneyRole.Ri3),
-        // Marcador visible de elegibilidad (spec §3.6, adenda fórmulas vivas): regla canónica de
-        // ComparableTotalsCalculator.IsEligible, no una copia — las fórmulas SUMIF de la Tarea 2
-        // filtran sobre esta columna en vez de reimplementar el criterio.
-        new("Elegible a RI", ColKind.Eligibility, r =>
-            ComparableTotalsCalculator.IsEligible(
-                AsDoubleOrNull(Get(r, "ri_1y_monthly")),
-                AsDoubleOrNull(Get(r, "ri_3y_monthly")),
-                string.Equals(Get(r, "ri_coverage") as string, "confirmed", StringComparison.OrdinalIgnoreCase))
-                ? "Sí" : "No",
-            Width: 12),
-        new("Ahorro 1A $", ColKind.Money, r => Get(r, "savings_1y_monthly"), Role: MoneyRole.Savings1Usd),
-        new("Ahorro 3A $", ColKind.Money, r => Get(r, "savings_3y_monthly"), Role: MoneyRole.Savings3Usd),
-        new("Ahorro 1A %", ColKind.Percent, r => Get(r, "savings_1y_pct"), Role: MoneyRole.Savings1Pct),
-        new("Ahorro 3A %", ColKind.Percent, r => Get(r, "savings_3y_pct"), Role: MoneyRole.Savings3Pct),
-        new("Estado del cálculo", ColKind.Text, r => CostLabels.StatusEs(Get(r, "calculation_status") as string)),
-        new("Origen del precio", ColKind.Text, r => CostLabels.PriceOrigin(r)),
-        new("Nota", ColKind.Text, r => CostLabels.NoteEs(r)),
-    ];
+    /// <summary>Columnas base de dinero/estado que comparten las hojas de servicio, en el orden fijo
+    /// con el que se muestran al final de cada hoja.
+    ///
+    /// <paramref name="includeRi"/> = false OMITE todo el bloque de Reserved Instances (RI 1A/3A mes,
+    /// "Elegible a RI" y los cuatro Ahorros 1A/3A $/%): en recursos que por naturaleza NO son elegibles
+    /// a RI (discos de VMs apagadas, discos huérfanos/ASR, IP pública) esas columnas siempre saldrían
+    /// vacías/0 y solo son ruido que el consultor termina borrando a mano (decisión del usuario
+    /// 2026-07-07). Se conserva PAYG + estado; la fila TOTAL de esas hojas suma solo PAYG (SUBTOTAL 9).</summary>
+    private static List<ColumnSpec> BaseColumns(bool includeRi = true)
+    {
+        var cols = new List<ColumnSpec>
+        {
+            new("Reservado", ColKind.Text, r => CostLabels.ReservedLabel(r)),
+            new("PAYG mes", ColKind.Money, r => Get(r, "payg_monthly") ?? Get(r, "manual_monthly_cost"), Role: MoneyRole.Payg),
+        };
+
+        if (includeRi)
+        {
+            cols.Add(new("RI 1A mes", ColKind.Money, r => Get(r, "ri_1y_monthly"), Role: MoneyRole.Ri1));
+            cols.Add(new("RI 3A mes", ColKind.Money, r => Get(r, "ri_3y_monthly"), Role: MoneyRole.Ri3));
+            // Marcador visible de elegibilidad (spec §3.6, adenda fórmulas vivas): regla canónica de
+            // ComparableTotalsCalculator.IsEligible, no una copia — la fórmula viva de Ahorro por fila
+            // filtra sobre esta columna en vez de reimplementar el criterio.
+            cols.Add(new("Elegible a RI", ColKind.Eligibility, r =>
+                ComparableTotalsCalculator.IsEligible(
+                    AsDoubleOrNull(Get(r, "ri_1y_monthly")),
+                    AsDoubleOrNull(Get(r, "ri_3y_monthly")),
+                    string.Equals(Get(r, "ri_coverage") as string, "confirmed", StringComparison.OrdinalIgnoreCase))
+                    ? "Sí" : "No",
+                Width: 12));
+            cols.Add(new("Ahorro 1A $", ColKind.Money, r => Get(r, "savings_1y_monthly"), Role: MoneyRole.Savings1Usd));
+            cols.Add(new("Ahorro 3A $", ColKind.Money, r => Get(r, "savings_3y_monthly"), Role: MoneyRole.Savings3Usd));
+            cols.Add(new("Ahorro 1A %", ColKind.Percent, r => Get(r, "savings_1y_pct"), Role: MoneyRole.Savings1Pct));
+            cols.Add(new("Ahorro 3A %", ColKind.Percent, r => Get(r, "savings_3y_pct"), Role: MoneyRole.Savings3Pct));
+        }
+
+        cols.Add(new("Estado del cálculo", ColKind.Text, r => CostLabels.StatusEs(Get(r, "calculation_status") as string)));
+        cols.Add(new("Origen del precio", ColKind.Text, r => CostLabels.PriceOrigin(r)));
+        cols.Add(new("Nota", ColKind.Text, r => CostLabels.NoteEs(r)));
+        return cols;
+    }
 
     // =================================================================================
     // Helpers de extracción (ports puntuales del exportador viejo)

@@ -45,9 +45,6 @@ public sealed class CodeCostExcelExporter(ICostExcelDataSourceV3 data) : ICostEx
         SummarySheetWriter.Write(wb, loaded.ClientName, loaded.AnalysisName, loaded.CreatedAt, DateTime.Now,
             services, scenarios, variableCount, manualCount);
 
-        // --- Escenarios ---
-        ScenariosSheetWriter.Write(wb, paygBaselineMonthly, baselineLines, scenarios);
-
         // --- Hojas de servicio del catálogo (solo las que tienen filas) ---
         foreach (var (dataKey, spec) in SheetCatalog.ServiceSheets())
         {
@@ -62,7 +59,11 @@ public sealed class CodeCostExcelExporter(ICostExcelDataSourceV3 data) : ICostEx
             SheetWriter.Write(wb, SheetCatalog.GenericServiceSheet(displayName), rows);
         }
 
-        // --- Detalle de recursos (todas las filas de "results") ---
+        // --- Escenarios (hacia el final: es la conclusión que el consultor revisa al último,
+        // justo antes del "Detalle de recursos" que es el anexo crudo). Decisión del usuario 2026-07-07. ---
+        ScenariosSheetWriter.Write(wb, paygBaselineMonthly, baselineLines, scenarios);
+
+        // --- Detalle de recursos (anexo, última hoja: todas las filas de "results") ---
         if (results.Count > 0)
             SheetWriter.Write(wb, SheetCatalog.ResourceDetailSheet(), results);
 

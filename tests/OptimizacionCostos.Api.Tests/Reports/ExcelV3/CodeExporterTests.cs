@@ -39,10 +39,10 @@ public class CodeExporterTests
     {
         using var wb = Generate();
         var names = wb.Worksheets.Select(w => w.Name).ToList();
-        Assert.Equal("Resumen Ejecutivo", names[0]);
-        Assert.Contains("Escenarios", names);
+        Assert.Equal("Resumen Ejecutivo", names[0]);                 // Resumen primero
+        Assert.Equal("Detalle de recursos", names[^1]);              // Detalle (anexo) último
+        Assert.Equal("Escenarios", names[^2]);                       // Escenarios penúltima (última que se revisa)
         Assert.Contains("Optimización VMs", names);
-        Assert.Contains("Detalle de recursos", names);
         Assert.DoesNotContain("Redis", names);                       // sin datos → sin hoja
         Assert.DoesNotContain("Servicios no catalogados", names);    // fuera del entregable
         Assert.All(wb.Worksheets, w => Assert.Equal(XLWorksheetVisibility.Visible, w.Visibility));
