@@ -1,5 +1,3 @@
-using System.Text.RegularExpressions;
-
 namespace OptimizacionCostos.Api.Features.Reports.ExcelV3;
 
 /// <summary>
@@ -9,9 +7,6 @@ namespace OptimizacionCostos.Api.Features.Reports.ExcelV3;
 /// </summary>
 public static class CostLabels
 {
-    /// <summary>Patrón técnico crudo (ej. "sku=B1 region=eastus2...") que NUNCA debe exponerse tal cual.</summary>
-    private static readonly Regex RawTechnicalNote = new(@"^\s*sku=", RegexOptions.Compiled | RegexOptions.IgnoreCase);
-
     /// <summary>Port de STATUS_META (costs.ts): estado crudo → etiqueta en español.</summary>
     private static readonly Dictionary<string, string> StatusMap = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -55,58 +50,6 @@ public static class CostLabels
     }
 
     /// <summary>
-    /// Nota legible en español. Port de translateNote() (costs.ts): arma un texto por servicio a
-    /// partir de tokens de calculation_notes (sku=, category=, capacity=, tier=, storage_gb=).
-    /// Si no hay notas ni servicio reconocido, cae a manual_cost_note y por último "". La nota cruda
-    /// SIN traducir (ej. "sku=B1 region=eastus2...") nunca se expone: si matchea el patrón técnico,
-    /// se traduce igual por servicio o se devuelve "".
-    /// </summary>
-    public static string NoteEs(IDictionary<string, object?> row)
-    {
-        var raw = GetOrNull(row, "calculation_notes") as string ?? "";
-        var service = VisibleServiceKey(GetOrNull(row, "service_key") as string);
-
-        var sku = Capture(raw, "sku");
-        var category = Capture(raw, "category");
-        var capacity = Capture(raw, "capacity");
-        var tier = Capture(raw, "tier");
-        var storage = Capture(raw, "storage_gb");
-
-        switch (service)
-        {
-            case "public_ip":
-            {
-                var assoc = string.Equals(category, "orphan", StringComparison.OrdinalIgnoreCase)
-                    ? "sin recurso asociado" : "asociada a un recurso activo";
-                return $"IP pública {(string.IsNullOrEmpty(sku) ? "Azure" : sku)} {assoc}. Costo mensual estimado con Azure Retail Prices API.";
-            }
-            case "appservice":
-            {
-                var instances = string.IsNullOrEmpty(capacity) ? "capacidad detectada" : $"{capacity} instancia(s)";
-                return $"Plan {(string.IsNullOrEmpty(sku) ? "App Service" : sku)} con {instances}. Precio mensual calculado según región y sistema operativo.";
-            }
-            case "mysql":
-            {
-                var storageText = string.IsNullOrEmpty(storage) ? "" : $" y {storage} GB de almacenamiento";
-                return $"Servidor MySQL Flexible {tier ?? ""}{storageText}. Compute y storage calculados por separado.";
-            }
-            case "redis":
-                return $"Cache Redis {sku ?? ""}. Precio seleccionado por SKU, familia y capacidad.";
-            case "disks":
-                return $"Disco administrado {sku ?? ""}. Precio mensual estimado por tipo, tier y tamaño provisionado.";
-            case "sql":
-                return "Base Azure SQL calculada según tier, modelo de compra y capacidad configurada.";
-            case "vms":
-                return "Máquina virtual calculada por tamaño, región, sistema operativo y estado de ejecución.";
-        }
-
-        // Sin servicio reconocido: si la nota cruda es el patrón técnico "sku=..." NUNCA se expone.
-        if (!string.IsNullOrEmpty(raw) && !RawTechnicalNote.IsMatch(raw)) return raw;
-
-        return (GetOrNull(row, "manual_cost_note") as string) ?? "";
-    }
-
-    /// <summary>
     /// Etiqueta de reserva confirmada para el Excel (más explícita que riTooltip() de costs.ts, que
     /// solo arma el tooltip "nombre · término" del dashboard). "" si no está confirmada; si lo está:
     /// "Reservado" a secas, "Reservado · {nombre}" si falta el término, o "Reservado · {nombre} ({término})"
@@ -132,12 +75,6 @@ public static class CostLabels
     /// Public para reutilizar en BuildServiceSummaries y evitar duplicación.</summary>
     public static string VisibleServiceKey(string? key) =>
         string.Equals(key, "sql_vm", StringComparison.OrdinalIgnoreCase) ? "vms" : (key ?? "");
-
-    private static string? Capture(string raw, string token)
-    {
-        var m = Regex.Match(raw, $@"{token}=(\S+)", RegexOptions.IgnoreCase);
-        return m.Success ? m.Groups[1].Value : null;
-    }
 
     private static object? GetOrNull(IDictionary<string, object?> row, string key) =>
         row.TryGetValue(key, out var v) ? v : null;

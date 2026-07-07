@@ -14,13 +14,6 @@ public class CostLabelsTests
     public void Estados_en_espanol(string? raw, string expected) => Assert.Equal(expected, CostLabels.StatusEs(raw));
 
     [Fact]
-    public void Nota_tecnica_cruda_no_se_expone()
-    {
-        var r = Row(("calculation_notes", "sku=B1 region=eastus2 linux=True capacity=1"));
-        Assert.DoesNotContain("sku=", CostLabels.NoteEs(r));
-    }
-
-    [Fact]
     public void Origen_ia_asistida_gana_incluso_con_manual_required()
     {
         var r = Row(("calculation_notes", "assist_match:vm"), ("calculation_status", "manual_required"));
