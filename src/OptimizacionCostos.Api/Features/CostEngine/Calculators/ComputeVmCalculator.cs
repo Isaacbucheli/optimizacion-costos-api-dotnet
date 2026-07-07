@@ -27,6 +27,12 @@ namespace OptimizacionCostos.Api.Features.CostEngine.Calculators;
 /// Ahora el PAYG de una VM con AHB se cotiza a la tarifa Linux (paygOs = "Linux"). El .py NO se
 /// toca (regla "solo .NET"): este calculador deja de ser 1:1 con Python para VMs Windows con AHB.
 ///
+/// FIX Windows_Client (2026-07-07) — misma lógica que AHB, extendida:
+/// licenseType = 'Windows_Client' (Win 10/11 con Multitenant Hosting Rights) también cotiza el PAYG
+/// a tarifa Linux. Un OS cliente NUNCA lleva licencia de Windows Server por hora: Azure lo factura
+/// "at Linux compute rates" y el licenciamiento cliente es por usuario (BYOL), aparte. Cobrarle el
+/// premium de Windows Server (como antes) sobreestimaba su costo. Ver docs Azure Multitenant Hosting.
+///
 /// Reglas:
 /// - payg_hourly = precio API según armSkuName + región + OS.
 /// - Si VM apagada: compute = 0, status = 'not_running'.
@@ -64,7 +70,14 @@ public sealed class ComputeVmCalculator : ICostCalculator
             // power_state = r.get("power_state") or r.get("status") or ""
             var powerState = FirstNonEmpty(r.GetString("power_state"), r.GetString("status"), "")!;
             var licenseType = r.GetString("os_license_benefit");
-            var isAhbWindows = licenseType == "Windows_Server";
+            var isAhbWindows = licenseType == "Windows_Server";      // AHB de Windows Server (cliente trae su licencia)
+            var isWindowsClient = licenseType == "Windows_Client";   // Win 10/11 con Multitenant Hosting Rights
+            // Ambos casos: el cliente aporta la licencia y Azure factura SOLO el compute base = tarifa
+            // Linux (sin premium de licencia de Windows Server). La regla de facturación de Azure se
+            // dispara por este mismo atributo licenseType: Windows Server → AHB; Windows_Client → un OS
+            // cliente NUNCA lleva licencia de Windows Server por hora (se cobra "at Linux compute rates";
+            // el licenciamiento cliente es por usuario, aparte). Ver docs Azure Multitenant Hosting Rights.
+            var noWindowsServerLicense = isAhbWindows || isWindowsClient;
 
             var region = NormalizeRegion(location);
 
@@ -89,16 +102,18 @@ public sealed class ComputeVmCalculator : ICostCalculator
                 continue;
             }
 
-            // Para VMs Windows SIN AHB activo, necesitamos AMBOS precios para calcular el premium
+            // Para VMs Windows SIN beneficio de licencia (ni AHB Server ni Windows_Client), necesitamos
+            // AMBOS precios para calcular el premium de licencia de Windows Server.
             var isWindows = osType.ToLowerInvariant() == "windows";
-            var needsWindowsPremium = isWindows && !isAhbWindows;
+            var needsWindowsPremium = isWindows && !noWindowsServerLicense;
 
-            // OS de tarificación del PAYG. Con AHB Windows activo el cliente aporta su propia licencia
-            // y Azure factura SOLO el compute base = tarifa Linux de la misma SKU. AHB no está
-            // representado como meter en la Azure Retail Prices API: pedir "Windows" devolvería el meter
-            // CON licencia (inflando el costo por el premium). Por eso una VM con AHB se cotiza a la
-            // tarifa Linux. Las VMs Linux nativas conservan su OS; Windows SIN AHB usa la rama de premium.
-            var paygOs = isAhbWindows ? "Linux" : osType;
+            // OS de tarificación del PAYG. Con beneficio de licencia (AHB Server o Windows_Client) el
+            // cliente aporta su propia licencia y Azure factura SOLO el compute base = tarifa Linux de la
+            // misma SKU. El beneficio no está representado como meter en la Azure Retail Prices API: pedir
+            // "Windows" devolvería el meter CON licencia de Windows Server (inflando el costo por el
+            // premium). Por eso estas VMs se cotizan a la tarifa Linux. Las VMs Linux nativas conservan su
+            // OS; Windows SIN beneficio usa la rama de premium.
+            var paygOs = noWindowsServerLicense ? "Linux" : osType;
 
             VmPrices winPrices;
             VmPrices lnxPrices;
@@ -212,6 +227,10 @@ public sealed class ComputeVmCalculator : ICostCalculator
             if (isAhbWindows)
             {
                 notes.Add("Windows AHB activo (sin premium)");
+            }
+            else if (isWindowsClient)
+            {
+                notes.Add("Windows cliente (multitenant hosting): sin cargo de licencia Windows Server");
             }
             else if (needsWindowsPremium && windowsPremiumMonthly > 0)
             {

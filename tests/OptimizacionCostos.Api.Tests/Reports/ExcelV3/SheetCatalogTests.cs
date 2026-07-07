@@ -76,6 +76,22 @@ public class SheetCatalogTests
     }
 
     [Fact]
+    public void Hoja_VMs_muestra_beneficio_hibrido_si_no_sin_montos()
+    {
+        var vms = SheetCatalog.ServiceSheets().First(s => s.DataKey == "vms").Spec;
+        Assert.DoesNotContain(vms.Columns, c => c.Header == "AHB $");        // la vieja columna de monto sale
+        var col = vms.Columns.First(c => c.Header == "Beneficio híbrido");
+        Assert.Equal(ColKind.Text, col.Kind);
+
+        string L(string? lic) => col.Extract(
+            new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["os_license_benefit"] = lic })?.ToString() ?? "";
+        Assert.Equal("Sí (Windows Server)", L("Windows_Server"));
+        Assert.Equal("Sí (Windows cliente)", L("Windows_Client"));
+        Assert.Equal("No", L(null));
+        Assert.Equal("No", L(""));
+    }
+
+    [Fact]
     public void Hojas_elegibles_y_detalle_llevan_columna_Elegible_a_RI()
     {
         foreach (var (key, spec) in SheetCatalog.ServiceSheets().Where(s => !NoRiKeys.Contains(s.DataKey)))

@@ -76,7 +76,10 @@ public static class SheetCatalog
         // línea 577. No existe una clave "sql_license" en ninguna query ni tabla del repo .NET
         // (verificado con búsqueda literal); se usan las claves reales del viejo exportador.
         columns.Add(new("Licencia SQL", ColKind.Text, r => Get(r, "sql_vm_license_type") ?? Get(r, "sql_license_type")));
-        columns.Add(new("AHB $", ColKind.Money, r => Get(r, "ahb_discount_monthly")));
+        // Beneficio híbrido (Azure Hybrid Benefit): estado Sí/No como lo muestra Azure, NO un monto.
+        // El ahorro ya está reflejado en el PAYG (VM con beneficio se cotiza a tarifa base). Reemplaza
+        // la vieja columna "AHB $" (siempre vacía: el motor nunca poblaba ahb_discount_monthly).
+        columns.Add(new("Beneficio híbrido", ColKind.Text, r => HybridBenefitLabel(r)));
         columns.AddRange(BaseColumns());
         // Claves reales del exportador viejo (pu.running_hours, pu.uptime_pct de vm_power_usage;
         // ver AppendPowerColumns en ClosedXmlCostExcelExporter.cs línea 555) — NO llevan prefijo "power_".
@@ -275,6 +278,24 @@ public static class SheetCatalog
             else if (digits.Length > 0) break;
         }
         return digits.Length > 0 ? int.Parse(digits, CultureInfo.InvariantCulture) : null;
+    }
+
+    /// <summary>Estado del beneficio híbrido (Azure Hybrid Benefit) tal como lo expone Azure vía la
+    /// propiedad ARM <c>licenseType</c> (os_license_benefit): Sí/No + tipo, sin montos. Windows_Server =
+    /// AHB de Windows Server; Windows_Client = Win 10/11 con Multitenant Hosting Rights; RHEL/SLES_BYOS =
+    /// BYOS de Linux. Vacío/None = sin beneficio. Robusto ante otros valores futuros.</summary>
+    private static string HybridBenefitLabel(IDictionary<string, object?> row)
+    {
+        var lic = (Get(row, "os_license_benefit") as string ?? "").Trim();
+        return lic switch
+        {
+            "" or "None" => "No",
+            "Windows_Server" => "Sí (Windows Server)",
+            "Windows_Client" => "Sí (Windows cliente)",
+            "RHEL_BYOS" => "Sí (RHEL BYOS)",
+            "SLES_BYOS" => "Sí (SLES BYOS)",
+            _ => $"Sí ({lic})",
+        };
     }
 
     /// <summary>Port literal de DiskRole (ClosedXmlCostExcelExporter.cs línea 176).</summary>

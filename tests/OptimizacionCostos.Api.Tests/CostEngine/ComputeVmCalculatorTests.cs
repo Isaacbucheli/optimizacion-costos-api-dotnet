@@ -122,6 +122,41 @@ public sealed class ComputeVmCalculatorTests
     }
 
     // ----------------------------------------------------------------------------
+    // Windows CLIENTE ('Windows_Client', Win 10/11 con Multitenant Hosting Rights): Azure NUNCA
+    // cobra licencia de Windows Server por hora a un OS cliente — factura el compute base = tarifa
+    // LINUX. El PAYG debe cotizarse a Linux (0.10), NO a Windows (0.20). Misma regla de facturación
+    // que el AHB de Server, disparada por el mismo atributo licenseType. Ver docs Azure:
+    // Multitenant Hosting Rights ("charged at Linux compute rates" para Windows 10/11).
+    // ----------------------------------------------------------------------------
+    [Fact]
+    public void Windows_client_prices_payg_at_linux_rate_no_premium()
+    {
+        var prices = new FakePriceRepository
+        {
+            GetVmPricesFn = (_, _, os) => os == "Windows"
+                ? new VmPrices(0.20, 600.0, 1500.0)
+                : new VmPrices(0.10, 600.0, 1500.0),
+        };
+        var rows = Res.Rows(Res.Row(
+            ("resource_id", 16),
+            ("vm_size", "Standard_D4s_v5"),
+            ("location", "eastus"),
+            ("os_type", "Windows"),
+            ("os_license_benefit", "Windows_Client"),
+            ("power_state", "running")));
+
+        var result = Build(prices).Calculate(rows, 99)[0];
+
+        Assert.Equal("calculated", result.CalculationStatus);
+        Assert.Equal(0.10 * Hours, result.PaygMonthly!.Value, 5);          // 73.0 = tarifa Linux (SIN premium)
+        Assert.Equal(0.10, result.PaygHourly!.Value, 5);
+        Assert.Equal(600.0 / 12.0, result.Ri1yMonthly!.Value, 5);          // 50.0 (RI base Linux/OS-agnostic)
+        Assert.Equal(1500.0 / 36.0, result.Ri3yMonthly!.Value, 5);
+        Assert.DoesNotContain("Windows premium", result.CalculationNotes ?? "");
+        Assert.Contains("Windows cliente", result.CalculationNotes);
+    }
+
+    // ----------------------------------------------------------------------------
     // SQL VM add-on: se suma a PAYG y a RI (NO se descuenta con RI).
     // addon = sql_addon_per_vcore_hour * vcpus * 730. Standard PAYG = 0.10/vcore/hr.
     // ----------------------------------------------------------------------------
