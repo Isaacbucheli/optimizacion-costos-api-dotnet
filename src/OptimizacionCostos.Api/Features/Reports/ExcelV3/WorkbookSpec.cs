@@ -2,13 +2,13 @@ namespace OptimizacionCostos.Api.Features.Reports.ExcelV3;
 
 /// <summary>Tipo de dato de una columna: define formato numérico y alineación.
 /// `Eligibility` es el marcador visible "Sí"/"No" (mismo tratamiento que Text para el
-/// SheetWriter, pero con su propio Kind para no confundirlo con texto libre) que las fórmulas
-/// vivas (SUMIF) usan como criterio de columna — ver spec §3.6.</summary>
+/// SheetWriter, pero con su propio Kind para no confundirlo con texto libre). La fórmula viva de
+/// Ahorro por fila lo usa como criterio: IF(AND(Elegible="Sí", RI&lt;&gt;""), PAYG−RI, 0) — ver spec §3.6.</summary>
 public enum ColKind { Text, Money, Percent, Number, Hours, Eligibility }
 
 /// <summary>
-/// Rol de una columna de dinero dentro del bloque de totales comparables. `None` = columna que no
-/// participa en el bloque de totales (se deja vacía en las 3 filas de subtotal/total).
+/// Rol de una columna de dinero dentro de la fila TOTAL comparable. `None` = columna que no
+/// participa en el TOTAL (se deja vacía en esa fila).
 /// </summary>
 public enum MoneyRole { None, Payg, Ri1, Ri3, Savings1Usd, Savings3Usd, Savings1Pct, Savings3Pct }
 
@@ -25,7 +25,7 @@ public sealed record ColumnSpec(
     MoneyRole Role = MoneyRole.None);
 
 /// <summary>
-/// Especificación declarativa de una hoja: nombre, columnas y si aplica el bloque de totales
-/// comparables (3 filas: subtotal elegible / subtotal no elegible / TOTAL).
+/// Especificación declarativa de una hoja: nombre, columnas y si aplica la fila TOTAL comparable
+/// (una única fila TOTAL con fórmulas SUBTOTAL(9,…) + "Total optimizado = PAYG − Ahorro").
 /// </summary>
 public sealed record SheetSpec(string Name, IReadOnlyList<ColumnSpec> Columns, bool ComparableTotals = true);

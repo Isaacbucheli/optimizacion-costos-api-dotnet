@@ -99,6 +99,20 @@ public class SheetWriterTests
     }
 
     [Fact]
+    public void RI_asimetrico_solo_1A_no_aporta_ahorro_3A()
+    {
+        using var wb = new XLWorkbook();
+        // x: elegible por RI1 (100/60) pero SIN RI3 (null). Ahorro1=40; Ahorro3=0 (RI3 vacío → optimizado3A
+        // recibe el PAYG completo, igual que el fallback `?? Payg` del ComparableTotalsCalculator viejo).
+        var rows = new List<Dictionary<string, object?>> { Row("x", 100, 60, null) };
+        var ws = SheetWriter.Write(wb, Spec(), rows);
+
+        Assert.Equal("Sí", ws.Cell(2, ColElig).GetString());   // elegible (tiene RI1)
+        Assert.Equal(40, ws.Cell(2, ColSav1).GetDouble(), 2);  // 100-60
+        Assert.Equal(0, ws.Cell(2, ColSav3).GetDouble(), 2);   // RI3 vacío → ahorro 3A = 0 (no infla)
+    }
+
+    [Fact]
     public void Reservado_confirmado_no_aporta_ahorro()
     {
         using var wb = new XLWorkbook();

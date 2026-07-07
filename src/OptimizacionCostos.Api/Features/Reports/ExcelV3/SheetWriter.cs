@@ -5,8 +5,13 @@ namespace OptimizacionCostos.Api.Features.Reports.ExcelV3;
 /// <summary>
 /// Escritor genérico de hojas para el exportador Excel v3 (código, no plantilla). A partir de un
 /// <see cref="SheetSpec"/> declarativo y las filas (diccionarios canónicos case-insensitive), escribe
-/// header + filas de datos con zebra + (opcional) el bloque de 3 filas de totales comparables.
-/// NO reimplementa la matemática de los totales: delega en <see cref="ComparableTotalsCalculator"/>.
+/// header + filas de datos con zebra + (opcional) una única fila TOTAL con fórmulas vivas.
+/// Los Ahorros $/% por fila y el TOTAL se escriben como FÓRMULAS intra-hoja (spec §3.6): Ahorro por
+/// fila = IF(AND(Elegible="Sí", RI&lt;&gt;""), PAYG−RI, 0); TOTAL PAYG/Ahorro = SUBTOTAL(9,…) (sensible
+/// al filtro) y "Total optimizado" = PAYG−Ahorro sobre la propia fila TOTAL. La matemática, por tanto,
+/// se computa en la hoja (no aquí). <see cref="ComparableTotalsCalculator"/> sigue siendo la fuente de
+/// verdad solo para el Resumen (valores por servicio) y para la regla IsEligible de la columna
+/// "Elegible a RI" en <see cref="SheetCatalog"/>.
 /// </summary>
 public static class SheetWriter
 {
@@ -113,6 +118,9 @@ public static class SheetWriter
             {
                 var letter = ColLetter(col);
                 var colRange = $"{letter}2:{letter}{lastDataRow}";
+                // Sin `default`/`else` a propósito: si a la hoja le faltara una columna de rol
+                // (spec incompleta), los guards `when …` dejan la celda del TOTAL en blanco en vez de
+                // emitir una fórmula con referencia rota. Silencio = por diseño, no un descuido.
                 switch (colSpec.Role)
                 {
                     // PAYG y Ahorros $: suma sensible al filtro.
