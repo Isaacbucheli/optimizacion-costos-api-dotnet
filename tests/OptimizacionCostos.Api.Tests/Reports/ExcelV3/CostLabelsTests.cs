@@ -21,10 +21,31 @@ public class CostLabelsTests
     }
 
     [Fact]
-    public void Origen_manual_gana()
+    public void Origen_ia_asistida_gana_incluso_con_manual_required()
     {
-        var r = Row(("is_manual_cost", true), ("calculation_status", "calculated"));
+        var r = Row(("calculation_notes", "assist_match:vm"), ("calculation_status", "manual_required"));
+        Assert.Equal("IA asistida", CostLabels.PriceOrigin(r));
+    }
+
+    [Fact]
+    public void Origen_manual_por_estado_manual_required()
+    {
+        var r = Row(("calculation_status", "manual_required"));
         Assert.Equal("Manual", CostLabels.PriceOrigin(r));
+    }
+
+    [Fact]
+    public void Origen_exacto_para_calculated()
+    {
+        var r = Row(("calculation_status", "calculated"));
+        Assert.Equal("Exacto", CostLabels.PriceOrigin(r));
+    }
+
+    [Fact]
+    public void Origen_guion_para_otros_estados()
+    {
+        var r = Row(("calculation_status", "variable_pricing"));
+        Assert.Equal("-", CostLabels.PriceOrigin(r));
     }
 
     [Fact]

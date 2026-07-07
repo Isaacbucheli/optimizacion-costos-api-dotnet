@@ -35,19 +35,20 @@ public static class CostLabels
     }
 
     /// <summary>
-    /// Origen del precio. Port de pricingKind()/PRICING_META (costs.ts): manual (is_manual_cost) gana
-    /// sobre todo; luego IA asistida (calculation_notes contiene el marcador real "assist_match" que
-    /// emite SqlPriceAssistant, NO "ai_assisted"); luego "Exacto" si calculation_status=="calculated";
-    /// si no, "-".
+    /// Origen del precio. Port exacto de pricingKind() (costs.ts líneas 109-115).
+    /// Precedencia: (1) calculation_notes contiene "assist_match" → "IA asistida" (MÁXIMA);
+    /// (2) calculation_status == "manual_required" → "Manual";
+    /// (3) calculation_status == "calculated" → "Exacto";
+    /// (4) else → "-".
+    /// Nota: ignore is_manual_cost (dashboard no lo lee); estos estados de cálculo son la fuente única.
     /// </summary>
     public static string PriceOrigin(IDictionary<string, object?> row)
     {
-        if (AsBool(GetOrNull(row, "is_manual_cost"))) return "Manual";
-
         var notes = GetOrNull(row, "calculation_notes") as string ?? "";
         if (notes.Contains("assist_match", StringComparison.OrdinalIgnoreCase)) return "IA asistida";
 
         var status = GetOrNull(row, "calculation_status") as string;
+        if (string.Equals(status, "manual_required", StringComparison.OrdinalIgnoreCase)) return "Manual";
         if (string.Equals(status, "calculated", StringComparison.OrdinalIgnoreCase)) return "Exacto";
 
         return "-";
