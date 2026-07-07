@@ -56,6 +56,33 @@ public class SummaryAndScenariosTests
     }
 
     [Fact]
+    public void Escenarios_alinean_lineas_por_service_key_no_por_orden()
+    {
+        using var wb = new XLWorkbook();
+        // baseline: vms primero, appservice después (por costo). Escenario: orden INVERSO y etiquetas distintas.
+        var baseline = new List<ScenarioLineV3>
+        {
+            new("Virtual Machines", 785, null, "vms"),
+            new("App Service Plans", 879, null, "appservice"),
+        };
+        var scenario = new ScenarioV3(1, "RI 1 año", null, 1500, 18000, 164, 1968, 0.1,
+            new List<ScenarioLineV3>
+            {
+                new("App Service", 879, null, "appservice"),   // orden inverso al baseline
+                new("VMs", 700, null, "vms"),
+            });
+        ScenariosSheetWriter.Write(wb, 1664, baseline, new List<ScenarioV3> { scenario });
+        var ws = wb.Worksheet("Escenarios");
+
+        // Fila 5 = vms (orden del baseline): baseline col B "Virtual Machines" + escenario col E "VMs" (misma fila).
+        Assert.Equal("Virtual Machines", ws.Cell(5, 2).GetString());
+        Assert.Equal("VMs", ws.Cell(5, 5).GetString());
+        // Fila 6 = appservice: cada bloque conserva su etiqueta, alineados en la MISMA fila.
+        Assert.Equal("App Service Plans", ws.Cell(6, 2).GetString());
+        Assert.Equal("App Service", ws.Cell(6, 5).GetString());
+    }
+
+    [Fact]
     public void Escenarios_layout_comparativo_con_valores_escritos()
     {
         using var wb = new XLWorkbook();

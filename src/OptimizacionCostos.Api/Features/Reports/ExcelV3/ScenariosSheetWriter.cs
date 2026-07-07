@@ -2,8 +2,11 @@ using ClosedXML.Excel;
 
 namespace OptimizacionCostos.Api.Features.Reports.ExcelV3;
 
-/// <summary>Línea de un breakdown (base o de escenario): etiqueta + costo mensual + nota opcional.</summary>
-public sealed record ScenarioLineV3(string Label, double MonthlyCost, string? Note);
+/// <summary>Línea de un breakdown (base o de escenario): etiqueta + costo mensual + nota opcional.
+/// <paramref name="ServiceKey"/> (service_key crudo: "vms", "disks", "appservice"…) alinea la MISMA
+/// línea entre el bloque base y los bloques de escenario, aunque su etiqueta difiera ("Virtual
+/// Machines" vs "VMs"). Null → se usa la etiqueta como clave de alineación (fallback).</summary>
+public sealed record ScenarioLineV3(string Label, double MonthlyCost, string? Note, string? ServiceKey = null);
 
 /// <summary>
 /// Escenario de optimización completo, ya calculado aguas arriba (esta hoja NO recalcula nada,
@@ -55,21 +58,36 @@ public static class ScenariosSheetWriter
             WriteMergedHeader(ws, blockStartCols[i + 1], $"Escenario #{sc.Number} — {sc.Name}");
         }
 
-        // --- Filas de breakdown ---
-        var maxLines = Math.Max(baselineLines.Count, scenarios.Count == 0 ? 0 : scenarios.Max(s => s.Breakdown.Count));
-        for (var line = 0; line < maxLines; line++)
+        // --- Filas de breakdown, ALINEADAS POR SERVICIO ---
+        // El orden lo manda la secuencia del baseline (ya viene por costo desc); se agregan al final
+        // los service_key que solo aparezcan en algún escenario (unión). TODOS los bloques se pintan
+        // en ese mismo orden, ubicando cada línea en la fila de su service_key → fila N = el mismo
+        // servicio en toda columna. Cada bloque conserva SU etiqueta y SU valor (no se unifican
+        // nombres, solo el orden). Alinear no toca ningún total (la hoja no tiene fórmulas).
+        var masterKeys = new List<string>();
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void AddKeys(IEnumerable<ScenarioLineV3> lines)
+        {
+            foreach (var l in lines)
+                if (seenKeys.Add(KeyOf(l))) masterKeys.Add(KeyOf(l));
+        }
+        AddKeys(baselineLines);
+        foreach (var sc in scenarios) AddKeys(sc.Breakdown);
+
+        var baseByKey = IndexByKey(baselineLines);
+        var scenByKey = scenarios.Select(s => IndexByKey(s.Breakdown)).ToList();
+
+        for (var line = 0; line < masterKeys.Count; line++)
         {
             var row = FirstDataRow + line;
-            WriteLine(ws, blockStartCols[0], row, line < baselineLines.Count ? baselineLines[line] : null);
+            var key = masterKeys[line];
+            WriteLine(ws, blockStartCols[0], row, baseByKey.GetValueOrDefault(key));
             for (var i = 0; i < scenarios.Count; i++)
-            {
-                var breakdown = scenarios[i].Breakdown;
-                WriteLine(ws, blockStartCols[i + 1], row, line < breakdown.Count ? breakdown[line] : null);
-            }
+                WriteLine(ws, blockStartCols[i + 1], row, scenByKey[i].GetValueOrDefault(key));
         }
 
         // --- Bloque de totales (2 filas de separación tras el último breakdown) ---
-        var totalsStartRow = FirstDataRow + maxLines + 1;
+        var totalsStartRow = FirstDataRow + masterKeys.Count + 1;
         var bestScenarioNumber = scenarios.Count == 0
             ? (int?)null
             : scenarios.OrderByDescending(s => s.SavingsMonthly).First().Number;
@@ -97,6 +115,18 @@ public static class ScenariosSheetWriter
         }
         for (var i = 0; i < scenarios.Count; i++)
             ws.Column(blockStartCols[i] + 2).Width = 5.0; // columna espaciadora angosta
+    }
+
+    /// <summary>Clave de alineación de una línea: su service_key crudo; si es null, la etiqueta.</summary>
+    private static string KeyOf(ScenarioLineV3 line) =>
+        string.IsNullOrEmpty(line.ServiceKey) ? line.Label : line.ServiceKey!;
+
+    /// <summary>Índice service_key → línea de un bloque (la última gana ante duplicados, que no debería haber).</summary>
+    private static Dictionary<string, ScenarioLineV3> IndexByKey(IEnumerable<ScenarioLineV3> lines)
+    {
+        var d = new Dictionary<string, ScenarioLineV3>(StringComparer.OrdinalIgnoreCase);
+        foreach (var l in lines) d[KeyOf(l)] = l;
+        return d;
     }
 
     private static void WriteMergedHeader(IXLWorksheet ws, int labelCol, string text)

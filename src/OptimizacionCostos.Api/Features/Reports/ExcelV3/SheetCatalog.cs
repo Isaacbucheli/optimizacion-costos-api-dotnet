@@ -210,18 +210,22 @@ public static class SheetCatalog
     /// <summary>Columnas base de dinero/estado que comparten las hojas de servicio, en el orden fijo
     /// con el que se muestran al final de cada hoja.
     ///
-    /// <paramref name="includeRi"/> = false OMITE todo el bloque de Reserved Instances (RI 1A/3A mes,
-    /// "Elegible a RI" y los cuatro Ahorros 1A/3A $/%): en recursos que por naturaleza NO son elegibles
-    /// a RI (discos de VMs apagadas, discos huérfanos/ASR, IP pública) esas columnas siempre saldrían
-    /// vacías/0 y solo son ruido que el consultor termina borrando a mano (decisión del usuario
-    /// 2026-07-07). Se conserva PAYG + estado; la fila TOTAL de esas hojas suma solo PAYG (SUBTOTAL 9).</summary>
+    /// <paramref name="includeRi"/> = false OMITE el bloque de Reserved Instances (columna "Reservado"
+    /// + RI 1A/3A mes + "Elegible a RI" + los cuatro Ahorros 1A/3A $/%): en recursos que por naturaleza
+    /// NO son reservables (discos de VMs apagadas, discos huérfanos/ASR, IP pública) esas columnas
+    /// siempre saldrían vacías/0 y solo son ruido que el consultor termina borrando a mano (decisión del
+    /// usuario 2026-07-07). Se conserva PAYG + estado; la fila TOTAL de esas hojas suma solo PAYG
+    /// (SUBTOTAL 9). La columna "Nota" (texto genérico por recurso, sin valor real) se eliminó de TODAS
+    /// las hojas por la misma decisión.</summary>
     private static List<ColumnSpec> BaseColumns(bool includeRi = true)
     {
-        var cols = new List<ColumnSpec>
-        {
-            new("Reservado", ColKind.Text, r => CostLabels.ReservedLabel(r)),
-            new("PAYG mes", ColKind.Money, r => Get(r, "payg_monthly") ?? Get(r, "manual_monthly_cost"), Role: MoneyRole.Payg),
-        };
+        var cols = new List<ColumnSpec>();
+
+        // "Reservado" (cobertura de RI ya confirmada) solo aplica a recursos reservables.
+        if (includeRi)
+            cols.Add(new("Reservado", ColKind.Text, r => CostLabels.ReservedLabel(r)));
+
+        cols.Add(new("PAYG mes", ColKind.Money, r => Get(r, "payg_monthly") ?? Get(r, "manual_monthly_cost"), Role: MoneyRole.Payg));
 
         if (includeRi)
         {
@@ -245,8 +249,7 @@ public static class SheetCatalog
 
         cols.Add(new("Estado del cálculo", ColKind.Text, r => CostLabels.StatusEs(Get(r, "calculation_status") as string)));
         cols.Add(new("Origen del precio", ColKind.Text, r => CostLabels.PriceOrigin(r)));
-        cols.Add(new("Nota", ColKind.Text, r => CostLabels.NoteEs(r)));
-        return cols;
+        return cols; // "Nota" eliminada: texto genérico por recurso sin valor (decisión usuario 2026-07-07).
     }
 
     // =================================================================================

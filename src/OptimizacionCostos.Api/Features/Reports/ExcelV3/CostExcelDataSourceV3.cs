@@ -64,7 +64,7 @@ public sealed class CostExcelDataSourceV3(
     private static ScenarioV3 MapScenario(ScenarioReadDto dto)
     {
         var breakdown = dto.Breakdown
-            .Select(b => new ScenarioLineV3(b.LineLabel ?? b.ServiceKey ?? "", b.MonthlyCost, b.Note))
+            .Select(b => new ScenarioLineV3(b.LineLabel ?? b.ServiceKey ?? "", b.MonthlyCost, b.Note, b.ServiceKey))
             .ToList();
         return new ScenarioV3(
             dto.Number, dto.Name ?? $"Escenario {dto.Number}", dto.Description,
@@ -104,7 +104,7 @@ public sealed class CostExcelDataSourceV3(
 
         return totals
             .OrderByDescending(kv => kv.Value)
-            .Select(kv => new ScenarioLineV3(labels.GetValueOrDefault(kv.Key, kv.Key), kv.Value, null))
+            .Select(kv => new ScenarioLineV3(labels.GetValueOrDefault(kv.Key, kv.Key), kv.Value, null, kv.Key))
             .ToList();
     }
 

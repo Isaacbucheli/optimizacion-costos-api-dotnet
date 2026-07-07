@@ -15,9 +15,17 @@ public class SheetCatalogTests
             var roles = spec.Columns.Select(c => c.Role).ToList();
             Assert.Contains(MoneyRole.Payg, roles);                 // PAYG siempre presente
             Assert.Contains(spec.Columns, c => c.Header == "Estado del cálculo");
-            Assert.Contains(spec.Columns, c => c.Header == "Nota");
             Assert.True(spec.ComparableTotals, $"{key} sin totales comparables");
         }
+    }
+
+    [Fact]
+    public void Ninguna_hoja_lleva_columna_Nota()
+    {
+        // "Nota" (texto genérico por recurso) se eliminó de todo el entregable (decisión usuario 2026-07-07).
+        foreach (var (key, spec) in SheetCatalog.ServiceSheets())
+            Assert.DoesNotContain(spec.Columns, c => c.Header == "Nota");
+        Assert.DoesNotContain(SheetCatalog.ResourceDetailSheet().Columns, c => c.Header == "Nota");
     }
 
     [Fact]
@@ -29,19 +37,22 @@ public class SheetCatalogTests
             var tieneRi = roles.Contains(MoneyRole.Ri1) && roles.Contains(MoneyRole.Ri3);
             var tieneAhorro = roles.Contains(MoneyRole.Savings1Usd) && roles.Contains(MoneyRole.Savings3Usd);
             var tieneElegible = spec.Columns.Any(c => c.Kind == ColKind.Eligibility);
+            var tieneReservado = spec.Columns.Any(c => c.Header == "Reservado");
 
             if (NoRiKeys.Contains(key))
             {
-                // Recurso no elegible a RI: sin RI 1A/3A, sin ahorros, sin columna Elegible (solo ruido).
+                // Recurso no reservable: sin RI 1A/3A, sin ahorros, sin Elegible y sin Reservado (solo ruido).
                 Assert.False(tieneRi, $"{key} NO debe llevar columnas RI 1A/3A");
                 Assert.False(tieneAhorro, $"{key} NO debe llevar columnas de ahorro RI");
                 Assert.False(tieneElegible, $"{key} NO debe llevar columna 'Elegible a RI'");
+                Assert.False(tieneReservado, $"{key} NO debe llevar columna 'Reservado'");
             }
             else
             {
                 Assert.True(tieneRi, $"{key} debe llevar columnas RI 1A/3A");
                 Assert.True(tieneAhorro, $"{key} debe llevar columnas de ahorro RI");
                 Assert.True(tieneElegible, $"{key} debe llevar columna 'Elegible a RI'");
+                Assert.True(tieneReservado, $"{key} debe llevar columna 'Reservado'");
             }
         }
     }
