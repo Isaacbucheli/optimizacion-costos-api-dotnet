@@ -49,6 +49,10 @@ public sealed class AppConfig
     public string StorageContainerTemplates { get; init; } = "templates";
     public string TemplateFileName { get; init; } = "BANISI-Optimizacion_Costos_V2.xlsx";
 
+    // Motor de la exportación Excel de costos: "template" (plantilla Blob, actual) | "code"
+    // (workbook v3 generado 100% desde código). Ver spec 2026-07-07-excel-export-v3.
+    public string ExcelExportEngine { get; init; } = "template";
+
     // Azure OpenAI — asistente de precios (fallback cuando la selección determinista no halla).
     // Mismas variables que el FastAPI para coexistir. El asistente solo elige de candidatos
     // REALES del Retail; nunca inventa. Gateado por AzureOpenAiEnabled + claves + PricingAssistMode.
@@ -102,6 +106,7 @@ public sealed class AppConfig
             UserSessionTenantId = Get("USER_SESSION_TENANT_ID", "24884996-6863-4925-a1ba-f1a160b581e2"),
             UserSessionAllowedEmails = Get("USER_SESSION_ALLOWED_EMAILS")
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            ExcelExportEngine = Get("EXCEL_EXPORT_ENGINE", "template").Trim().ToLowerInvariant(),
         };
     }
 }
