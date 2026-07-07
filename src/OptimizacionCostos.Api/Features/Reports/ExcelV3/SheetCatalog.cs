@@ -14,13 +14,18 @@ namespace OptimizacionCostos.Api.Features.Reports.ExcelV3;
 /// </summary>
 public static class SheetCatalog
 {
-    /// <summary>Clave del data source (misma clave que usa el exportador viejo en FetchRowsAsync) → spec de hoja.
+    /// <summary>Clave del data source (RowsByService de CostExcelDataSourceV3; la mayoría coincide con
+    /// las claves del exportador viejo en FetchRowsAsync, excepto "disks_stopped_vms"/"disks_orphan_asr",
+    /// que son la partición v3 de la única query "disks" del viejo — ver Decisión B) → spec de hoja.
     /// El orden de la lista es el orden de las hojas en el workbook.</summary>
     public static IReadOnlyList<(string DataKey, SheetSpec Spec)> ServiceSheets() =>
     [
         ("vms", VmsSheet()),
-        ("disks", StoppedDisksSheet()),
-        ("disks", OrphanDisksSheet()),
+        // Decisión B (Tarea 7): la query "disks" se parte en dos listas ya filtradas en
+        // CostExcelDataSourceV3.SplitDiskRows (mismo criterio que FillDisks del exportador viejo)
+        // porque una sola lista "disks" no alcanza para dos hojas con criterios de fila distintos.
+        ("disks_stopped_vms", StoppedDisksSheet()),
+        ("disks_orphan_asr", OrphanDisksSheet()),
         ("sql", SqlDatabaseSheet()),
         ("sql_managed_instance", SqlManagedInstanceSheet()),
         ("appservice", AppServicePlansSheet()),
@@ -95,8 +100,11 @@ public static class SheetCatalog
         return new SheetSpec("VMs apagadas – discos", columns);
     }
 
-    /// <summary>Discos huérfanos (sin VM dueña activa) o de ASR (DiskRole del exportador viejo,
-    /// línea 176). El filtrado de filas ocurre en la Tarea 7.</summary>
+    /// <summary>Discos huérfanos (sin VM dueña activa) o de ASR. La etiqueta "ASR (no eliminar)" vs
+    /// "Huérfano" replica el ternario inline de FillDisks (ClosedXmlCostExcelExporter.cs líneas
+    /// 646-647) — NO el método DiskRole (línea 176), que solo distingue OS/Data/Managed Disk y no
+    /// se usa en esta hoja. El filtrado de filas (qué cae en "orphan" vs "stopped") lo hace
+    /// CostExcelDataSourceV3.SplitDiskRows con el mismo criterio que el exportador viejo.</summary>
     private static SheetSpec OrphanDisksSheet()
     {
         var columns = new List<ColumnSpec>();
@@ -135,10 +143,12 @@ public static class SheetCatalog
         columns.AddRange(Identity());
         columns.Add(new("SKU", ColKind.Text, r => Get(r, "detail_sku_name") ?? Get(r, "sku_name")));
         columns.Add(new("Instancias", ColKind.Number, r => Get(r, "sku_capacity")));
-        // NOTA: el exportador viejo (FillAppService, línea 740) no cuenta apps por plan (deja "" fijo);
-        // no existe una clave verificada para esto todavía. Se deja "app_count" como key esperada a
-        // futuro (Tarea 7 deberá agregar el conteo a la query si se quiere poblar esta columna).
-        columns.Add(new("Apps", ColKind.Number, r => Get(r, "app_count")));
+        // Decisión A (Tarea 7): se retiró la columna "Apps"/app_count. appservice_plan_details
+        // (ver InventoryInserter.cs) solo guarda sku_name, sku_tier, sku_capacity, is_linux,
+        // per_site_scaling, zone_redundant, kind — no hay conteo de sitios/apps por plan en ninguna
+        // tabla del repo .NET (ni en el exportador viejo, que dejaba la columna fija en ""). Una
+        // columna sin dato real es el ruido que este proyecto elimina; se puede reincorporar si algún
+        // día se agrega number_of_sites a la ingesta de inventario.
         columns.AddRange(BaseColumns());
         return new SheetSpec("App Service Plans", columns);
     }
@@ -259,18 +269,15 @@ public static class SheetCatalog
     }
 
     /// <summary>
-    /// Modo Cosmos DB. El exportador viejo (FillCosmos, línea 884) solo distingue
-    /// serverless/provisioned via "is_serverless"; no existe una clave "is_autoscale" verificada en
-    /// ninguna query del viejo exportador ni en el resto del repo .NET. Se agrega el caso "autoscale"
-    /// para cuando la Tarea 7 amplíe la query de cosmos_details con ese dato; hasta entonces esta
-    /// rama nunca se activa (AsBool sobre una clave ausente es false).
+    /// Modo Cosmos DB. Decisión A (Tarea 7): se retiró la rama "autoscale" (key "is_autoscale") que
+    /// tenía el catálogo original — cosmos_details (ver InventoryInserter.cs) solo guarda api_kind,
+    /// default_experience, consistency_level, is_serverless, backup_policy_type,
+    /// multi_region_writes, region_count; no existe ninguna columna de autoscale en el repo .NET ni
+    /// en el exportador viejo (FillCosmos, línea 884, que solo distingue serverless/provisioned).
+    /// La columna "Modo" en sí SÍ tiene dato real (is_serverless) y se conserva.
     /// </summary>
-    private static string CosmosMode(IDictionary<string, object?> row)
-    {
-        if (AsBool(Get(row, "is_serverless"))) return "serverless";
-        if (AsBool(Get(row, "is_autoscale"))) return "autoscale";
-        return "provisioned";
-    }
+    private static string CosmosMode(IDictionary<string, object?> row) =>
+        AsBool(Get(row, "is_serverless")) ? "serverless" : "provisioned";
 
     /// <summary>_percent del exportador viejo, sin el caso "N/A": null se deja null (celda vacía);
     /// si &gt;1 se asume porcentaje entero y se divide entre 100.</summary>

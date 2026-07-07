@@ -109,6 +109,9 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Reports.IReportNarrat
 builder.Services.AddSingleton<OptimizacionCostos.Api.Features.Reports.IReportExecutive, OptimizacionCostos.Api.Features.Reports.ReportExecutive>();
 builder.Services.AddSingleton<OptimizacionCostos.Api.Features.Reports.IReportWordExporter, OptimizacionCostos.Api.Features.Reports.ReportWordExporter>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Reports.ICostExcelExporter, OptimizacionCostos.Api.Features.Reports.ClosedXmlCostExcelExporter>();
+// Excel v3 (código, no plantilla; flag EXCEL_EXPORT_ENGINE): data source que copia FetchRowsAsync
+// del exportador viejo + escenarios de ICostResultsQuery (ya registrado por CostEngine, más abajo).
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Reports.ExcelV3.ICostExcelDataSourceV3, OptimizacionCostos.Api.Features.Reports.ExcelV3.CostExcelDataSourceV3>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Reports.IReportBuilder, OptimizacionCostos.Api.Features.Reports.ReportBuilder>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Reports.IReportGenerationService, OptimizacionCostos.Api.Features.Reports.ReportGenerationService>();
 builder.Services.AddSingleton<OptimizacionCostos.Api.Features.Reports.IReportJobQueue, OptimizacionCostos.Api.Features.Reports.ReportJobQueue>();
