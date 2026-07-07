@@ -128,8 +128,9 @@ public static class CostLabels
         return "Reservado";
     }
 
-    /// <summary>sql_vm es interno: se agrupa bajo "vms" (visibleServiceKey de costs.ts).</summary>
-    private static string VisibleServiceKey(string? key) =>
+    /// <summary>sql_vm es interno: se agrupa bajo "vms" (visibleServiceKey de costs.ts).
+    /// Public para reutilizar en BuildServiceSummaries y evitar duplicación.</summary>
+    public static string VisibleServiceKey(string? key) =>
         string.Equals(key, "sql_vm", StringComparison.OrdinalIgnoreCase) ? "vms" : (key ?? "");
 
     private static string? Capture(string raw, string token)

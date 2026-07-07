@@ -70,4 +70,65 @@ public class CodeExporterTests
         Assert.DoesNotContain(con.Worksheets.SelectMany(w => w.CellsUsed()).Select(c => c.GetString()),
             s => s.ToLowerInvariant().Contains("margen"));
     }
+
+    [Fact]
+    public void Resumen_pliega_sql_vm_bajo_vms_sin_fila_separada()
+    {
+        // Datos: 1 VM regular + 1 sql_vm (metadatos de SQL Server en VM)
+        Dictionary<string, object?> Row(string key, string name, double payg, string? displayName = null)
+        {
+            var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["service_key"] = key,
+                ["resource_name"] = name,
+                ["payg_monthly"] = payg,
+                ["ri_1y_monthly"] = payg * 0.6,
+                ["ri_3y_monthly"] = payg * 0.6,
+                ["ri_coverage"] = null,
+                ["calculation_status"] = "calculated",
+            };
+            if (displayName is not null)
+                row["display_name"] = displayName;
+            return row;
+        }
+
+        var dataWithSqlVm = new ExcelV3Data(
+            "TestClient", "TestAnalysis", new DateTime(2026, 7, 1),
+            new Dictionary<string, List<Dictionary<string, object?>>>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["results"] = new List<Dictionary<string, object?>>
+                {
+                    Row("vms", "vm-regular", 100, "Virtual Machines"),
+                    Row("sql_vm", "vm-with-sql", 50),  // sin display_name: debe usar el de "vms"
+                },
+                ["vms"] = new List<Dictionary<string, object?>>
+                {
+                    Row("vms", "vm-regular", 100, "Virtual Machines"),
+                },
+            },
+            new List<ScenarioV3>(),
+            new List<ScenarioLineV3> { new("VMs", 150, null) }, 150);
+
+        var source = new FakeDataSourceV3 { Data = dataWithSqlVm };
+        var exp = new CodeCostExcelExporter(source);
+        var result = exp.GenerateAsync(1, null, CancellationToken.None).GetAwaiter().GetResult();
+        using var wb = new XLWorkbook(new MemoryStream(result.Bytes));
+
+        var resumen = wb.Worksheet("Resumen Ejecutivo");
+        var allText = resumen.CellsUsed().Select(c => c.GetString()).ToList();
+
+        // Debe haber "Virtual Machines" (display_name del visible key)
+        Assert.Contains(allText, s => s.Contains("Virtual Machines"));
+
+        // NO debe haber "sql_vm" ni "SQL-en-VM" como fila separada en el Resumen
+        Assert.DoesNotContain(allText, s => s.Equals("sql_vm", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(allText, s => s.Equals("SQL-en-VM", StringComparison.OrdinalIgnoreCase));
+
+        // La fila de VMs debe sumar ambos costos: 100 + 50 = 150
+        var vmRow = resumen.RowsUsed().FirstOrDefault(r =>
+            r.CellsUsed().Any(c => c.GetString().Contains("Virtual Machines")));
+        Assert.NotNull(vmRow);
+        var numCells = vmRow.CellsUsed().Where(c => c.DataType == XLDataType.Number).ToList();
+        Assert.Contains(numCells, c => Math.Abs(c.GetDouble() - 150) < 0.01);  // total = 100+50
+    }
 }

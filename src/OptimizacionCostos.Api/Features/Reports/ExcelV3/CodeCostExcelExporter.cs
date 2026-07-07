@@ -116,27 +116,51 @@ public sealed class CodeCostExcelExporter(ICostExcelDataSourceV3 data) : ICostEx
         return (loaded.RowsByService, scenarios, baselineLines, paygBaselineMonthly);
     }
 
-    /// <summary>Agrupa "results" por service_key visible (mismo criterio que la etiqueta de baseline)
-    /// para la tabla del Resumen: una fila por servicio con datos, usando la etiqueta legible
-    /// (display_name) cuando existe.</summary>
+    /// <summary>Agrupa "results" por service_key VISIBLE (aplicando CostLabels.VisibleServiceKey, que pliega
+    /// "sql_vm" en "vms"), mismo criterio que la etiqueta de baseline. Una fila por servicio con datos,
+    /// usando la etiqueta legible (display_name) cuando existe. Prioriza el display_name de filas cuyo
+    /// service_key matches exactamente el visible_key (ej. una fila con service_key="vms" sobre una
+    /// con service_key="sql_vm" dentro del grupo "vms").</summary>
     private static List<(string ServiceLabel, IReadOnlyList<Dictionary<string, object?>> Rows)> BuildServiceSummaries(
         Dictionary<string, List<Dictionary<string, object?>>> rowsByService,
         List<Dictionary<string, object?>> results)
     {
-        var groups = new List<(string Label, IReadOnlyList<Dictionary<string, object?>> Rows)>();
+        var groups = new Dictionary<string, (string Label, List<Dictionary<string, object?>> Rows)>(StringComparer.OrdinalIgnoreCase);
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var row in results)
         {
-            var key = Text(Get(row, "service_key"));
-            if (string.IsNullOrEmpty(key) || !seen.Add(key)) continue;
+            var rawKey = Text(Get(row, "service_key"));
+            if (string.IsNullOrEmpty(rawKey)) continue;
 
-            var label = Text(Get(row, "display_name"), key);
-            var rowsForKey = results.Where(x => string.Equals(Text(Get(x, "service_key")), key, StringComparison.OrdinalIgnoreCase)).ToList();
-            groups.Add((label, rowsForKey));
+            var visibleKey = CostLabels.VisibleServiceKey(rawKey);
+            if (!seen.Add(visibleKey)) continue;
+
+            var label = Text(Get(row, "display_name"));
+            var rowsForVisibleKey = results.Where(x =>
+            {
+                var xRaw = Text(Get(x, "service_key"));
+                return string.Equals(CostLabels.VisibleServiceKey(xRaw), visibleKey, StringComparison.OrdinalIgnoreCase);
+            }).ToList();
+
+            // Si aún no hay etiqueta (o es vacía), intenta prioritariamente filas cuyo service_key matches
+            // exactamente el visible_key (para que "vms" use display_name de una fila vms, no de sql_vm).
+            if (string.IsNullOrEmpty(label))
+            {
+                var matchingRowLabel = rowsForVisibleKey.FirstOrDefault(x =>
+                    string.Equals(Text(Get(x, "service_key")), visibleKey, StringComparison.OrdinalIgnoreCase));
+                if (matchingRowLabel is not null)
+                    label = Text(Get(matchingRowLabel, "display_name"));
+            }
+
+            // Si sigue siendo vacía, usa el visible_key como fallback.
+            if (string.IsNullOrEmpty(label))
+                label = visibleKey;
+
+            groups[visibleKey] = (label, rowsForVisibleKey);
         }
 
-        return groups;
+        return groups.Values.Select(g => (g.Label, (IReadOnlyList<Dictionary<string, object?>>)g.Rows)).ToList();
     }
 
     /// <summary>Cuenta filas de "results" con calculation_status variable_pricing / manual_required
