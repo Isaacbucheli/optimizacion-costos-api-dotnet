@@ -215,6 +215,16 @@ public static class SheetCatalog
         new("PAYG mes", ColKind.Money, r => Get(r, "payg_monthly") ?? Get(r, "manual_monthly_cost"), Role: MoneyRole.Payg),
         new("RI 1A mes", ColKind.Money, r => Get(r, "ri_1y_monthly"), Role: MoneyRole.Ri1),
         new("RI 3A mes", ColKind.Money, r => Get(r, "ri_3y_monthly"), Role: MoneyRole.Ri3),
+        // Marcador visible de elegibilidad (spec §3.6, adenda fórmulas vivas): regla canónica de
+        // ComparableTotalsCalculator.IsEligible, no una copia — las fórmulas SUMIF de la Tarea 2
+        // filtran sobre esta columna en vez de reimplementar el criterio.
+        new("Elegible a RI", ColKind.Eligibility, r =>
+            ComparableTotalsCalculator.IsEligible(
+                AsDoubleOrNull(Get(r, "ri_1y_monthly")),
+                AsDoubleOrNull(Get(r, "ri_3y_monthly")),
+                string.Equals(Get(r, "ri_coverage") as string, "confirmed", StringComparison.OrdinalIgnoreCase))
+                ? "Sí" : "No",
+            Width: 12),
         new("Ahorro 1A $", ColKind.Money, r => Get(r, "savings_1y_monthly"), Role: MoneyRole.Savings1Usd),
         new("Ahorro 3A $", ColKind.Money, r => Get(r, "savings_3y_monthly"), Role: MoneyRole.Savings3Usd),
         new("Ahorro 1A %", ColKind.Percent, r => Get(r, "savings_1y_pct"), Role: MoneyRole.Savings1Pct),
@@ -293,5 +303,14 @@ public static class SheetCatalog
         if (value is null || value is DBNull) return false;
         if (value is bool b) return b;
         return Convert.ToBoolean(value);
+    }
+
+    /// <summary>Convierte un valor proveniente de SQL (object?) a double?, defensivamente. Mismo
+    /// criterio que el helper privado de SheetWriter.AsDouble (no se comparte porque son archivos
+    /// distintos con este mismo patrón local ya establecido en el catálogo).</summary>
+    private static double? AsDoubleOrNull(object? value)
+    {
+        if (value is null || value is DBNull) return null;
+        return Convert.ToDouble(value, CultureInfo.InvariantCulture);
     }
 }

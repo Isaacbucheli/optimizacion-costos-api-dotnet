@@ -34,4 +34,12 @@ public class SheetCatalogTests
         Assert.Equal("Synapse Dedicated Pool", spec.Name);
         Assert.Contains(spec.Columns, c => c.Role == MoneyRole.Payg);
     }
+
+    [Fact]
+    public void Todas_las_hojas_llevan_columna_Elegible_a_RI()
+    {
+        foreach (var (key, spec) in SheetCatalog.ServiceSheets())
+            Assert.Contains(spec.Columns, c => c.Header == "Elegible a RI" && c.Kind == ColKind.Eligibility);
+        Assert.Contains(SheetCatalog.ResourceDetailSheet().Columns, c => c.Header == "Elegible a RI");
+    }
 }

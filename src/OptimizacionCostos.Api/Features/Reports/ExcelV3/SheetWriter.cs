@@ -142,6 +142,7 @@ public static class SheetWriter
         switch (kind)
         {
             case ColKind.Text:
+            case ColKind.Eligibility:
                 cell.SetValue(value.ToString() ?? "");
                 break;
             case ColKind.Money:

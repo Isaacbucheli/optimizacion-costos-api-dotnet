@@ -1,7 +1,10 @@
 namespace OptimizacionCostos.Api.Features.Reports.ExcelV3;
 
-/// <summary>Tipo de dato de una columna: define formato numérico y alineación.</summary>
-public enum ColKind { Text, Money, Percent, Number, Hours }
+/// <summary>Tipo de dato de una columna: define formato numérico y alineación.
+/// `Eligibility` es el marcador visible "Sí"/"No" (mismo tratamiento que Text para el
+/// SheetWriter, pero con su propio Kind para no confundirlo con texto libre) que las fórmulas
+/// vivas (SUMIF) usan como criterio de columna — ver spec §3.6.</summary>
+public enum ColKind { Text, Money, Percent, Number, Hours, Eligibility }
 
 /// <summary>
 /// Rol de una columna de dinero dentro del bloque de totales comparables. `None` = columna que no
