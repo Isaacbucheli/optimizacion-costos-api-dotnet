@@ -37,34 +37,111 @@ public static class SheetWriter
 
         var lastDataRow = rows.Count + 1;
 
-        // --- Bloque de totales comparables (si aplica) ---
+        // --- Fórmulas vivas por fila: Ahorro 1A/3A $ y % (spec §3.6) ---
+        // Solo si la hoja tiene columna "Elegible a RI" (Task 1) y al menos PAYG+RI1 o PAYG+RI3.
         var moneyRoleCols = spec.Columns
             .Select((c, idx) => (Col: idx + 1, Spec: c))
             .Where(x => x.Spec.Role != MoneyRole.None)
             .ToList();
         var hasComparableRoles = moneyRoleCols.Any(x => x.Spec.Role is MoneyRole.Payg or MoneyRole.Ri1 or MoneyRole.Ri3);
 
+        var eligCol = FindColumn(spec, c => c.Kind == ColKind.Eligibility);
+        var paygCol = FindColumn(spec, c => c.Role == MoneyRole.Payg);
+        var ri1Col = FindColumn(spec, c => c.Role == MoneyRole.Ri1);
+        var ri3Col = FindColumn(spec, c => c.Role == MoneyRole.Ri3);
+        var sav1UsdCol = FindColumn(spec, c => c.Role == MoneyRole.Savings1Usd);
+        var sav3UsdCol = FindColumn(spec, c => c.Role == MoneyRole.Savings3Usd);
+        var sav1PctCol = FindColumn(spec, c => c.Role == MoneyRole.Savings1Pct);
+        var sav3PctCol = FindColumn(spec, c => c.Role == MoneyRole.Savings3Pct);
+
+        if (rows.Count > 0 && eligCol is not null && paygCol is not null)
+        {
+            var eligLetter = ColLetter(eligCol.Value);
+            var paygLetter = ColLetter(paygCol.Value);
+            var ri1Letter = ri1Col is { } r1 ? ColLetter(r1) : null;
+            var ri3Letter = ri3Col is { } r3 ? ColLetter(r3) : null;
+            var sav1Letter = sav1UsdCol is { } s1 ? ColLetter(s1) : null;
+            var sav3Letter = sav3UsdCol is { } s3 ? ColLetter(s3) : null;
+
+            for (var i = 0; i < rows.Count; i++)
+            {
+                var r = i + 2; // fila 1 = header
+
+                if (sav1UsdCol is { } c1 && ri1Letter is not null)
+                {
+                    var cell = ws.Cell(r, c1);
+                    cell.FormulaA1 = $"=IF(AND({eligLetter}{r}=\"Sí\",{ri1Letter}{r}<>\"\"),{paygLetter}{r}-{ri1Letter}{r},0)";
+                    ApplyNumberFormat(cell, ColKind.Money);
+                }
+                if (sav3UsdCol is { } c3 && ri3Letter is not null)
+                {
+                    var cell = ws.Cell(r, c3);
+                    cell.FormulaA1 = $"=IF(AND({eligLetter}{r}=\"Sí\",{ri3Letter}{r}<>\"\"),{paygLetter}{r}-{ri3Letter}{r},0)";
+                    ApplyNumberFormat(cell, ColKind.Money);
+                }
+                if (sav1PctCol is { } p1 && sav1Letter is not null)
+                {
+                    var cell = ws.Cell(r, p1);
+                    cell.FormulaA1 = $"=IF({paygLetter}{r}>0,{sav1Letter}{r}/{paygLetter}{r},0)";
+                    ApplyNumberFormat(cell, ColKind.Percent);
+                }
+                if (sav3PctCol is { } p3 && sav3Letter is not null)
+                {
+                    var cell = ws.Cell(r, p3);
+                    cell.FormulaA1 = $"=IF({paygLetter}{r}>0,{sav3Letter}{r}/{paygLetter}{r},0)";
+                    ApplyNumberFormat(cell, ColKind.Percent);
+                }
+            }
+        }
+
+        // --- Fila TOTAL (una sola), como fórmulas intra-hoja SENSIBLES AL FILTRO ---
+        // SUBTOTAL(9,...) ignora las filas ocultas por autofiltro: si el usuario filtra la tabla,
+        // el TOTAL refleja SOLO lo visible. El Ahorro por fila ya vale 0 en los no-elegibles, así que
+        // "Total optimizado = PAYG − Ahorro" nunca se infla, aun filtrando. Sin filas de desglose por
+        // elegibilidad (decisión del usuario 2026-07-07): la columna "Elegible a RI" ya lo indica por
+        // recurso, y el desglose no puede ser sensible al filtro sin fórmulas frágiles.
         if (spec.ComparableTotals && hasComparableRoles && rows.Count > 0)
         {
-            var totals = ComparableTotalsCalculator.Compute(rows.Select(ToTotalsInput).ToList());
+            var totalRow = lastDataRow + 1;
+            ws.Cell(totalRow, 1).SetValue($"TOTAL ({rows.Count})");
 
-            var eligibleRow = lastDataRow + 1;
-            var notEligibleRow = lastDataRow + 2;
-            var totalRow = lastDataRow + 3;
-
-            ws.Cell(eligibleRow, 1).SetValue($"Subtotal elegible a RI ({totals.EligibleCount})");
-            ws.Cell(notEligibleRow, 1).SetValue($"Subtotal no elegible ({totals.NotEligibleCount})");
-            ws.Cell(totalRow, 1).SetValue($"TOTAL ({totals.RowCount})");
+            var paygLetterT = paygCol is { } pc ? ColLetter(pc) : null;
+            var sav1LetterT = sav1UsdCol is { } s1c ? ColLetter(s1c) : null;
+            var sav3LetterT = sav3UsdCol is { } s3c ? ColLetter(s3c) : null;
 
             foreach (var (col, colSpec) in moneyRoleCols)
             {
-                WriteRoleValue(ws.Cell(eligibleRow, col), colSpec, EligibleValue(colSpec.Role, totals));
-                WriteRoleValue(ws.Cell(notEligibleRow, col), colSpec, NotEligibleValue(colSpec.Role, totals));
-                WriteRoleValue(ws.Cell(totalRow, col), colSpec, TotalValue(colSpec.Role, totals));
+                var letter = ColLetter(col);
+                var colRange = $"{letter}2:{letter}{lastDataRow}";
+                switch (colSpec.Role)
+                {
+                    // PAYG y Ahorros $: suma sensible al filtro.
+                    case MoneyRole.Payg:
+                    case MoneyRole.Savings1Usd:
+                    case MoneyRole.Savings3Usd:
+                        SetFormula(ws.Cell(totalRow, col), colSpec, $"=SUBTOTAL(9,{colRange})");
+                        break;
+
+                    // RI 1A/3A del TOTAL = "Total optimizado" = PAYG − Ahorro (referencia la propia fila TOTAL).
+                    case MoneyRole.Ri1 when paygLetterT is not null && sav1LetterT is not null:
+                        SetFormula(ws.Cell(totalRow, col), colSpec, $"={paygLetterT}{totalRow}-{sav1LetterT}{totalRow}");
+                        break;
+                    case MoneyRole.Ri3 when paygLetterT is not null && sav3LetterT is not null:
+                        SetFormula(ws.Cell(totalRow, col), colSpec, $"={paygLetterT}{totalRow}-{sav3LetterT}{totalRow}");
+                        break;
+
+                    // Ahorro %: ahorro/PAYG sobre los totales ya sensibles al filtro.
+                    case MoneyRole.Savings1Pct when paygLetterT is not null && sav1LetterT is not null:
+                        SetFormula(ws.Cell(totalRow, col), colSpec,
+                            $"=IF({paygLetterT}{totalRow}>0,{sav1LetterT}{totalRow}/{paygLetterT}{totalRow},0)");
+                        break;
+                    case MoneyRole.Savings3Pct when paygLetterT is not null && sav3LetterT is not null:
+                        SetFormula(ws.Cell(totalRow, col), colSpec,
+                            $"=IF({paygLetterT}{totalRow}>0,{sav3LetterT}{totalRow}/{paygLetterT}{totalRow},0)");
+                        break;
+                }
             }
 
-            ExcelStyles.SubtotalRow(ws.Row(eligibleRow), grand: false);
-            ExcelStyles.SubtotalRow(ws.Row(notEligibleRow), grand: false);
             ExcelStyles.SubtotalRow(ws.Row(totalRow), grand: true);
         }
 
@@ -88,46 +165,23 @@ public static class SheetWriter
         return ws;
     }
 
-    /// <summary>Valor de la fila "Subtotal elegible a RI" para el rol dado (null = celda vacía).</summary>
-    private static double? EligibleValue(MoneyRole role, ComparableTotals t) => role switch
+    /// <summary>Índice de columna (1-based) de la primera <see cref="ColumnSpec"/> que cumple el
+    /// predicado, o null si la hoja no tiene esa columna (p.ej. una hoja sin RI3A).</summary>
+    private static int? FindColumn(SheetSpec spec, Func<ColumnSpec, bool> predicate)
     {
-        MoneyRole.Payg => t.PaygEligible,
-        MoneyRole.Ri1 => t.Ri1Eligible,
-        MoneyRole.Ri3 => t.Ri3Eligible,
-        MoneyRole.Savings1Usd => t.PaygEligible - t.Ri1Eligible,
-        MoneyRole.Savings3Usd => t.PaygEligible - t.Ri3Eligible,
-        MoneyRole.Savings1Pct => t.PaygEligible > 0 ? (t.PaygEligible - t.Ri1Eligible) / t.PaygEligible : 0,
-        MoneyRole.Savings3Pct => t.PaygEligible > 0 ? (t.PaygEligible - t.Ri3Eligible) / t.PaygEligible : 0,
-        _ => null,
-    };
+        for (var i = 0; i < spec.Columns.Count; i++)
+            if (predicate(spec.Columns[i])) return i + 1;
+        return null;
+    }
 
-    /// <summary>Valor de la fila "Subtotal no elegible": paga PAYG en toda columna de dinero; ahorro vacío.</summary>
-    private static double? NotEligibleValue(MoneyRole role, ComparableTotals t) => role switch
-    {
-        MoneyRole.Payg => t.PaygNotEligible,
-        MoneyRole.Ri1 => t.PaygNotEligible,
-        MoneyRole.Ri3 => t.PaygNotEligible,
-        _ => null, // Savings* queda vacío
-    };
+    /// <summary>Letra(s) de columna de Excel para un índice 1-based (1 -&gt; "A", 27 -&gt; "AA"), vía
+    /// ClosedXML (mismo helper que usa la librería internamente para direcciones A1).</summary>
+    private static string ColLetter(int col1Based) => XLHelper.GetColumnLetterFromNumber(col1Based);
 
-    /// <summary>Valor de la fila TOTAL: comparables (RI de elegibles + PAYG de no elegibles) y ahorro real.</summary>
-    private static double? TotalValue(MoneyRole role, ComparableTotals t) => role switch
+    /// <summary>Escribe una fórmula viva en la celda del bloque de totales y conserva su formato numérico.</summary>
+    private static void SetFormula(IXLCell cell, ColumnSpec colSpec, string formulaA1)
     {
-        MoneyRole.Payg => t.PaygTotal,
-        MoneyRole.Ri1 => t.Total1,
-        MoneyRole.Ri3 => t.Total3,
-        MoneyRole.Savings1Usd => t.Savings1,
-        MoneyRole.Savings3Usd => t.Savings3,
-        MoneyRole.Savings1Pct => t.Savings1Pct,
-        MoneyRole.Savings3Pct => t.Savings3Pct,
-        _ => null,
-    };
-
-    /// <summary>Escribe un valor de rol en la celda del bloque de totales, o la deja vacía si es null.</summary>
-    private static void WriteRoleValue(IXLCell cell, ColumnSpec colSpec, double? value)
-    {
-        if (value is null) return;
-        cell.SetValue(value.Value);
+        cell.FormulaA1 = formulaA1;
         ApplyNumberFormat(cell, colSpec.Kind);
     }
 
