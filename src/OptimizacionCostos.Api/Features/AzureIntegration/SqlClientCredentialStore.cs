@@ -26,8 +26,11 @@ public interface IClientCredentialStore
     Task<int?> ClientIdForAsync(int credentialId, CancellationToken ct = default);
     Task<IReadOnlyList<CredentialAuditItem>> GetAuditAsync(int credentialId, int limit, CancellationToken ct = default);
 
-    /// <summary>Credencial efímera de sesión de usuario (Lighthouse). Sin secreto en Key Vault.</summary>
-    Task<int> InsertUserSessionAsync(int clientId, string name, string tenantId, string appClientId, string sessionUserEmail, CancellationToken ct = default);
+    /// <summary>Credencial efímera de sesión de usuario (Lighthouse). Sin secreto en Key Vault.
+    /// IDEMPOTENTE: si ya existe una credencial user_session para (cliente, email, tenant), la
+    /// reutiliza (reactiva + refresca metadata) en vez de crear otra — re-sincronizar el mismo
+    /// cliente NO acumula credenciales.</summary>
+    Task<int> UpsertUserSessionAsync(int clientId, string name, string tenantId, string appClientId, string sessionUserEmail, CancellationToken ct = default);
 }
 
 public sealed class SqlClientCredentialStore(ISqlConnectionFactory factory) : IClientCredentialStore
@@ -149,23 +152,62 @@ public sealed class SqlClientCredentialStore(ISqlConnectionFactory factory) : IC
         return list;
     }
 
-    public async Task<int> InsertUserSessionAsync(
+    public async Task<int> UpsertUserSessionAsync(
         int clientId, string name, string tenantId, string appClientId, string sessionUserEmail, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
         await AzureCredentialSchema.EnsureAsync(conn, ct);
+
+        // Idempotente: si ya hay una credencial user_session para (cliente, email, tenant) la
+        // reutilizamos (reactivar + refrescar metadata) en vez de insertar otra. Así re-sincronizar
+        // el mismo cliente no acumula credenciales ni choca con una constraint única de la tabla base.
+        await using (var find = conn.CreateCommand())
+        {
+            find.CommandText = """
+                SELECT TOP 1 credential_id FROM dbo.client_azure_credentials
+                WHERE client_id = @cid AND auth_type = 'user_session'
+                  AND session_user_email = @mail AND tenant_id = @tenant
+                ORDER BY credential_id
+                """;
+            find.Parameters.Add(new SqlParameter("@cid", clientId));
+            find.Parameters.Add(new SqlParameter("@mail", sessionUserEmail));
+            find.Parameters.Add(new SqlParameter("@tenant", tenantId));
+            var found = await find.ExecuteScalarAsync(ct);
+            if (found is not null && found is not DBNull)
+            {
+                var existingId = Convert.ToInt32(found);
+                await using var upd = conn.CreateCommand();
+                upd.CommandText = """
+                    UPDATE dbo.client_azure_credentials
+                    SET credential_name = @name, app_client_id = @app, is_active = 1, updated_at = SYSUTCDATETIME()
+                    WHERE credential_id = @id
+                    """;
+                upd.Parameters.Add(new SqlParameter("@name", name));
+                upd.Parameters.Add(new SqlParameter("@app", appClientId));
+                upd.Parameters.Add(new SqlParameter("@id", existingId));
+                await upd.ExecuteNonQueryAsync(ct);
+                return existingId;
+            }
+        }
+
         await using var cmd = conn.CreateCommand();
-        // key_vault_secret_name = '' : no hay secreto (la factory ni toca Key Vault para user_session).
+        // key_vault_secret_name: la factory NUNCA lo lee para user_session (usa el token de sesión en
+        // memoria), PERO la tabla tiene índice único UQ_credentials_kv_secret_name. Poner '' choca con
+        // la 2ª sesión (cualquier cliente) → error de constraint. Usamos un sentinela ÚNICO y
+        // determinista por (cliente, tenant, email) — coincide con la clave de idempotencia de arriba,
+        // así que jamás se re-inserta el mismo y no hay colisión.
+        var kvSentinel = $"user-session:{clientId}:{tenantId}:{sessionUserEmail}";
         cmd.CommandText = """
             INSERT INTO dbo.client_azure_credentials
                 (client_id, credential_name, tenant_id, app_client_id, key_vault_secret_name, auth_type, session_user_email)
             OUTPUT INSERTED.credential_id
-            VALUES (@cid, @name, @tenant, @app, '', 'user_session', @mail)
+            VALUES (@cid, @name, @tenant, @app, @kv, 'user_session', @mail)
             """;
         cmd.Parameters.Add(new SqlParameter("@cid", clientId));
         cmd.Parameters.Add(new SqlParameter("@name", name));
         cmd.Parameters.Add(new SqlParameter("@tenant", tenantId));
         cmd.Parameters.Add(new SqlParameter("@app", appClientId));
+        cmd.Parameters.Add(new SqlParameter("@kv", kvSentinel));
         cmd.Parameters.Add(new SqlParameter("@mail", sessionUserEmail));
         return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
     }

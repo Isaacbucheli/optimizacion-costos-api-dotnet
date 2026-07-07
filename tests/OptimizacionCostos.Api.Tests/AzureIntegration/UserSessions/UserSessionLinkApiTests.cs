@@ -46,12 +46,22 @@ public sealed class FakeClientStore : IClientStore
         => throw new NotImplementedException();
 }
 
-/// <summary>CredentialStore fake: registra el insert de sesión.</summary>
+/// <summary>CredentialStore fake: registra el upsert de sesión (idempotente por cliente+email+tenant,
+/// igual que el store real: re-vincular el mismo cliente devuelve la MISMA credencial).</summary>
 public sealed class FakeCredentialStore : IClientCredentialStore
 {
     public List<(int ClientId, string Name, string Tenant, string AppId, string Email)> SessionInserts { get; } = [];
-    public Task<int> InsertUserSessionAsync(int clientId, string name, string tenantId, string appClientId, string sessionUserEmail, CancellationToken ct = default)
-    { SessionInserts.Add((clientId, name, tenantId, appClientId, sessionUserEmail)); return Task.FromResult(555); }
+    private readonly Dictionary<(int, string, string), int> _byKey = [];
+    private int _nextId = 555;
+    public Task<int> UpsertUserSessionAsync(int clientId, string name, string tenantId, string appClientId, string sessionUserEmail, CancellationToken ct = default)
+    {
+        var key = (clientId, sessionUserEmail, tenantId);
+        if (_byKey.TryGetValue(key, out var existing)) return Task.FromResult(existing);
+        var id = _nextId++;
+        _byKey[key] = id;
+        SessionInserts.Add((clientId, name, tenantId, appClientId, sessionUserEmail));
+        return Task.FromResult(id);
+    }
 
     // Resto de IClientCredentialStore: no usado por estos tests.
     public Task<IReadOnlyList<CredentialListItem>> ListByClientAsync(int clientId, CancellationToken ct = default)

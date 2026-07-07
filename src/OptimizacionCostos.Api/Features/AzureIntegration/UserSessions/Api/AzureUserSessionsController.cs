@@ -104,7 +104,7 @@ public sealed class AzureUserSessionsController(
             clientId = await clients.CreateAsync(name, null, null, null, "Cliente temporal (Lighthouse)", ct);
         }
 
-        var credId = await credStore.InsertUserSessionAsync(
+        var credId = await credStore.UpsertUserSessionAsync(
             clientId, $"Sesión de {email}", payload.TenantId!.Trim(), config.UserSessionClientId, email, ct);
 
         var linked = 0;
