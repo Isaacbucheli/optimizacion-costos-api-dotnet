@@ -8,9 +8,10 @@ namespace OptimizacionCostos.Api.Features.Reports.ExcelV3;
 /// identificación, columnas específicas del servicio y el bloque de columnas base (dinero + estado)
 /// que comparten todas las hojas de servicio.
 ///
-/// Las claves de extracción (ej. "os_type", "vm_size") son las mismas que usa el exportador viejo
-/// (<c>ClosedXmlCostExcelExporter</c>) en sus queries y métodos Fill*: los datos de la Tarea 7 vienen
-/// de esas mismas queries, así que las claves deben coincidir exactamente para no romper el mapeo.
+/// Las claves de extracción (ej. "os_type", "vm_size") son exactamente las que producen las queries
+/// de <see cref="CostExcelDataSourceV3"/>; deben coincidir para no romper el mapeo. (Las referencias
+/// a métodos Fill* en los comentarios de abajo son la procedencia del exportador Excel anterior, ya
+/// eliminado; se conservan como memoria de dónde salió cada columna.)
 /// </summary>
 public static class SheetCatalog
 {

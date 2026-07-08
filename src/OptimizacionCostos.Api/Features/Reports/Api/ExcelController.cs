@@ -23,7 +23,6 @@ public sealed record ExcelGenerateRequest(decimal? MarginPct);
 [Authorize]
 [Route("excel")]
 public sealed class ExcelController(
-    ICostExcelExporter exporter,
     ICostExcelExporterV3 exporterV3,
     IBlobStorageService blobs,
     IAnalysisAccess access,
@@ -42,20 +41,12 @@ public sealed class ExcelController(
         if (!chk.Ok) return Translate(chk);
 
         var marginPct = payload?.MarginPct;
-        if (marginPct is { } m)
-        {
-            if (!(m > 0 && m <= 100))
-                return BadRequest(new { detail = "El margen debe ser mayor a 0 y menor o igual a 100." });
-            if (config.ExcelExportEngine != "code")
-                return BadRequest(new { detail = "El margen requiere EXCEL_EXPORT_ENGINE=code" });
-        }
+        if (marginPct is { } m && !(m > 0 && m <= 100))
+            return BadRequest(new { detail = "El margen debe ser mayor a 0 y menor o igual a 100." });
 
         try
         {
-            if (config.ExcelExportEngine == "code")
-                return await GenerateWithCodeEngine(analysisId, marginPct, ct);
-
-            return await GenerateFromTemplate(analysisId, ct);
+            return await GenerateWithCodeEngine(analysisId, marginPct, ct);
         }
         catch (Exception ex)
         {
@@ -64,7 +55,7 @@ public sealed class ExcelController(
         }
     }
 
-    /// <summary>Motor "code" (v3): workbook armado 100% desde código, con margen opcional.</summary>
+    /// <summary>Genera el workbook v3 (armado 100% desde código, margen opcional) y lo sube al Blob de salidas.</summary>
     private async Task<IActionResult> GenerateWithCodeEngine(int analysisId, decimal? marginPct, CancellationToken ct)
     {
         var result = await exporterV3.GenerateAsync(analysisId, marginPct, ct);
@@ -82,28 +73,6 @@ public sealed class ExcelController(
             container = config.StorageContainerOutputs,
             blob_name = blobName,
             file_name = result.FileName,
-            download_url = $"/excel/files/{fileId}/download",
-        });
-    }
-
-    /// <summary>Motor "template" (actual, sin cambios de comportamiento): rellena la plantilla del Blob.</summary>
-    private async Task<IActionResult> GenerateFromTemplate(int analysisId, CancellationToken ct)
-    {
-        var excelBytes = await exporter.GenerateAsync(analysisId, ct);
-        var blobName = $"analysis-{analysisId}/resultado-optimizacion-costos.xlsx";
-        await blobs.UploadAsync(config.StorageContainerOutputs, blobName, excelBytes, XlsxContentType, ct);
-
-        var fileId = await files.InsertFileAsync(
-            analysisId, "output", "resultado-optimizacion-costos.xlsx",
-            config.StorageContainerOutputs, blobName, XlsxContentType, excelBytes.Length, ct);
-
-        return Ok(new
-        {
-            message = "Excel generado correctamente desde la plantilla",
-            file_id = fileId,
-            container = config.StorageContainerOutputs,
-            blob_name = blobName,
-            file_name = "resultado-optimizacion-costos.xlsx",
             download_url = $"/excel/files/{fileId}/download",
         });
     }

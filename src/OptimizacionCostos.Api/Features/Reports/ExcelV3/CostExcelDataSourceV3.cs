@@ -10,14 +10,13 @@ namespace OptimizacionCostos.Api.Features.Reports.ExcelV3;
 /// cost_results + azure_resources (+ tablas *_details) y los escenarios ya calculados, listos
 /// para que SheetCatalog/SheetWriter/SummarySheetWriter/ScenariosSheetWriter los pinten.
 ///
-/// COPIA CONSCIENTE: <see cref="FetchRowsAsync"/> (con sus queries), <see cref="EnsurePowerUsageSchemaAsync"/>
-/// y los helpers <see cref="Number"/>/<see cref="Text"/>/<see cref="Monthly"/>/<see cref="NeutralizeReservedRows"/>
-/// están copiados VERBATIM (namespaces adaptados) de <c>ClosedXmlCostExcelExporter.cs</c>
-/// (Features/Reports/, NO modificado por esta tarea) para no arriesgar el exportador viejo mientras
-/// convive con el v3 detrás del flag EXCEL_EXPORT_ENGINE. El viejo exportador se elimina en el
-/// follow-up posterior al switch (cuando el v3 sea el único motor). Única diferencia deliberada:
-/// la query "discovered_services" (hoja "Servicios no catalogados") NO se copia ni se ejecuta aquí
-/// — queda fuera del entregable v3 por decisión de la Tarea 7.
+/// <see cref="FetchRowsAsync"/> (con sus queries), <see cref="EnsurePowerUsageSchemaAsync"/> y los
+/// helpers <see cref="Number"/>/<see cref="Text"/>/<see cref="Monthly"/>/<see cref="NeutralizeReservedRows"/>
+/// se portaron del exportador Excel anterior (ClosedXmlCostExcelExporter, ya ELIMINADO en la limpieza
+/// 2026-07-07 cuando el motor v3 quedó como único). Las referencias "líneas N-M" en los comentarios
+/// de abajo son la procedencia histórica de cada bloque. Única diferencia deliberada con el viejo:
+/// la query "discovered_services" (hoja "Servicios no catalogados") NO se ejecuta aquí — queda fuera
+/// del entregable v3 por decisión de diseño.
 /// </summary>
 public sealed record ExcelV3Data(
     string ClientName,
