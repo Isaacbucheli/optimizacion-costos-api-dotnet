@@ -51,7 +51,7 @@ public class LighthouseCatalogServiceTests
                  ]}
                 """);
         if (url.Contains("/subscriptions/s1/providers/Microsoft.ManagedServices"))
-            return Json("""{"value":[{"properties":{"manageeTenantName":"SG CONSULTING GROUP","manageeTenantId":"tenant-cliente-a"}}]}""");
+            return Json("""{"value":[{"properties":{"manageeTenantName":"ZETA CONSULTING GROUP","manageeTenantId":"tenant-cliente-a"}}]}""");
         if (url.Contains("/subscriptions/s4/providers/Microsoft.ManagedServices"))
             return new HttpResponseMessage(HttpStatusCode.Forbidden); // sin definición legible
         return new HttpResponseMessage(HttpStatusCode.NotFound);
@@ -67,7 +67,7 @@ public class LighthouseCatalogServiceTests
         // Orden alfabético por nombre de cliente:
         Assert.StartsWith("(sin nombre, tenant tenant-cl", groups[0].ClientName); // fallback cliente B
         Assert.Equal("Business IT (tenant propio)", groups[1].ClientName);
-        Assert.Equal("SG CONSULTING GROUP", groups[2].ClientName);
+        Assert.Equal("ZETA CONSULTING GROUP", groups[2].ClientName);
 
         var sg = groups[2];
         Assert.Equal("tenant-cliente-a", sg.TenantId);

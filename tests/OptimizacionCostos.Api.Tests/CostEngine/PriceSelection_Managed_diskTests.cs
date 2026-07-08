@@ -15,7 +15,7 @@ public sealed class PriceSelection_Managed_diskTests
 
     /// <summary>
     /// Port de test_disk_price_uses_exact_disk_meter_not_mount_or_operations.
-    /// Regresión MINSUR: P6/E10 tomaban "Disk Mount" u "Operations" según orden; debe elegir
+    /// Regresión real: P6/E10 tomaban "Disk Mount" u "Operations" según orden; debe elegir
     /// el meter EXACTO "P6 LRS Disk" = 9.28, NO 0.47 (Mount) ni 0.002 (Operations).
     /// Equivale a patch _is_cache_fresh_for=True + _query_cached=cached.
     /// </summary>

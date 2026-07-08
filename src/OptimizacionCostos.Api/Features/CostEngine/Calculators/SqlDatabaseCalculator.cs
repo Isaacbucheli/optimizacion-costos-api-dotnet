@@ -134,7 +134,7 @@ public sealed class SqlDatabaseCalculator(IPriceRepository prices, IPricingConst
             }
             else
             {
-                result.RiApplies = false;    // En BANISI todas son Serverless; ajustar si aparecen Provisioned
+                result.RiApplies = false;    // En los clientes analizados todas son Serverless; ajustar si aparecen Provisioned
                 result.RiNotApplicableReason = "RI requiere análisis específico para SQL Provisioned";
             }
 

@@ -1,126 +1,77 @@
-# Backend en .NET 8 (ASP.NET Core)
+# API .NET — Innovación CDC (Plataforma de Optimización y Mejoras)
 
-Prueba de concepto para evaluar migrar el backend de **Python/FastAPI** a **.NET 8 / C#**,
-sin tocar la API actual. Migra **un módulo aislado** (Catálogo de alertas Azure Monitor,
-`/alert-catalog`) replicando 1:1 su comportamiento.
+Backend **único** de la Plataforma CDC: ASP.NET Core 8 (C#) sobre Azure SQL.
+Todas las rutas — incluido el login — se sirven desde aquí.
 
-## Objetivo: probar que se puede coexistir
+Corre en Azure como **App Service Linux (.NET 8)** sobre **Azure SQL**, y comparte con la
+plataforma un **Key Vault** (secretos de credenciales de clientes), una cuenta de **Blob Storage**
+(plantillas, salidas, logos) y un recurso de **Azure OpenAI**. Los nombres y URLs concretos de los
+recursos se administran fuera del repo (app settings del App Service / documentación privada).
+El frontend es el repo [`innovacion-CDC`](https://github.com/Isaacbucheli/innovacion-CDC)
+(React + Vite, Azure Static Web Apps).
 
-El punto clave de la estrategia *strangler* (migrar ruta por ruta) es que el backend nuevo
-**conviva** con el FastAPI actual contra la misma BD y el mismo login. Esta PoC demuestra:
+Ver [STACK-NUEVO.md](STACK-NUEVO.md) para la forma de la configuración de entorno.
 
-| Patrón del FastAPI | Cómo se replicó en .NET | Verificado |
+## Módulos (`src/OptimizacionCostos.Api/Features/`)
+
+| Módulo | Rutas | Qué hace |
 |---|---|---|
-| Login JWT HS256 firmado con `JWT_SECRET` | `JwtBearer` con clave simétrica, sin issuer/audience, claim `sub`=email | ✅ test `Token_estilo_FastAPI_es_aceptado` (token construido byte-a-byte como `app/auth.py`) |
-| Rol vivo desde `dbo.app_users` (el token no autoriza solo) | `OnTokenValidated` re-consulta el rol y lo inyecta | ✅ tests de rol |
-| `lector` solo lee; `admin`/`consultor` mutan | `[Authorize]` en GET, `[Authorize(Roles=...)]` en mutaciones | ✅ `Lector_no_puede_crear` (403), `Consultor_puede_crear` (200) |
-| SQL parametrizado (pyodbc) | `Microsoft.Data.SqlClient` (TDS nativo, sin ODBC) | ✅ store + whitelist de columnas |
-| Schema-ensure + seed idempotente | `AlertCatalogSchema` (crea tablas si faltan, siembra si vacío) | ✅ seed portado desde el mismo `seed_data.py` |
-| Contrato JSON snake_case (lo consume el front) | `JsonNamingPolicy.SnakeCaseLower` | ✅ `Lista_devuelve_snake_case` |
-| `openapi.json` | Swagger en `/swagger` | ✅ expone los 9 endpoints |
+| **Identity** | `/auth` | Login (JWT HS256, hashes PBKDF2 compatibles con los usuarios existentes), CRUD de usuarios y asignación de clientes. El rol se re-consulta **vivo** en `app_users` en cada request — el token no autoriza solo. |
+| **Clients** | `/clients` | CRUD de clientes, logo (Blob), purga/borrado con confirmación de nombre. |
+| **AzureIntegration** | `/azure/credentials`, `/azure/subscriptions`, `/azure/user-sessions` | Credenciales de service principal por cliente (el secreto vive solo en Key Vault), sync de suscripciones (`is_managed` lo decide el usuario; el sync nunca lo toca) y sesiones Azure con cuenta de usuario vía Lighthouse (device code flow, para clientes sin app registration). |
+| **Inventory** | `/azure/import` | Importación de inventario vía Resource Graph (KQL por servicio del catálogo, 11 inserters de detalle) + discovery de servicios con clasificación IA. |
+| **Catalog** | `/service-catalog` | Catálogo de servicios Azure que alimenta el costeo (CRUD admin + sugerencias desde discovery). |
+| **CostEngine** | `/analysis/*` (calculate, results, scenarios, manual-cost, ri-coverage, power-history), `/prices/*` | Motor de costos: 12 calculadoras, precios de la Azure Retail API con caché SQL, asistente IA de precios (solo elige entre candidatos reales, auditado), 4 escenarios de ahorro, cobertura RI, control de acceso por cliente. |
+| **FinOpsData** | `/finops-data` | Datasets estilo FinOps Toolkit: elegibilidad RI, categorías, cobertura de cálculo. |
+| **Optimization** | `/optimization` | Barrido de optimización del tenant: 7 checks KQL (discos huérfanos, IPs sin uso, VMs detenidas sin desasignar, etc.) con ahorro estimado y estados de hallazgo. Acceso gateado por `OPTIMIZATION_ALLOWED_EMAILS`. |
+| **Cdc** | `/cdc` | Gestión CDC: reservas de capacidad (por vencer, utilización, consumidores) y power history/uptime como job en background. |
+| **Waf** | `/waf`, `/waf/admin` | Matriz Well-Architected: ingesta de Advisor (CSV y sync), dedup + consolidación, curación IA, Advisor Score (scheduler semanal), export/import Excel, costo referencial Azure. |
+| **Reports** | `/reports`, `/excel`, `/files` | Informe de gestión mensual (generación en background, narrativa IA, export Word) y exportación **Excel de costos v3** (generada desde código: subtotales comparables RI, margen comercial, fórmulas vivas). |
+| **AlertCatalog** | `/alert-catalog` | Catálogo de alertas Azure Monitor + biblioteca KQL. |
+| **Storage** | — (interno) | Acceso a Blob (uploads/outputs/plantillas) vía `DefaultAzureCredential`. |
+| **Health** | `/health` | Público, para probes. |
 
-**Conclusión:** la coexistencia es viable. Los tokens del login actual sirven sin cambios,
-y el nuevo backend puede atender `/alert-catalog` mientras el FastAPI sigue sirviendo el resto.
+**Jobs en background** (hosted services): power history, Advisor Score semanal (lease-lock) y generación de informes (cola en proceso).
 
-## Estructura
-
-```
-src/OptimizacionCostos.Api/
-  Program.cs                      # host, auth, CORS, swagger, DI
-  Configuration/AppConfig.cs      # lee las MISMAS env vars que FastAPI (SQL_*, JWT_SECRET)
-  Data/SqlConnectionFactory.cs    # Microsoft.Data.SqlClient
-  Auth/                           # JWT + rol vivo desde app_users
-  Features/AlertCatalog/          # módulo migrado (controller, store, schema, seed)
-  Features/Health/                # /health público
-tests/OptimizacionCostos.Api.Tests/   # 12 tests, sin Azure ni SQL (fakes)
-```
+Contrato JSON en **snake_case** (`JsonNamingPolicy.SnakeCaseLower`); Swagger en `/swagger`.
 
 ## Correr local
 
-Requiere [.NET 8 SDK](https://dotnet.microsoft.com/download). Tests (no necesitan Azure):
+Requiere [.NET 8 SDK](https://dotnet.microsoft.com/download). Los tests no necesitan Azure ni BD (fakes + `WebApplicationFactory`):
 
 ```powershell
-dotnet test
+dotnet test    # 404 tests
 ```
 
-Levantar la API (sin BD solo responden /health y los 401):
+Levantar la API (servidor/BD y credenciales van por variables de entorno o user-secrets; valores en la documentación privada del equipo):
 
 ```powershell
-$env:JWT_SECRET="<mismo secreto que el FastAPI>"
 $env:SQL_SERVER="..."; $env:SQL_DATABASE="..."; $env:SQL_USERNAME="..."; $env:SQL_PASSWORD="..."
+$env:JWT_SECRET="..."
 dotnet run --project src/OptimizacionCostos.Api
-# Swagger: http://localhost:5xxx/swagger
+# Swagger: http://localhost:5169/swagger
 ```
 
-> Variables de entorno idénticas a las del FastAPI → apunta a la misma BD.
+> Sin `KEY_VAULT_URL`/`STORAGE_ACCOUNT_NAME` el núcleo (login, results, scenarios, calculate)
+> corre igual, pero credenciales/import/reservas/WAF/informes/export fallan.
 
-## Round-trip real (✅ hecho 2026-06-26)
+## Variables de entorno
 
-BD separada **`sqldb-optimizacion-costos-dotnet`** (tier Basic, mismo servidor `sqldb-optimizacion-costos`,
-datos aislados de prod). El test `DbRoundTripTests` ejecuta contra Azure SQL real:
-schema-ensure → seed (48 alertas + 14 KQL) → create → get → update → soft-delete, y verifica
-seed idempotente. Pasa. Se activa con `BIT_INTEGRATION_DB=1` + `SQL_*` en el entorno
-(con `SQL_DATABASE=sqldb-optimizacion-costos-dotnet`); fuera de eso es no-op y la suite sigue DB-free.
+| Grupo | Variables |
+|---|---|
+| SQL | `SQL_SERVER`, `SQL_DATABASE`, `SQL_USERNAME`, `SQL_PASSWORD` |
+| Auth | `JWT_SECRET`, `APP_AUTH_TOKEN_MINUTES` (480), `APP_AUTH_BOOTSTRAP_ENABLED` |
+| Azure | `KEY_VAULT_URL`, `STORAGE_ACCOUNT_NAME`, `STORAGE_CONTAINER_UPLOADS`/`_OUTPUTS` |
+| IA | `AZURE_OPENAI_ENABLED`, `_ENDPOINT`, `_API_KEY`, `_DEPLOYMENT`, `_API_VERSION`, `AZURE_OPENAI_PRICING_ASSIST_MODE` |
+| Sesiones de usuario (Lighthouse) | `USER_SESSION_AUTH_ENABLED`, `USER_SESSION_CLIENT_ID`, `USER_SESSION_TENANT_ID`, `USER_SESSION_ALLOWED_EMAILS` |
+| Schedulers / gating | `ADVISOR_SCORE_SCHEDULER_ENABLED`/`_TZ`/`_TIME`/`_WEEKDAY`, `OPTIMIZATION_ALLOWED_EMAILS` |
+| CORS | `CORS_ORIGINS` (origen del frontend) |
 
-## Desplegado en Azure (✅ 2026-06-26)
+La fuente de verdad es [`Configuration/AppConfig.cs`](src/OptimizacionCostos.Api/Configuration/AppConfig.cs).
 
-- **App Service:** `app-optimizacion-costos-api-dotnet` (Linux, runtime DOTNETCORE|8.0), reusando el
-  plan B1 `asp-optimizacion-costos-api` (sin costo de plan extra). HTTPS-only. Startup `dotnet OptimizacionCostos.Api.dll`.
-  URL: https://app-optimizacion-costos-api-dotnet.azurewebsites.net
-- **App settings:** mismas credenciales SQL del FastAPI (login `bitadmin`) y mismo `JWT_SECRET`
-  (→ los tokens del login actual sirven), con `SQL_DATABASE=sqldb-optimizacion-costos-dotnet`. `CORS_ORIGINS` = el del front.
-- **Deploy:** `dotnet publish -c Release -p:UseAppHost=false` → zip → `az webapp deploy --type zip`.
-- **Verificación en vivo:** `/health` 200, `/alert-catalog` sin token 401, y con token admin: GET 48 alertas,
-  GET 14 KQL, POST crea (id 50). Stack completo (auth + rol vivo en `app_users` + CRUD SQL) confirmado en Azure.
+## Infra y CI/CD
 
-> Costo recurrente nuevo: solo la BD Basic (~$5/mes). El App Service comparte el plan B1 existente.
-
-## CI/CD (✅ 2026-06-26)
-
-- **Repo:** https://github.com/Isaacbucheli/optimizacion-costos-api-dotnet (privado).
-- **Workflow:** `.github/workflows/deploy.yml` — en push a `main`: restore → test → publish → deploy.
-- **Auth a Azure: OIDC** (sin secretos de larga vida). Service principal `github-optimizacion-costos-api-dotnet`
-  con credencial federada para `repo:Isaacbucheli/optimizacion-costos-api-dotnet:ref:refs/heads/main` y rol
-  **Website Contributor** acotado solo a este App Service. Secrets en el repo: `AZURE_CLIENT_ID`,
-  `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` (son IDs, no credenciales).
-- Primer run verde end-to-end; app desplegada por Actions verificada en vivo (GET autenticado → alertas).
-
-## Cutover de demo (✅ 2026-06-26)
-
-El piloto React **`innovacion-CDC`** (SWA `ambitious-moss-00f9c9610`) ya consume el catálogo de alertas
-desde este backend .NET (primer servicio "estrangulado"): en `src/lib/api.ts`, las llamadas a
-`/alert-catalog` y `/kql` van a `catalogBase()` (.NET); el login y todo lo demás siguen en el FastAPI.
-- **BD: aislada** (`sqldb-optimizacion-costos-dotnet`) por decisión del usuario → es un cutover de
-  **demo/staging**, no toca datos ni el catálogo real. Se sembró el email del usuario en `app_users`
-  de la BD aislada para que el .NET lo reconozca tras el login del FastAPI.
-- Verificado en vivo: GET autenticado devuelve las 48 alertas sembradas; el bundle desplegado apunta
-  el catálogo al .NET y mantiene auth en FastAPI.
-
-## Motor de costos — Fase 0 (✅ 2026-06-26)
-
-Migración del módulo de costos (el más grande y delicado) por fases, con **paridad exacta** contra
-el FastAPI validada por la suite de regresión. La Fase 0 cubre los fundamentos y las 12 calculadoras.
-
-- **Fundamentos** (`Features/CostEngine/`): `CostResult` (savings + descarte de RI), `ResourceRow`,
-  `IPriceRepository` + DTOs de precios, `IPricingConstants`, `ICostCalculator`, `CalculatorRegistry`
-  (mapeo `calculator_key` → calculadora, igual que `app/calculators/__init__.py`).
-- **12 calculadoras** (`Features/CostEngine/Calculators/`): compute_vm, managed_disk, sql_database,
-  sql_managed_instance, app_service_plan, mysql_flex, cosmos_account, redis_cache, public_ip,
-  sql_vm_metadata, synapse_dedicated_pool, elastic_pool — port 1:1 de `app/calculators/*.py`.
-- **Tests de paridad** (`tests/CostEngine/`): ~55 tests xUnit que portan la suite de regresión de
-  precios mockeados con los **montos exactos** del Python. Suite total **69/69 verde**.
-- **Verificación adversarial**: revisores escépticos compararon fórmula a fórmula .NET vs Python;
-  detectaron y se corrigió 1 divergencia de borde en Synapse (fallback de nivel DWc: `or` vs `??`).
-- Construido con un workflow multi-agente (1 agente por calculadora + verificadores en paralelo).
-
-### Pendiente del motor de costos (próximas fases)
-- **Fase 1**: capa de precios real (Azure Retail API client + `price_repository` matching determinista).
-- **Fase 2**: `cost_engine` (orquestación, carga/enriquecimiento de recursos, inserción) + 4 escenarios;
-  validar con diff fila a fila de `cost_results` (Python vs .NET) sobre un análisis real.
-- **Fase 3**: endpoints + cutover.
-
-## Pendiente (con OK del usuario)
-
-1. **Pasar el cutover de alertas a producción** (cuando el usuario quiera): apuntar `SQL_DATABASE` del .NET
-   a la BD real `sqldb-optimizacion-costos` (datos + usuarios reales) y/o repuntar el front principal `alert-catalog.js`.
-2. (Opcional) login SQL dedicado en vez de reusar `bitadmin` — descartado por ahora por decisión del usuario.
+- App Service Linux (DOTNETCORE|8.0, Always On) con **identidad administrada** system-assigned: necesita los roles `Storage Blob Data Contributor` (Storage) y `Key Vault Secrets Officer` (Key Vault) — sin ellos fallan logos, Excel, informes y credenciales.
+- **Deploy:** push a `main` → GitHub Actions ([deploy.yml](.github/workflows/deploy.yml)): restore → test → publish → deploy. Auth a Azure por **OIDC** con un service principal de rol Website Contributor acotado al App Service (sin secretos de larga vida).
+- ⏱️ Tras un deploy el App Service tarda **~5-8 min** en estabilizar (rutas nuevas dan 404 mientras el worker reinicia).
+- Cada deploy a producción requiere OK explícito.

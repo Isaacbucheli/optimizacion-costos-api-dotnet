@@ -5,7 +5,7 @@ namespace OptimizacionCostos.Api.Tests.Reports.ExcelV3;
 public class ComparableTotalsTests
 {
     [Fact]
-    public void Caso_BANISI_AppService_totales_no_inflados()
+    public void Caso_real_AppService_totales_no_inflados()
     {
         // 2 planes elegibles a RI + 3 que NO aplican. El bug histórico: TOTAL RI = 60+80=140
         // vs PAYG total 100+120+50+70+90=430 → "ahorro" fantasma de 290. Lo correcto:

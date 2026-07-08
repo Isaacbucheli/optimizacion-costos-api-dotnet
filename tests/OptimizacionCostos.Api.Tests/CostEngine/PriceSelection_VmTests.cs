@@ -106,7 +106,7 @@ public sealed class PriceSelection_VmTests
     [Fact]
     public void Vm_Selection_ExcludesCloudServicesProductWithoutSpace()
     {
-        // Regresión MINSUR: "Eadsv5 Series CloudServices" (sin espacio) contaminaba la
+        // Regresión real: "Eadsv5 Series CloudServices" (sin espacio) contaminaba la
         // selección Linux → premium Windows en 0 y PAYG Linux inflado.
         const double windowsPayg = 0.892;
         const double linuxPayg = 0.524;

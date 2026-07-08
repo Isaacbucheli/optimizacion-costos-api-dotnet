@@ -1,30 +1,33 @@
-# Stack nuevo (.NET) — configuración de destino
+# Stack .NET — configuración de entorno
 
-> **Regla:** el stack nuevo NUNCA apunta a la producción antigua (Python). Coexistencia, no corte.
+> Los **nombres y URLs concretos** de los recursos Azure (App Service, servidor/BD SQL,
+> Key Vault, Storage, OpenAI, SWA) se administran **fuera del repo**: app settings del
+> App Service + documentación privada del equipo. El repo es público — no escribirlos aquí.
 
 ## Datos
-- **Servidor SQL:** `sqldb-optimizacion-costos.database.windows.net`
-- **Base de datos del stack nuevo:** **`sqldb-optimizacion-costos-valida`** (clon de prod; su PROPIA base, evoluciona aparte).
-- **NUNCA** usar `sqldb-optimizacion-costos` (esa es la BD de **producción / Python**).
 
-La BD se fija por la variable `SQL_DATABASE`:
-- **Local (dev):** ya está en `src/OptimizacionCostos.Api/appsettings.Development.json` → `SQL_DATABASE = sqldb-optimizacion-costos-valida`.
-- **Prod (App Service del stack nuevo):** `SQL_DATABASE = sqldb-optimizacion-costos-valida` en *app settings* (lo fija la tarea I).
+- La API usa una base Azure SQL propia (los stores hacen ensure-schema al primer uso).
+- La BD se fija con `SQL_DATABASE`:
+  - **Local (dev):** variables de entorno o user-secrets (`SQL_SERVER`, `SQL_DATABASE`, `SQL_USERNAME`, `SQL_PASSWORD`).
+  - **Azure:** app setting del App Service.
 
-## Recursos reutilizados (compartidos con prod, NO se re-credencializa)
-- **Key Vault** (`KEY_VAULT_URL`): mismos `client_secret` de las credenciales Azure de clientes.
-- **Storage** (`STORAGE_ACCOUNT_NAME` + contenedores uploads/outputs/templates): plantillas Excel/Word, informes, logos.
-- **Azure OpenAI** (`AZURE_OPENAI_*`): asistente de precios + narrativa de informes.
-- **JWT_SECRET:** el mismo que emite/valida el login (para que los tokens sirvan).
+## Recursos de la plataforma
 
-## Variables de entorno (App Service del stack nuevo) — las fija la tarea I
-`SQL_SERVER`, `SQL_DATABASE=sqldb-optimizacion-costos-valida`, `SQL_USERNAME`, `SQL_PASSWORD` (secreto),
-`JWT_SECRET`, `KEY_VAULT_URL`, `STORAGE_ACCOUNT_NAME`, `AZURE_OPENAI_*`, `CORS_ORIGINS` (origen del SWA nuevo).
+- **Key Vault** (`KEY_VAULT_URL`): los `client_secret` de las credenciales Azure de clientes. Solo el secreto vive ahí; SQL guarda la referencia.
+- **Blob Storage** (`STORAGE_ACCOUNT_NAME`; contenedores uploads/outputs/templates): plantillas Excel/Word, informes, logos.
+- **Azure OpenAI** (`AZURE_OPENAI_*`): asistente de precios, curación WAF, narrativa de informes.
 
-## Front
-- SWA del stack nuevo: **`swa-optimizacion-costos-frontend`** (repo `innovacion-CDC`).
-- El front habla SOLO con este backend .NET (ver `innovacion-CDC/STACK-NUEVO.md`).
+La **identidad administrada** (system-assigned) del App Service necesita `Storage Blob Data Contributor` en el Storage y `Key Vault Secrets Officer` en el Key Vault; sin esos roles fallan logos/Excel/informes/credenciales.
 
-## Pendiente de la tarea I (requiere OK del usuario)
-- Crear/registrar el App Service .NET del stack nuevo y apuntarlo a `-valida`.
-- **Nunca** repuntar el `app-optimizacion-costos-api-dotnet` existente a `-valida`: el front de prod (vanilla) lee de él contra la BD de prod; cambiarlo rompería prod.
+## Frontend
+
+- Repo [`innovacion-CDC`](https://github.com/Isaacbucheli/innovacion-CDC), desplegado como Azure Static Web App.
+- `CORS_ORIGINS` de esta API debe incluir el origen del SWA, y el CSP del front (`staticwebapp.config.json`, `connect-src`) debe listar el host de esta API — si falta cualquiera de los dos, el navegador da "Failed to fetch".
+- En prod el front apunta aquí vía `VITE_API_BASE_URL`; en dev usa el proxy de Vite `/api` → `http://localhost:5169`.
+
+## Variables de entorno del App Service
+
+`SQL_SERVER`, `SQL_DATABASE`, `SQL_USERNAME`, `SQL_PASSWORD` (secreto), `JWT_SECRET`,
+`KEY_VAULT_URL`, `STORAGE_ACCOUNT_NAME`, `AZURE_OPENAI_*` (incl. `AZURE_OPENAI_API_KEY`, secreto),
+`CORS_ORIGINS`, y los flags opcionales (`ADVISOR_SCORE_SCHEDULER_*`, `OPTIMIZATION_ALLOWED_EMAILS`,
+`USER_SESSION_*`). Detalle completo en el [README](README.md#variables-de-entorno).

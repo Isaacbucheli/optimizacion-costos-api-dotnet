@@ -4,7 +4,7 @@ namespace OptimizacionCostos.Api.Features.CostEngine.Pricing;
 /// Precio de Managed Disk. Port 1:1 de <c>get_disk_price</c> de
 /// app/pricing/price_repository.py (servicio del CalculatorRegistry: <c>managed_disk</c> / <c>disk</c>).
 ///
-/// Peculiaridad clave (regresión MINSUR): cada tier trae varios meters
+/// Peculiaridad clave (regresión real de producción): cada tier trae varios meters
 /// ("P6 LRS Disk", "P6 LRS Disk Mount", "P6 LRS Disk Operations"); SOLO el meter EXACTO
 /// "&lt;tier&gt; Disk" (lower) es el precio mensual del disco. NO se debe tomar "Disk Mount"
 /// ni "Operations" según el orden de la lista.

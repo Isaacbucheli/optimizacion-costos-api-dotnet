@@ -4,7 +4,7 @@ namespace OptimizacionCostos.Api.Features.Reports.ExcelV3;
 public sealed record TotalsInput(double Payg, double? Ri1, double? Ri3, bool ReservedConfirmed);
 
 /// <summary>
-/// Totales comparables por hoja (fix del "ahorro inflado" reportado con BANISI):
+/// Totales comparables por hoja (fix del "ahorro inflado" reportado en producción):
 /// la columna RI del TOTAL vale RI(elegibles) + PAYG(no elegibles) — lo que se pagaría
 /// de verdad reservando todo lo reservable — y el ahorro sale de comparar contra PAYG total.
 /// </summary>
