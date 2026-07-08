@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Configuration;
@@ -144,8 +145,8 @@ public sealed class OptimizationService(
         while (await r.ReadAsync(ct))
             list.Add(new Dictionary<string, object?>
             {
-                ["scan_id"] = r.GetInt32(0), ["started_at"] = r.GetValue(1).ToString(),
-                ["finished_at"] = r.IsDBNull(2) ? null : r.GetValue(2).ToString(), ["status"] = r.GetString(3),
+                ["scan_id"] = r.GetInt32(0), ["started_at"] = r.GetDateTime(1).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture),
+                ["finished_at"] = r.IsDBNull(2) ? null : r.GetDateTime(2).ToString("yyyy-MM-ddTHH:mm:ss", CultureInfo.InvariantCulture), ["status"] = r.GetString(3),
                 ["subscriptions_scanned"] = r.GetInt32(4), ["findings_count"] = r.GetInt32(5),
                 ["total_estimated_monthly_savings"] = r.IsDBNull(6) ? null : Convert.ToDouble(r.GetValue(6)),
                 ["currency"] = r.GetString(7),

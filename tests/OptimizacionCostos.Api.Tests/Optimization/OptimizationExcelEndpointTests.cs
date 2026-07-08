@@ -100,7 +100,7 @@ public class OptimizationExcelEndpointTests : IClassFixture<OptimizationExcelApi
         _factory.Svc.Scans.Clear();
         _factory.Svc.Scans.Add(new Dictionary<string, object?>
         {
-            ["scan_id"] = 7, ["started_at"] = "2026-07-03 14:00:00", ["finished_at"] = "2026-07-03 14:02:00",
+            ["scan_id"] = 7, ["started_at"] = "2026-07-03T14:00:00", ["finished_at"] = "2026-07-03T14:02:00",
             ["status"] = "completed", ["subscriptions_scanned"] = 12, ["findings_count"] = 2,
             ["total_estimated_monthly_savings"] = 250d, ["currency"] = "USD",
         });
