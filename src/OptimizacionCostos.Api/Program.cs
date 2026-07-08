@@ -66,6 +66,7 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.ICostEst
 // Right-sizing (Fase 2.5, Grupo B): reusa IReportMetrics (Azure Monitor). Requiere Monitoring Reader.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.IRightSizingAnalyzer, OptimizacionCostos.Api.Features.Optimization.RightSizingAnalyzer>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.IOptimizationService, OptimizacionCostos.Api.Features.Optimization.OptimizationService>();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.IOptimizationExcelExporter, OptimizacionCostos.Api.Features.Optimization.OptimizationExcelExporter>();
 
 // Módulo WAF (B7). Schema lazy en cada store. Reusa IChatCompletionClient, IAzureCredentialFactory,
 // IAnalysisAccess, ICostResultsQuery, ISqlConnectionFactory ya registrados.
