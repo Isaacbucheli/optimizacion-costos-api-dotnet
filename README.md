@@ -1,4 +1,4 @@
-# PoC — Backend en .NET 8 (ASP.NET Core)
+# Backend en .NET 8 (ASP.NET Core)
 
 Prueba de concepto para evaluar migrar el backend de **Python/FastAPI** a **.NET 8 / C#**,
 sin tocar la API actual. Migra **un módulo aislado** (Catálogo de alertas Azure Monitor,
