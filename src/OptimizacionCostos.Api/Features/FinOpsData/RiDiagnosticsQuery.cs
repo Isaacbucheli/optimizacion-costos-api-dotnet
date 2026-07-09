@@ -26,6 +26,7 @@ public sealed class SqlRiDiagnosticsQuery(ISqlConnectionFactory factory) : IRiDi
             INNER JOIN dbo.azure_resources r ON r.resource_id = cr.resource_id
             WHERE cr.analysis_id = @a
               AND cr.ri_eligibility = 'eligible'
+              AND cr.ri_applies = 1
               AND cr.ri_1y_monthly IS NULL
               AND cr.calculation_status = 'calculated'
             ORDER BY cr.service_key, r.resource_name
