@@ -35,7 +35,7 @@ namespace OptimizacionCostos.Api.Features.CostEngine.Calculators;
 ///
 /// Reglas:
 /// - payg_hourly = precio API según armSkuName + región + OS.
-/// - Si VM apagada: compute = 0, status = 'not_running'.
+/// - Si VM apagada: PAYG referencial completo SIN RI (ri_applies=false); ya no se cortocircuita a $0 (decisión 2026-07-08).
 /// - SQL VM add-on se suma al PAYG y al RI (no se descuenta con RI).
 /// - RI 1Y / 3Y prorrateo mensual + windows premium si aplica.
 /// </summary>
@@ -81,17 +81,10 @@ public sealed class ComputeVmCalculator : ICostCalculator
 
             var region = NormalizeRegion(location);
 
-            // VMs no running: costo de compute = 0
-            if (!IsRunning(powerState))
-            {
-                result.CalculationStatus = "not_running";
-                result.PaygMonthly = 0.0;
-                result.Ri1yMonthly = 0.0;
-                result.Ri3yMonthly = 0.0;
-                result.CalculationNotes = $"Power state: {powerState}";
-                results.Add(result);
-                continue;
-            }
+            // VM no encendida: ya NO se cortocircuita a $0 (decisión 2026-07-08). Sigue el flujo
+            // normal de pricing para obtener un PAYG referencial completo, y al final se marca
+            // como no elegible a RI (no se recomienda reservar una máquina apagada).
+            var isOff = !IsRunning(powerState);
 
             // not vm_size or not region (truthy estilo Python: cadena vacía o null => falsy)
             if (string.IsNullOrEmpty(vmSize) || string.IsNullOrEmpty(region))
@@ -208,22 +201,35 @@ public sealed class ComputeVmCalculator : ICostCalculator
                 : primaryPrices!.PaygMeterId;
 
             // RI total = (RI_base / N años) + Windows premium + SQL add-on
-            // SQL y Windows premium NO se descuentan con RI: se siguen pagando por hora
-            if (ri1yTotal is not null)
+            // SQL y Windows premium NO se descuentan con RI: se siguen pagando por hora.
+            // VM apagada: sin RI — el PAYG es referencial y no se recomienda reservar.
+            if (isOff)
             {
-                result.Ri1yMonthly = (ri1yTotal.Value / 12.0) + windowsPremiumMonthly + sqlAddonMonthly;
+                result.RiApplies = false;
+                result.RiNotApplicableReason = "VM apagada al momento del análisis";
             }
-            if (ri3yTotal is not null)
+            else
             {
-                result.Ri3yMonthly = (ri3yTotal.Value / 36.0) + windowsPremiumMonthly + sqlAddonMonthly;
+                if (ri1yTotal is not null)
+                {
+                    result.Ri1yMonthly = (ri1yTotal.Value / 12.0) + windowsPremiumMonthly + sqlAddonMonthly;
+                }
+                if (ri3yTotal is not null)
+                {
+                    result.Ri3yMonthly = (ri3yTotal.Value / 36.0) + windowsPremiumMonthly + sqlAddonMonthly;
+                }
+                result.RiApplies = true;
             }
-
-            result.RiApplies = true;
             result.ComputeSavings();
             result.DiscardNonSavingRi();
 
             // Notes
             var notes = new List<string>();
+            if (isOff)
+            {
+                var stateLabel = string.IsNullOrEmpty(powerState) ? "desconocido" : powerState;
+                notes.Add($"VM apagada — costo PAYG referencial (power state: {stateLabel})");
+            }
             if (isAhbWindows)
             {
                 notes.Add("Windows AHB activo (sin premium)");

@@ -9,7 +9,7 @@ namespace OptimizacionCostos.Api.Features.CostEngine;
 ///   price_not_found  Falta precio en API. Costo NULL. Manual.
 ///   manual_required  Servicio requiere entrada manual (Cosmos).
 ///   variable_pricing Consumo variable (Y1/FC1/F1). Costo NULL.
-///   not_running      VM apagada. Compute = 0 pero discos sí cuestan.
+///   not_running      Compute pausado = $0 (hoy solo Synapse Dedicated Pool pausado; las VMs apagadas se costean referenciales desde 2026-07-08).
 ///   not_applicable   No aplica cálculo (ej. SQL VM es metadata).
 /// </summary>
 public sealed class CostResult(int resourceId, int analysisId, string serviceKey)

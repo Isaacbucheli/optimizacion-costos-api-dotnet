@@ -215,10 +215,11 @@ public sealed class ComputeVmCalculatorTests
     }
 
     // ----------------------------------------------------------------------------
-    // VM apagada: status not_running, compute = 0 (payg/ri = 0).
+    // VM apagada (decisión 2026-07-08): PAYG referencial completo, SIN RI (no se
+    // recomienda reservar una máquina apagada). Antes: not_running con todo en $0.
     // ----------------------------------------------------------------------------
     [Fact]
-    public void Not_running_vm_has_zero_compute()
+    public void Not_running_vm_gets_referential_payg_without_ri()
     {
         var prices = new FakePriceRepository
         {
@@ -233,18 +234,24 @@ public sealed class ComputeVmCalculatorTests
 
         var result = Build(prices).Calculate(rows, 99)[0];
 
-        Assert.Equal("not_running", result.CalculationStatus);
-        Assert.Equal(0.0, result.PaygMonthly!.Value, 5);
-        Assert.Equal(0.0, result.Ri1yMonthly!.Value, 5);
-        Assert.Equal(0.0, result.Ri3yMonthly!.Value, 5);
-        Assert.Equal("Power state: PowerState/deallocated", result.CalculationNotes);
+        Assert.Equal("calculated", result.CalculationStatus);
+        Assert.Equal(0.10 * Hours, result.PaygMonthly!.Value, 5);          // 73.0 referencial
+        Assert.Null(result.Ri1yMonthly);
+        Assert.Null(result.Ri3yMonthly);
+        Assert.False(result.RiApplies);
+        Assert.Equal("VM apagada al momento del análisis", result.RiNotApplicableReason);
+        Assert.Contains("VM apagada — costo PAYG referencial", result.CalculationNotes);
+        Assert.Contains("power state: PowerState/deallocated", result.CalculationNotes);
     }
 
-    // power_state ausente y status ausente => "" => no running => not_running.
+    // power_state ausente y status ausente => "" => no running => mismo trato referencial.
     [Fact]
-    public void Missing_power_state_defaults_to_not_running()
+    public void Missing_power_state_gets_referential_payg_without_ri()
     {
-        var prices = new FakePriceRepository();
+        var prices = new FakePriceRepository
+        {
+            GetVmPricesFn = (_, _, _) => new VmPrices(0.10, 600.0, 1500.0),
+        };
         var rows = Res.Rows(Res.Row(
             ("resource_id", 7),
             ("vm_size", "Standard_D4s_v5"),
@@ -253,8 +260,85 @@ public sealed class ComputeVmCalculatorTests
 
         var result = Build(prices).Calculate(rows, 99)[0];
 
-        Assert.Equal("not_running", result.CalculationStatus);
-        Assert.Equal(0.0, result.PaygMonthly!.Value, 5);
+        Assert.Equal("calculated", result.CalculationStatus);
+        Assert.Equal(0.10 * Hours, result.PaygMonthly!.Value, 5);
+        Assert.False(result.RiApplies);
+        Assert.Contains("power state: desconocido", result.CalculationNotes);
+    }
+
+    // Apagada + AHB Windows_Server: el referencial también usa tarifa Linux (sin premium).
+    [Fact]
+    public void Stopped_windows_ahb_prices_referential_payg_at_linux_rate()
+    {
+        var prices = new FakePriceRepository
+        {
+            GetVmPricesFn = (_, _, os) => os == "Windows"
+                ? new VmPrices(0.20, 600.0, 1500.0)
+                : new VmPrices(0.10, 600.0, 1500.0),
+        };
+        var rows = Res.Rows(Res.Row(
+            ("resource_id", 8),
+            ("vm_size", "Standard_D4s_v5"),
+            ("location", "eastus"),
+            ("os_type", "Windows"),
+            ("os_license_benefit", "Windows_Server"),
+            ("power_state", "PowerState/stopped")));
+
+        var result = Build(prices).Calculate(rows, 99)[0];
+
+        Assert.Equal("calculated", result.CalculationStatus);
+        Assert.Equal(0.10 * Hours, result.PaygMonthly!.Value, 5);          // tarifa Linux, sin premium
+        Assert.False(result.RiApplies);
+        Assert.Contains("Windows AHB activo", result.CalculationNotes);
+        Assert.Contains("VM apagada — costo PAYG referencial", result.CalculationNotes);
+    }
+
+    // Apagada + SQL VM: el add-on entra al PAYG referencial (igual que encendida).
+    [Fact]
+    public void Stopped_sql_vm_includes_addon_in_referential_payg()
+    {
+        var prices = new FakePriceRepository
+        {
+            GetVmPricesFn = (_, _, _) => new VmPrices(0.10, 600.0, 1500.0),
+        };
+        var rows = Res.Rows(Res.Row(
+            ("resource_id", 9),
+            ("vm_size", "Standard_D4s_v5"),
+            ("location", "eastus"),
+            ("os_type", "Linux"),
+            ("power_state", "PowerState/deallocated"),
+            ("sql_image_sku", "Standard"),
+            ("sql_license_type", "PAYG"),
+            ("vcpu_count", 4)));
+
+        var result = Build(prices).Calculate(rows, 99)[0];
+
+        var addon = 0.10 * 4 * Hours;                                      // 292.0 (fake: 0.10/vcore/hr)
+        Assert.Equal("calculated", result.CalculationStatus);
+        Assert.Equal(0.10 * Hours + addon, result.PaygMonthly!.Value, 5);  // 73 + 292 = 365
+        Assert.Equal(addon, result.SqlAddonMonthly!.Value, 5);
+        Assert.False(result.RiApplies);
+    }
+
+    // Apagada sin precio en la API: cae a manual_required como una encendida (ya no not_running).
+    [Fact]
+    public void Stopped_vm_without_price_falls_to_manual_required()
+    {
+        var prices = new FakePriceRepository
+        {
+            GetVmPricesFn = (_, _, _) => new VmPrices(null, null, null),
+        };
+        var rows = Res.Rows(Res.Row(
+            ("resource_id", 10),
+            ("vm_size", "Standard_ZZ99"),
+            ("location", "eastus"),
+            ("os_type", "Linux"),
+            ("power_state", "PowerState/deallocated")));
+
+        var result = Build(prices).Calculate(rows, 99)[0];
+
+        Assert.Equal("manual_required", result.CalculationStatus);
+        Assert.Null(result.PaygMonthly);
     }
 
     // status se usa como fallback de power_state.
