@@ -125,6 +125,7 @@ public class CostCalculationApiTests : IClassFixture<CostApiTestFactory>
                 Savings1yMonthly = 1.0, Savings1yPct = 0.2,
                 RiCoverage = "confirmed", RiReservationName = "res-1", RiTerm = "P1Y",
                 PowerRunningHours = 720, PowerUptimePct = 100,
+                SkuName = "Standard_D4s_v5",
             },
         };
         var client = ClientFor("admin@bit.ec", Roles.Admin);
@@ -144,6 +145,7 @@ public class CostCalculationApiTests : IClassFixture<CostApiTestFactory>
         Assert.True(first.TryGetProperty("ri_term", out _));
         Assert.True(first.TryGetProperty("power_running_hours", out _));
         Assert.True(first.TryGetProperty("power_uptime_pct", out _));
+        Assert.Equal("Standard_D4s_v5", first.GetProperty("sku_name").GetString());
     }
 
     [Fact]

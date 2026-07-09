@@ -37,7 +37,8 @@ public sealed class SqlCostResultsQuery(ISqlConnectionFactory factory) : ICostRe
                 pu.uptime_pct AS power_uptime_pct,
                 pu.period_start AS power_period_start,
                 pu.period_end AS power_period_end,
-                cr.calculation_notes, cr.calculated_at
+                cr.calculation_notes, cr.calculated_at,
+                COALESCE(NULLIF(r.sku_name, ''), r.size_name) AS sku_name
             FROM dbo.cost_results cr
             INNER JOIN dbo.azure_resources r ON r.resource_id = cr.resource_id
             LEFT JOIN dbo.vm_power_usage pu
@@ -97,6 +98,7 @@ public sealed class SqlCostResultsQuery(ISqlConnectionFactory factory) : ICostRe
                 PowerPeriodEnd = IsoDate(reader, 34),
                 CalculationNotes = Str(reader, 35),
                 CalculatedAt = IsoDate(reader, 36),
+                SkuName = Str(reader, 37),
             });
         }
         return rows;

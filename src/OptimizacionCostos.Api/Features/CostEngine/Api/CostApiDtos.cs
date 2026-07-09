@@ -49,6 +49,9 @@ public sealed class CostResultRow
     public string? ResourceGroup { get; set; }
     public string? AzureResourceId { get; set; }
 
+    /// <summary>SKU/tamaño del recurso (azure_resources: sku_name, fallback size_name). Para verificar contra calculadora/factura.</summary>
+    public string? SkuName { get; set; }
+
     public double? PaygHourly { get; set; }
     public double? PaygMonthly { get; set; }
     // La política snake_case serializa "Ri1yMonthly" como "ri1y_monthly"; el FastAPI/front
