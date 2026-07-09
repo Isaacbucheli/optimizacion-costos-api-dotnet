@@ -87,6 +87,7 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafSyncOrchestra
 builder.Services.AddHostedService<OptimizacionCostos.Api.Features.Waf.AdvisorScoreScheduledService>();
 builder.Services.AddScoped<IUserDirectory, SqlUserDirectory>();
 builder.Services.AddScoped<IAlertCatalogStore, SqlAlertCatalogStore>();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.PolicyCatalog.IPolicyCatalogStore, OptimizacionCostos.Api.Features.PolicyCatalog.SqlPolicyCatalogStore>();
 builder.Services.AddBitJwtAuth(config);
 
 // Identidad: emisión de JWT (login/bootstrap) + administración de usuarios y asignaciones (B3).
