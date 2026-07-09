@@ -88,6 +88,9 @@ builder.Services.AddHostedService<OptimizacionCostos.Api.Features.Waf.AdvisorSco
 builder.Services.AddScoped<IUserDirectory, SqlUserDirectory>();
 builder.Services.AddScoped<IAlertCatalogStore, SqlAlertCatalogStore>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.PolicyCatalog.IPolicyCatalogStore, OptimizacionCostos.Api.Features.PolicyCatalog.SqlPolicyCatalogStore>();
+// Asignación de consultores (Gestión CDC): personas + asignaciones N:N + reasignación masiva.
+// Schema lazy SIN seed (datos sensibles de clientes reales; repos públicos).
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Consultants.IConsultantsStore, OptimizacionCostos.Api.Features.Consultants.SqlConsultantsStore>();
 builder.Services.AddBitJwtAuth(config);
 
 // Identidad: emisión de JWT (login/bootstrap) + administración de usuarios y asignaciones (B3).
