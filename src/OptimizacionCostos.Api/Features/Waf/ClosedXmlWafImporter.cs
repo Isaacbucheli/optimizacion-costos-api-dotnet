@@ -1159,7 +1159,7 @@ public sealed partial class ClosedXmlWafImporter(
                 """;
             mergeCmd.Parameters.Add(new SqlParameter("@client_id", clientId));
             mergeCmd.Parameters.Add(new SqlParameter("@canonical_id", canonicalId));
-            mergeCmd.Parameters.Add(new SqlParameter("@completion_pct", ToDb(merged.GetValueOrDefault("completion_pct")) ?? 0));
+            mergeCmd.Parameters.Add(new SqlParameter("@completion_pct", merged.GetValueOrDefault("completion_pct") ?? 0));
             mergeCmd.Parameters.Add(new SqlParameter("@remediation_start_date", DateParam(merged.GetValueOrDefault("remediation_start_date"))));
             mergeCmd.Parameters.Add(new SqlParameter("@projected_bit_effort", ToDb(merged.GetValueOrDefault("projected_bit_effort"))));
             mergeCmd.Parameters.Add(new SqlParameter("@execution_log", ToDb(merged.GetValueOrDefault("execution_log"))));
@@ -1335,7 +1335,13 @@ public sealed partial class ClosedXmlWafImporter(
 
     // -------------------- helpers de parámetros SQL / historia --------------------
 
-    private static object? ToDb(object? value) => value;
+    // Un SqlParameter cuyo Value es null de C# (no DBNull.Value) es tratado por
+    // Microsoft.Data.SqlClient como "parametro no suministrado" y el servidor lanza
+    // SqlException 8178 ("expects the parameter '@...', which was not supplied"). Los
+    // campos de tracking (execution_log, projected_bit_effort, priority_override,
+    // internal_notes) son null en el caso normal de un alta desde Excel, asi que hay
+    // que mapear null -> DBNull.Value explicitamente.
+    internal static object ToDb(object? value) => value ?? DBNull.Value;
 
     private static object DateParam(object? value) => value switch
     {
