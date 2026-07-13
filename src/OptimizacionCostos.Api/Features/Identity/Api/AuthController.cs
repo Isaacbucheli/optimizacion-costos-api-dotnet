@@ -74,6 +74,15 @@ public sealed class AuthController(
         if (row is null || !row.IsActive || !PasswordHasher.Verify(payload.Password!, row.PasswordHash))
             return Unauthorized(new { detail = "Invalid credentials" });
 
+        // Endurecimiento transparente: hash legacy (120k) o con menos iteraciones que las
+        // actuales → se re-hashea con la contraseña ya validada. Mejor esfuerzo (no bloquea
+        // el login) y NO toca must_change_password ni ningún otro campo.
+        if (PasswordHasher.NeedsRehash(row.PasswordHash))
+        {
+            try { await users.UpdateUserAsync(row.UserId, null, null, null, PasswordHasher.Hash(payload.Password!), null, null, ct); }
+            catch { /* el login sigue; el rehash se reintenta en el próximo inicio de sesión */ }
+        }
+
         var user = new PublicUser(row.UserId, row.Email, row.FullName, row.Role, row.IsActive, "", row.MustChangePassword);
         return Ok(TokenResponse(user));
     }

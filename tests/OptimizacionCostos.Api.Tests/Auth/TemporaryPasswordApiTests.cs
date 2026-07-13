@@ -58,6 +58,47 @@ public sealed class TemporaryPasswordApiTests : IClassFixture<TemporaryPasswordA
         Assert.False(body.GetProperty("must_change_password").GetBoolean());
     }
 
+    // ---- Re-hash transparente en el login (endurecimiento a 600k iteraciones) ----
+
+    [Fact]
+    public async Task Login_con_hash_legacy_entra_y_lo_rehashea_sin_tocar_la_bandera()
+    {
+        // Vector real del stack anterior: "Secreta123!" con 120000 iteraciones (formato 3 partes).
+        const string legacyHash =
+            "pbkdf2_sha256$0123456789abcdef0123456789abcdef$8be50fe9e14c2d384adf4f43f6439ec07a1aebf8cee936f3c987a16e8b1fd00b";
+        var u = _factory.Users.AddUser("legacy1@bit.ec", "placeholder1", "lector", mustChange: false);
+        u.PasswordHash = legacyHash;
+
+        var client = _factory.CreateClient();
+        var res = await client.PostAsJsonAsync("/auth/login", new { username = "legacy1@bit.ec", password = "Secreta123!" });
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+
+        var row = _factory.Users.Find("legacy1@bit.ec")!;
+        Assert.StartsWith($"pbkdf2_sha256${PasswordHasher.Iterations}$", row.PasswordHash); // endurecido
+        Assert.True(PasswordHasher.Verify("Secreta123!", row.PasswordHash)); // misma contraseña
+        Assert.False(row.MustChangePassword); // el rehash NO enciende la bandera
+
+        // El siguiente login ya no re-hashea (formato actual) y sigue funcionando.
+        var again = await client.PostAsJsonAsync("/auth/login", new { username = "legacy1@bit.ec", password = "Secreta123!" });
+        Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+    }
+
+    [Fact]
+    public async Task Login_con_hash_legacy_y_bandera_encendida_la_conserva()
+    {
+        const string legacyHash =
+            "pbkdf2_sha256$0123456789abcdef0123456789abcdef$8be50fe9e14c2d384adf4f43f6439ec07a1aebf8cee936f3c987a16e8b1fd00b";
+        var u = _factory.Users.AddUser("legacy2@bit.ec", "placeholder1", "lector", mustChange: true);
+        u.PasswordHash = legacyHash;
+
+        var client = _factory.CreateClient();
+        var res = await client.PostAsJsonAsync("/auth/login", new { username = "legacy2@bit.ec", password = "Secreta123!" });
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(body.GetProperty("must_change_password").GetBoolean()); // sigue temporal
+        Assert.True(_factory.Users.Find("legacy2@bit.ec")!.MustChangePassword);
+    }
+
     [Fact]
     public async Task Me_incluye_la_bandera()
     {
