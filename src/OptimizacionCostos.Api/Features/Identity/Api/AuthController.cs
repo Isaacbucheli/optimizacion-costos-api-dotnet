@@ -24,6 +24,7 @@ public sealed class AuthController(
     public sealed record UserCreateRequest(string? Email, string? FullName, string? Role, string? Password, List<int>? ClientIds);
     public sealed record UserUpdateRequest(string? Email, string? FullName, string? Role, string? Password, bool? IsActive);
     public sealed record ClientAssignmentRequest(List<int>? ClientIds);
+    public sealed record ChangePasswordRequest(string? CurrentPassword, string? NewPassword);
 
     // -------------------- GET /auth/status --------------------
     [HttpGet("status")]
@@ -73,8 +74,34 @@ public sealed class AuthController(
         if (row is null || !row.IsActive || !PasswordHasher.Verify(payload.Password!, row.PasswordHash))
             return Unauthorized(new { detail = "Invalid credentials" });
 
-        var user = new PublicUser(row.UserId, row.Email, row.FullName, row.Role, row.IsActive, "");
+        var user = new PublicUser(row.UserId, row.Email, row.FullName, row.Role, row.IsActive, "", row.MustChangePassword);
         return Ok(TokenResponse(user));
+    }
+
+    // -------------------- POST /auth/change-password --------------------
+    // El propio usuario cambia su contraseña (flujo de contraseña temporal: al crear un usuario
+    // o al resetearla un admin queda must_change_password=1 y el front fuerza esta pantalla).
+    [HttpPost("change-password")]
+    [Authorize]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest payload, CancellationToken ct)
+    {
+        var email = User.FindFirst("sub")?.Value;
+        if (string.IsNullOrWhiteSpace(email))
+            return Unauthorized(new { detail = "Invalid token" });
+
+        var row = await users.GetForLoginAsync(email, ct);
+        if (row is null || !row.IsActive)
+            return Unauthorized(new { detail = "Invalid credentials" });
+        if (string.IsNullOrEmpty(payload.CurrentPassword) || !PasswordHasher.Verify(payload.CurrentPassword, row.PasswordHash))
+            return BadRequest(new { detail = "La contraseña actual no es correcta" });
+        if ((payload.NewPassword?.Length ?? 0) < 8)
+            return BadRequest(new { detail = "password must be at least 8 chars" });
+        if (payload.NewPassword == payload.CurrentPassword)
+            return BadRequest(new { detail = "La nueva contraseña debe ser distinta a la actual" });
+
+        var hash = PasswordHasher.Hash(payload.NewPassword!);
+        await users.UpdateUserAsync(row.UserId, null, null, null, hash, null, mustChangePassword: false, ct);
+        return Ok(new Dictionary<string, object?> { ["changed"] = true, ["must_change_password"] = false });
     }
 
     // -------------------- GET /auth/me --------------------
@@ -98,6 +125,7 @@ public sealed class AuthController(
                     ["full_name"] = row.FullName,
                     ["role"] = row.Role,
                     ["is_active"] = row.IsActive,
+                    ["must_change_password"] = row.MustChangePassword,
                 });
         }
         // Fallback a claims (token válido sin fila): mantiene la sesión funcionando.
@@ -135,7 +163,9 @@ public sealed class AuthController(
         if (await users.EmailExistsAsync(email, null, ct))
             return Conflict(new { detail = "User already exists" });
 
-        var created = await users.InsertUserAsync(email, payload.FullName!.Trim(), role, PasswordHasher.Hash(payload.Password!), ct);
+        // La contraseña asignada por el admin es temporal: el usuario debe cambiarla al primer login.
+        var created = await users.InsertUserAsync(
+            email, payload.FullName!.Trim(), role, PasswordHasher.Hash(payload.Password!), mustChangePassword: true, ct);
         if (role is Roles.Consultor or Roles.Lector)
         {
             try { await users.ReplaceAssignmentsAsync(created.UserId, payload.ClientIds ?? [], ct); }
@@ -159,12 +189,25 @@ public sealed class AuthController(
         if (payload.Email is null && payload.FullName is null && payload.Role is null
             && payload.Password is null && payload.IsActive is null)
             return BadRequest(new { detail = "No fields to update" });
+        if (payload.Password is not null && payload.Password.Length < 8)
+            return BadRequest(new { detail = "password must be at least 8 chars" });
 
         if (email is not null && await users.EmailExistsAsync(email, userId, ct))
             return Conflict(new { detail = "User already exists" });
 
+        // Reset de contraseña por admin => temporal (cambio forzado en el próximo login),
+        // salvo que el admin esté cambiando SU propia contraseña (la eligió él mismo).
+        bool? mustChange = null;
+        if (payload.Password is not null)
+        {
+            var target = await users.GetByIdAsync(userId, ct);
+            if (target is null) return NotFound(new { detail = "User not found" });
+            var actorEmail = (User.FindFirst("sub")?.Value ?? "").Trim().ToLowerInvariant();
+            mustChange = actorEmail.Length == 0 || actorEmail != target.Email.Trim().ToLowerInvariant();
+        }
+
         var hash = payload.Password is null ? null : PasswordHasher.Hash(payload.Password);
-        var ok = await users.UpdateUserAsync(userId, email, payload.FullName?.Trim(), role, hash, payload.IsActive, ct);
+        var ok = await users.UpdateUserAsync(userId, email, payload.FullName?.Trim(), role, hash, payload.IsActive, mustChange, ct);
         if (!ok) return NotFound(new { detail = "User not found" });
         return Ok(await users.GetByIdAsync(userId, ct));
     }
@@ -229,6 +272,7 @@ public sealed class AuthController(
             ["role"] = user.Role,
             ["is_active"] = user.IsActive,
             ["created_at"] = user.CreatedAt,
+            ["must_change_password"] = user.MustChangePassword,
         };
     }
 

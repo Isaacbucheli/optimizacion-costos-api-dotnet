@@ -4,10 +4,10 @@ using OptimizacionCostos.Api.Data;
 namespace OptimizacionCostos.Api.Features.Identity;
 
 /// <summary>Proyección pública de un usuario (port de public_user de app/auth.py).</summary>
-public sealed record PublicUser(int UserId, string Email, string FullName, string Role, bool IsActive, string CreatedAt);
+public sealed record PublicUser(int UserId, string Email, string FullName, string Role, bool IsActive, string CreatedAt, bool MustChangePassword = false);
 
 /// <summary>Fila de login: incluye el hash y el estado (no se expone al cliente).</summary>
-public sealed record LoginRow(int UserId, string Email, string FullName, string Role, string PasswordHash, bool IsActive);
+public sealed record LoginRow(int UserId, string Email, string FullName, string Role, string PasswordHash, bool IsActive, bool MustChangePassword = false);
 
 /// <summary>Algún client_id solicitado no existe (→ 400).</summary>
 public sealed class InvalidClientIdsException() : Exception("Some client_ids do not exist");
@@ -24,10 +24,10 @@ public interface IAppUserStore
     Task<LoginRow?> GetForLoginAsync(string email, CancellationToken ct = default);
     Task<bool> EmailExistsAsync(string email, int? excludeUserId = null, CancellationToken ct = default);
     Task<IReadOnlyList<PublicUser>> ListUsersAsync(CancellationToken ct = default);
-    Task<PublicUser> InsertUserAsync(string email, string fullName, string role, string passwordHash, CancellationToken ct = default);
+    Task<PublicUser> InsertUserAsync(string email, string fullName, string role, string passwordHash, bool mustChangePassword, CancellationToken ct = default);
     Task<PublicUser> UpsertBootstrapAdminAsync(string email, string fullName, string passwordHash, CancellationToken ct = default);
     Task<PublicUser?> GetByIdAsync(int userId, CancellationToken ct = default);
-    Task<bool> UpdateUserAsync(int userId, string? email, string? fullName, string? role, string? passwordHash, bool? isActive, CancellationToken ct = default);
+    Task<bool> UpdateUserAsync(int userId, string? email, string? fullName, string? role, string? passwordHash, bool? isActive, bool? mustChangePassword = null, CancellationToken ct = default);
     Task<string?> DeleteUserAsync(int userId, CancellationToken ct = default);
     Task<IReadOnlyList<int>> GetAssignmentsAsync(int userId, CancellationToken ct = default);
     Task<IReadOnlyList<int>> ReplaceAssignmentsAsync(int userId, IReadOnlyList<int> clientIds, CancellationToken ct = default);
@@ -80,6 +80,8 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
                 ALTER TABLE dbo.app_users ADD created_at DATETIME2 NOT NULL CONSTRAINT DF_app_users_created_at DEFAULT SYSUTCDATETIME();
             IF COL_LENGTH('dbo.app_users', 'updated_at') IS NULL
                 ALTER TABLE dbo.app_users ADD updated_at DATETIME2 NULL;
+            IF COL_LENGTH('dbo.app_users', 'must_change_password') IS NULL
+                ALTER TABLE dbo.app_users ADD must_change_password BIT NOT NULL CONSTRAINT DF_app_users_must_change_password DEFAULT 0;
             """;
         await cmd2.ExecuteNonQueryAsync(ct);
 
@@ -135,7 +137,7 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
         await EnsureAuthSchemaAsync(conn, ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT user_id, email, full_name, role, password_hash, is_active
+            SELECT user_id, email, full_name, role, password_hash, is_active, must_change_password
             FROM dbo.app_users WHERE LOWER(email) = LOWER(@email)
             """;
         cmd.Parameters.Add(new SqlParameter("@email", email));
@@ -143,7 +145,8 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
         if (!await r.ReadAsync(ct)) return null;
         return new LoginRow(
             r.GetInt32(0), r.GetString(1), r.GetString(2), r.GetString(3),
-            r.IsDBNull(4) ? "" : r.GetString(4), !r.IsDBNull(5) && r.GetBoolean(5));
+            r.IsDBNull(4) ? "" : r.GetString(4), !r.IsDBNull(5) && r.GetBoolean(5),
+            !r.IsDBNull(6) && r.GetBoolean(6));
     }
 
     public async Task<bool> EmailExistsAsync(string email, int? excludeUserId = null, CancellationToken ct = default)
@@ -165,7 +168,7 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
         await EnsureAuthSchemaAsync(conn, ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT user_id, email, full_name, role, is_active, created_at
+            SELECT user_id, email, full_name, role, is_active, created_at, must_change_password
             FROM dbo.app_users ORDER BY created_at DESC
             """;
         var list = new List<PublicUser>();
@@ -175,11 +178,11 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
     }
 
     public async Task<PublicUser> InsertUserAsync(
-        string email, string fullName, string role, string passwordHash, CancellationToken ct = default)
+        string email, string fullName, string role, string passwordHash, bool mustChangePassword, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
         await EnsureAuthSchemaAsync(conn, ct);
-        await InsertAppUserDefensiveAsync(conn, email, fullName, role, passwordHash, ct);
+        await InsertAppUserDefensiveAsync(conn, email, fullName, role, passwordHash, mustChangePassword, ct);
         var user = await GetByEmailInternalAsync(conn, email, ct);
         return user!;
     }
@@ -201,7 +204,7 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
                 upd.CommandText = """
                     UPDATE dbo.app_users
                     SET full_name = @name, role = 'admin', password_hash = @hash,
-                        is_active = 1, updated_at = SYSUTCDATETIME()
+                        is_active = 1, must_change_password = 0, updated_at = SYSUTCDATETIME()
                     WHERE user_id = @id
                     """;
                 upd.Parameters.Add(new SqlParameter("@name", fullName));
@@ -211,7 +214,8 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
             }
             else
             {
-                await InsertAppUserDefensiveAsync(conn, email, fullName, "admin", passwordHash, ct);
+                // El admin inicial elige su propia contraseña: no se fuerza cambio.
+                await InsertAppUserDefensiveAsync(conn, email, fullName, "admin", passwordHash, mustChangePassword: false, ct);
             }
         }
         return (await GetByEmailInternalAsync(conn, email, ct))!;
@@ -220,9 +224,10 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
     public async Task<PublicUser?> GetByIdAsync(int userId, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
+        await EnsureAuthSchemaAsync(conn, ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT user_id, email, full_name, role, is_active, created_at
+            SELECT user_id, email, full_name, role, is_active, created_at, must_change_password
             FROM dbo.app_users WHERE user_id = @id
             """;
         cmd.Parameters.Add(new SqlParameter("@id", userId));
@@ -231,7 +236,8 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
     }
 
     public async Task<bool> UpdateUserAsync(
-        int userId, string? email, string? fullName, string? role, string? passwordHash, bool? isActive, CancellationToken ct = default)
+        int userId, string? email, string? fullName, string? role, string? passwordHash, bool? isActive,
+        bool? mustChangePassword = null, CancellationToken ct = default)
     {
         // SET dinámico con nombres de columna de allowlist (no entran del cliente).
         var sets = new List<string>();
@@ -245,6 +251,7 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
         if (role is not null) { sets.Add("role = @role"); ps.Add(new SqlParameter("@role", role)); }
         if (passwordHash is not null) { sets.Add("password_hash = @hash"); ps.Add(new SqlParameter("@hash", passwordHash)); }
         if (isActive is not null) { sets.Add("is_active = @active"); ps.Add(new SqlParameter("@active", isActive.Value ? 1 : 0)); }
+        if (mustChangePassword is not null) { sets.Add("must_change_password = @mcp"); ps.Add(new SqlParameter("@mcp", mustChangePassword.Value ? 1 : 0)); }
         sets.Add("updated_at = SYSUTCDATETIME()");
 
         await using var conn = await factory.OpenAsync(ct);
@@ -327,13 +334,14 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
     private static PublicUser MapPublic(SqlDataReader r) => new(
         r.GetInt32(0), r.GetString(1), r.GetString(2), r.GetString(3),
         !r.IsDBNull(4) && r.GetBoolean(4),
-        r.IsDBNull(5) ? "" : r.GetValue(5).ToString() ?? "");
+        r.IsDBNull(5) ? "" : r.GetValue(5).ToString() ?? "",
+        !r.IsDBNull(6) && r.GetBoolean(6));
 
     private static async Task<PublicUser?> GetByEmailInternalAsync(SqlConnection conn, string email, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT user_id, email, full_name, role, is_active, created_at
+            SELECT user_id, email, full_name, role, is_active, created_at, must_change_password
             FROM dbo.app_users WHERE LOWER(email) = LOWER(@email)
             """;
         cmd.Parameters.Add(new SqlParameter("@email", email));
@@ -368,7 +376,8 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
     /// Las columnas vienen de un allowlist fijo intersectado con el esquema real → SQL seguro.
     /// </summary>
     private static async Task InsertAppUserDefensiveAsync(
-        SqlConnection conn, string email, string fullName, string role, string passwordHash, CancellationToken ct)
+        SqlConnection conn, string email, string fullName, string role, string passwordHash,
+        bool mustChangePassword, CancellationToken ct)
     {
         var cols = await ColumnNamesAsync(conn, ct);
 
@@ -380,12 +389,13 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
             ["role"] = role, ["role_name"] = role,
             ["password_hash"] = passwordHash,
             ["is_active"] = "1",
+            ["must_change_password"] = mustChangePassword ? "1" : "0",
             ["created_at"] = "SYSUTCDATETIME()", ["updated_at"] = "SYSUTCDATETIME()",
         };
         var ordered = new[]
         {
             "email", "username", "full_name", "display_name", "role", "role_name",
-            "password_hash", "is_active", "created_at", "updated_at",
+            "password_hash", "is_active", "must_change_password", "created_at", "updated_at",
         };
 
         var insertCols = ordered.Where(cols.Contains).ToList();
@@ -399,9 +409,9 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
             {
                 placeholders.Add(val);
             }
-            else if (col is "is_active")
+            else if (col is "is_active" or "must_change_password")
             {
-                placeholders.Add("1"); // literal, igual que Python (valor 1)
+                placeholders.Add(val); // literal 0/1, igual que Python (valor 1)
             }
             else
             {
