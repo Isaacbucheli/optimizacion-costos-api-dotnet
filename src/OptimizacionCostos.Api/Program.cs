@@ -84,6 +84,9 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IAdvisorScoreServ
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafExcelExporter, OptimizacionCostos.Api.Features.Waf.ClosedXmlWafExporter>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafExcelImporter, OptimizacionCostos.Api.Features.Waf.ClosedXmlWafImporter>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafSyncOrchestrator, OptimizacionCostos.Api.Features.Waf.WafSyncOrchestrator>();
+builder.Services.AddSingleton<OptimizacionCostos.Api.Features.Waf.IWafAdvisorSyncJobQueue, OptimizacionCostos.Api.Features.Waf.WafAdvisorSyncJobQueue>();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafAdvisorSyncJobStore, OptimizacionCostos.Api.Features.Waf.SqlWafAdvisorSyncJobStore>();
+builder.Services.AddHostedService<OptimizacionCostos.Api.Features.Waf.WafAdvisorSyncBackgroundService>();
 builder.Services.AddHostedService<OptimizacionCostos.Api.Features.Waf.AdvisorScoreScheduledService>();
 builder.Services.AddScoped<IUserDirectory, SqlUserDirectory>();
 builder.Services.AddScoped<IAlertCatalogStore, SqlAlertCatalogStore>();

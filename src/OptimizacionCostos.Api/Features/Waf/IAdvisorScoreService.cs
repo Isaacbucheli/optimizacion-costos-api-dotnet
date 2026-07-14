@@ -41,5 +41,6 @@ public interface IAdvisorScoreService
     /// Port de generate_and_list_subscription_recommendations.
     /// </summary>
     Task<(IReadOnlyList<AdvisorRow> Rows, WafIngestionMetrics Metrics)> GenerateAndListRecommendationsAsync(
-        int credentialId, string subscriptionId, string subscriptionName, CancellationToken ct = default);
+        int credentialId, string subscriptionId, string subscriptionName,
+        int timeoutSeconds = 600, CancellationToken ct = default);
 }

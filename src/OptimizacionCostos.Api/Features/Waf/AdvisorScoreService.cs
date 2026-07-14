@@ -23,8 +23,10 @@ public sealed class AdvisorScoreService(
         apiClient.FetchSubscriptionScoreAsync(credentialId, subscriptionId, ct);
 
     public Task<(IReadOnlyList<AdvisorRow> Rows, WafIngestionMetrics Metrics)> GenerateAndListRecommendationsAsync(
-        int credentialId, string subscriptionId, string subscriptionName, CancellationToken ct = default) =>
-        apiClient.GenerateAndListRecommendationsAsync(credentialId, subscriptionId, subscriptionName, ct: ct);
+        int credentialId, string subscriptionId, string subscriptionName,
+        int timeoutSeconds = 600, CancellationToken ct = default) =>
+        apiClient.GenerateAndListRecommendationsAsync(
+            credentialId, subscriptionId, subscriptionName, timeoutSeconds, ct: ct);
 
     // ---------------------------------------------------------------------
     // compute_advisor_score

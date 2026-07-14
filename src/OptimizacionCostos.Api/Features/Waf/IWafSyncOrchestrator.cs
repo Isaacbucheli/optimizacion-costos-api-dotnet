@@ -26,7 +26,9 @@ public interface IWafSyncOrchestrator
     /// </summary>
     Task<WafAdvisorSyncResult> RunAdvisorSyncAsync(
         int clientId, IReadOnlyList<string>? subscriptions, string? createdBy,
-        int timeoutSecondsPerSubscription, CancellationToken ct = default);
+        int timeoutSecondsPerSubscription,
+        Func<WafAdvisorSyncProgress, CancellationToken, Task>? progress = null,
+        CancellationToken ct = default);
 
     /// <summary>
     /// Consolida duplicados ya curados del cliente (titulos ES casi idénticos). Port de
