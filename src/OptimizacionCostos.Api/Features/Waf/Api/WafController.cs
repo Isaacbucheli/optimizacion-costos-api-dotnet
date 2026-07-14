@@ -50,7 +50,6 @@ public sealed class WafController(
     /// <summary>GET /waf/status — health check del módulo (asegura el schema). Port de waf_status.</summary>
     [HttpGet("status")]
     [AllowAnonymous]
-    [RequireModule(Modules.Waf)]
     public async Task<IActionResult> Status(CancellationToken ct)
     {
         await WafSchema.EnsureWafSchemaAsync(factory, ct);

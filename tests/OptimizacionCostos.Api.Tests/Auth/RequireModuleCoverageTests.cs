@@ -1,4 +1,5 @@
 using System.Reflection;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Auth;
 
@@ -64,5 +65,21 @@ public sealed class RequireModuleCoverageTests
         Assert.Contains(byKey, x => x.a.ModuleKey == Modules.WafCost);
         Assert.Contains(byKey, x => x.a.ModuleKey == Modules.WafIngestions && x.a.Access == ModuleAccess.Edit);
         Assert.Contains(byKey, x => x.a.ModuleKey == Modules.Waf && x.a.Access == ModuleAccess.Edit);
+    }
+
+    [Fact]
+    public void Waf_status_permanece_publico_sin_RequireModule()
+    {
+        var waf = Controllers().Single(t => t.Name == "WafController");
+        var statusMethod = waf.GetMethod("Status", BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly);
+        Assert.NotNull(statusMethod);
+
+        // Status no debe tener RequireModuleAttribute
+        var requireModuleAttr = statusMethod!.GetCustomAttribute<RequireModuleAttribute>();
+        Assert.Null(requireModuleAttr);
+
+        // Status debe tener AllowAnonymousAttribute
+        var allowAnonymousAttr = statusMethod.GetCustomAttribute<AllowAnonymousAttribute>();
+        Assert.NotNull(allowAnonymousAttr);
     }
 }
