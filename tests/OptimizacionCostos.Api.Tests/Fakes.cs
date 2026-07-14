@@ -1,5 +1,6 @@
 using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.AlertCatalog;
+using OptimizacionCostos.Api.Features.Identity;
 
 namespace OptimizacionCostos.Api.Tests;
 
@@ -76,4 +77,51 @@ public sealed class FakeAlertCatalogStore : IAlertCatalogStore
 
     public Task<bool> SoftDeleteKqlAsync(int kqlId, CancellationToken ct = default)
         => Task.FromResult(_kql.RemoveAll(k => k.KqlId == kqlId) > 0);
+}
+
+/// <summary>
+/// Matriz rol×módulo en memoria. SeedDefaults() replica el seed de producción
+/// (consultor todo; lector solo ver, optimization excluido) para que los tests
+/// existentes conserven su comportamiento.
+/// </summary>
+public sealed class FakeModulePermissionStore : IModulePermissionStore
+{
+    private readonly Dictionary<string, Dictionary<string, ModulePermission>> _matrix = new(StringComparer.OrdinalIgnoreCase);
+    public string? LastUpdatedBy { get; private set; }
+
+    public FakeModulePermissionStore SeedDefaults()
+    {
+        foreach (var m in Modules.All)
+        {
+            Set(Roles.Consultor, m.Key, canView: true, canEdit: true);
+            Set(Roles.Lector, m.Key, canView: m.Key != Modules.Optimization, canEdit: false);
+        }
+        return this;
+    }
+
+    public FakeModulePermissionStore Set(string role, string moduleKey, bool canView, bool canEdit)
+    {
+        if (!_matrix.TryGetValue(role, out var perms))
+            _matrix[role] = perms = new Dictionary<string, ModulePermission>(StringComparer.OrdinalIgnoreCase);
+        perms[moduleKey] = new ModulePermission(moduleKey, canView, canEdit);
+        return this;
+    }
+
+    public Task<IReadOnlyDictionary<string, ModulePermission>> GetForRoleAsync(string role, CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyDictionary<string, ModulePermission>>(
+            _matrix.TryGetValue(role, out var perms) ? perms : new Dictionary<string, ModulePermission>());
+
+    public Task<IReadOnlyDictionary<string, IReadOnlyList<ModulePermission>>> GetMatrixAsync(CancellationToken ct = default)
+        => Task.FromResult<IReadOnlyDictionary<string, IReadOnlyList<ModulePermission>>>(
+            _matrix.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<ModulePermission>)kv.Value.Values.ToList(), StringComparer.OrdinalIgnoreCase));
+
+    public Task ReplaceMatrixAsync(IReadOnlyDictionary<string, IReadOnlyList<ModulePermission>> matrix, string updatedBy, CancellationToken ct = default)
+    {
+        LastUpdatedBy = updatedBy;
+        foreach (var (role, rows) in matrix)
+        {
+            _matrix[role] = rows.ToDictionary(r => r.ModuleKey, r => r, StringComparer.OrdinalIgnoreCase);
+        }
+        return Task.CompletedTask;
+    }
 }

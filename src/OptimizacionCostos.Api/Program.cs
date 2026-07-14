@@ -97,6 +97,11 @@ builder.Services.AddBitJwtAuth(config);
 builder.Services.AddSingleton<TokenIssuer>();
 builder.Services.AddScoped<IAppUserStore, SqlAppUserStore>();
 
+// Matriz de permisos rol×módulo (lector/consultor): store SQL + decisión cacheada.
+// AddMemoryCache ya está registrado más abajo (bloque FinOps); el orden no importa.
+builder.Services.AddScoped<IModulePermissionStore, SqlModulePermissionStore>();
+builder.Services.AddScoped<IModulePermissionService, ModulePermissionService>();
+
 // Blob Storage (B3 logos; reusado por B6/B8) + administración de clientes (B3).
 builder.Services.AddSingleton<OptimizacionCostos.Api.Features.Storage.IBlobStorageService, OptimizacionCostos.Api.Features.Storage.BlobStorageService>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Clients.IClientStore, OptimizacionCostos.Api.Features.Clients.SqlClientStore>();
