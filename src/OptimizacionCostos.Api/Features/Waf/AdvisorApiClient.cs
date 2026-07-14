@@ -121,11 +121,22 @@ public sealed partial class AdvisorApiClient(
 
         // Fase 3: listar paginado
         var items = new List<JsonElement>();
-        string? listUrl = ArmUrl($"/subscriptions/{subscriptionId}/providers/Microsoft.Advisor/recommendations")
-                        + $"?api-version={WafConstants.AdvisorGenerateApiVersion}&$top={pageSize}";
+        var usedRecommendationsFallback = false;
+        string? listUrl = RecommendationsListUrl(
+            subscriptionId, WafConstants.AdvisorGenerateApiVersion, pageSize);
         while (!string.IsNullOrEmpty(listUrl))
         {
             using var listed = await RequestWithRetryAsync(http, token, HttpMethod.Get, listUrl, ct);
+            // En algunas suscripciones CSP Azure acepta generateRecommendations con 2025-01-01,
+            // pero el listado devuelve 404. Repetimos el listado completo con la versión estable.
+            if (listed.StatusCode == HttpStatusCode.NotFound && !usedRecommendationsFallback)
+            {
+                usedRecommendationsFallback = true;
+                items.Clear();
+                listUrl = RecommendationsListUrl(
+                    subscriptionId, WafConstants.AdvisorRecommendationsFallbackApiVersion, pageSize);
+                continue;
+            }
             if (listed.StatusCode != HttpStatusCode.OK)
                 throw new AdvisorApiException($"Advisor list failed HTTP {(int)listed.StatusCode}: {await SafeErrorAsync(listed, ct)}");
             var body = await listed.Content.ReadAsStringAsync(ct);
@@ -380,6 +391,10 @@ public sealed partial class AdvisorApiClient(
     }
 
     private static string ArmUrl(string path) => $"{ArmBaseUrl}{path}";
+
+    private static string RecommendationsListUrl(string subscriptionId, string apiVersion, int pageSize) =>
+        ArmUrl($"/subscriptions/{subscriptionId}/providers/Microsoft.Advisor/recommendations")
+        + $"?api-version={apiVersion}&$top={pageSize}";
 
     // ---------------------------------------------------------------------
     // Helpers de texto / JSON
