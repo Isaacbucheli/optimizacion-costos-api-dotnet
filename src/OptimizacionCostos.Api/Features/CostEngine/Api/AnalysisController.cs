@@ -2,6 +2,7 @@ using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Data;
 
 namespace OptimizacionCostos.Api.Features.CostEngine.Api;
@@ -14,6 +15,7 @@ namespace OptimizacionCostos.Api.Features.CostEngine.Api;
 [ApiController]
 [Authorize]
 [Route("analysis")]
+[RequireModule(Modules.Costos)]
 public sealed class AnalysisController(
     ISqlConnectionFactory factory,
     IAnalysisAccess access,
@@ -51,6 +53,7 @@ public sealed class AnalysisController(
 
     // -------------------- POST /analysis/client/{clientId}/current --------------------
     [HttpPost("client/{clientId:int}/current")]
+    [RequireModule(Modules.Costos, ModuleAccess.Edit)]
     public async Task<IActionResult> EnsureCurrent(int clientId, CancellationToken ct)
     {
         var chk = await access.AssertClientAccessAsync(User, clientId, ct);
@@ -110,6 +113,7 @@ public sealed class AnalysisController(
 
     // -------------------- POST /analysis --------------------
     [HttpPost("")]
+    [RequireModule(Modules.Costos, ModuleAccess.Edit)]
     public async Task<IActionResult> Create([FromBody] AnalysisCreateRequest payload, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(payload.AnalysisName))

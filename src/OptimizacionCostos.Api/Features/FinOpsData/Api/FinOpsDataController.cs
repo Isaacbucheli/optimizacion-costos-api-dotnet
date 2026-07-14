@@ -13,6 +13,7 @@ namespace OptimizacionCostos.Api.Features.FinOpsData.Api;
 [ApiController]
 [Authorize]
 [Route("finops-data")]
+[RequireModule(Modules.Costos)]
 public sealed class FinOpsDataController(
     IFinOpsDataRefreshService refresh,
     IFinOpsDataStore store,

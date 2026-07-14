@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.ModelBinding;
+using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.Reports.ExcelV3;
@@ -22,6 +23,7 @@ public sealed record ExcelGenerateRequest(decimal? MarginPct);
 [ApiController]
 [Authorize]
 [Route("excel")]
+[RequireModule(Modules.Costos)]
 public sealed class ExcelController(
     ICostExcelExporterV3 exporterV3,
     IBlobStorageService blobs,

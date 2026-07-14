@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
@@ -14,6 +15,7 @@ namespace OptimizacionCostos.Api.Features.Reports.Api;
 [ApiController]
 [Authorize]
 [Route("files")]
+[RequireModule(Modules.Report, ModuleAccess.Edit)]
 public sealed class FilesController(
     IBlobStorageService blobs,
     IAnalysisAccess access,

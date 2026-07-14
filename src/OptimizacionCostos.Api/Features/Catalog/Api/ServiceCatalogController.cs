@@ -35,12 +35,14 @@ public sealed partial class ServiceCatalogController(
         bool? RequiresManualCost, string? ExcelSheetName, int? DisplayOrder, bool? IsActive, string? Notes);
 
     [HttpGet]
+    [RequireModule(Modules.ServiceCatalog)]
     public async Task<IActionResult> ListAll(CancellationToken ct) => Ok(await store.ListAsync(false, false, ct));
 
     [HttpGet("active")]
     public async Task<IActionResult> ListActive(CancellationToken ct) => Ok(await store.ListAsync(true, false, ct));
 
     [HttpGet("inserter-keys")]
+    [RequireModule(Modules.ServiceCatalog)]
     public IActionResult InserterKeys() => Ok(InventoryInserter.InserterKeys.OrderBy(k => k).ToList());
 
     [HttpPost("suggest-from-discovery/{discoveryId:int}")]
@@ -64,6 +66,7 @@ public sealed partial class ServiceCatalogController(
     }
 
     [HttpGet("{serviceKey}")]
+    [RequireModule(Modules.ServiceCatalog)]
     public async Task<IActionResult> GetOne(string serviceKey, CancellationToken ct)
     {
         var svc = await store.GetAsync(serviceKey, ct);

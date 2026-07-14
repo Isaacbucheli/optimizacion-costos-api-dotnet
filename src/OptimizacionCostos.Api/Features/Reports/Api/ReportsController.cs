@@ -20,6 +20,7 @@ namespace OptimizacionCostos.Api.Features.Reports.Api;
 [ApiController]
 [Authorize]
 [Route("reports")]
+[RequireModule(Modules.Report)]
 public sealed class ReportsController(
     IReportStore store,
     IReportJobQueue queue,
@@ -109,7 +110,7 @@ public sealed class ReportsController(
     }
 
     [HttpPost("clients/{clientId:int}/{year:int}/{month:int}/executive/narrative")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Report, ModuleAccess.Edit)]
     public async Task<IActionResult> GenerateExecutiveNarrative(int clientId, int year, int month, CancellationToken ct)
     {
         var load = await LoadCompletedReportAsync(clientId, year, month, ct);
@@ -165,7 +166,7 @@ public sealed class ReportsController(
     }
 
     [HttpPost("clients/{clientId:int}/{year:int}/{month:int}/action-plan/seed")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Report, ModuleAccess.Edit)]
     public async Task<IActionResult> SeedActionPlan(int clientId, int year, int month, CancellationToken ct)
     {
         var chk = await access.AssertClientAccessAsync(User, clientId, ct);
@@ -181,7 +182,7 @@ public sealed class ReportsController(
     }
 
     [HttpPost("clients/{clientId:int}/{year:int}/{month:int}/action-plan")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Report, ModuleAccess.Edit)]
     public async Task<IActionResult> CreateActionItem(int clientId, int year, int month, [FromBody] ActionPlanItemRequest payload, CancellationToken ct)
     {
         var error = Validate(payload);
@@ -195,7 +196,7 @@ public sealed class ReportsController(
     }
 
     [HttpPut("clients/{clientId:int}/{year:int}/{month:int}/action-plan/{itemId:int}")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Report, ModuleAccess.Edit)]
     public async Task<IActionResult> UpdateActionItem(int clientId, int year, int month, int itemId, [FromBody] ActionPlanItemRequest payload, CancellationToken ct)
     {
         var error = Validate(payload);
@@ -210,7 +211,7 @@ public sealed class ReportsController(
     }
 
     [HttpDelete("clients/{clientId:int}/{year:int}/{month:int}/action-plan/{itemId:int}")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Report, ModuleAccess.Edit)]
     public async Task<IActionResult> DeleteActionItem(int clientId, int year, int month, int itemId, CancellationToken ct)
     {
         var chk = await access.AssertClientAccessAsync(User, clientId, ct);
@@ -225,6 +226,7 @@ public sealed class ReportsController(
     // ----------------------------------------------------------------- generación
 
     [HttpPost("clients/{clientId:int}/generate")]
+    [RequireModule(Modules.Report, ModuleAccess.Edit)]
     public async Task<IActionResult> GenerateReport(int clientId, [FromBody] GenerateReportRequest payload, CancellationToken ct)
     {
         if (payload.Year is < MinYear or > 2100) return BadRequest(new { detail = "year fuera de rango" });

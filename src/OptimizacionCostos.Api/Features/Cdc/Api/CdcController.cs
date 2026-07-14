@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
+using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 
@@ -13,6 +14,7 @@ namespace OptimizacionCostos.Api.Features.Cdc.Api;
 [ApiController]
 [Authorize]
 [Route("cdc")]
+[RequireModule(Modules.Reservations)]
 public sealed class CdcController(
     IReservationService reservations,
     IAzureReservationsClient client,

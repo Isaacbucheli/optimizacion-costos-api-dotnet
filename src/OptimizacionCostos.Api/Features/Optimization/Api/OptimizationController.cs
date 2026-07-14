@@ -14,6 +14,7 @@ namespace OptimizacionCostos.Api.Features.Optimization.Api;
 [ApiController]
 [Authorize]
 [Route("optimization")]
+[RequireModule(Modules.Optimization)]
 public sealed class OptimizationController(
     IOptimizationService svc,
     IAnalysisAccess access,
@@ -31,7 +32,7 @@ public sealed class OptimizationController(
     public IActionResult CheckAccess() => Ok(new { allowed = svc.AccessAllowed(Email) });
 
     [HttpPost("clients/{clientId:int}/scan")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Optimization, ModuleAccess.Edit)]
     public async Task<IActionResult> RunScan(int clientId, CancellationToken ct)
     {
         if (!svc.AccessAllowed(Email)) return Forbid403();
@@ -47,7 +48,6 @@ public sealed class OptimizationController(
     }
 
     [HttpGet("clients/{clientId:int}/scans")]
-    [Authorize(Roles = Roles.Editors)]
     public async Task<IActionResult> ListScans(int clientId, CancellationToken ct)
     {
         if (!svc.AccessAllowed(Email)) return Forbid403();
@@ -57,7 +57,6 @@ public sealed class OptimizationController(
     }
 
     [HttpGet("scans/{scanId:int}/findings")]
-    [Authorize(Roles = Roles.Editors)]
     public async Task<IActionResult> ScanFindings(int scanId, CancellationToken ct)
     {
         if (!svc.AccessAllowed(Email)) return Forbid403();
@@ -69,7 +68,6 @@ public sealed class OptimizationController(
     }
 
     [HttpGet("scans/{scanId:int}/excel")]
-    [Authorize(Roles = Roles.Editors)]
     public async Task<IActionResult> ExportExcel(int scanId, [FromQuery] string? states, CancellationToken ct)
     {
         if (!svc.AccessAllowed(Email)) return Forbid403();
@@ -98,7 +96,7 @@ public sealed class OptimizationController(
     }
 
     [HttpPut("findings/{fingerprintHex}/state")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Optimization, ModuleAccess.Edit)]
     public async Task<IActionResult> UpdateState(string fingerprintHex, [FromBody] StateUpdateRequest payload, CancellationToken ct)
     {
         if (!svc.AccessAllowed(Email)) return Forbid403();

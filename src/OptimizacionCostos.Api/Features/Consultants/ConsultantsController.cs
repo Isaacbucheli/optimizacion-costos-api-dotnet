@@ -14,6 +14,7 @@ namespace OptimizacionCostos.Api.Features.Consultants;
 [ApiController]
 [Route("consultant-assignments")]
 [Authorize]
+[RequireModule(Modules.Consultants)]
 public sealed class ConsultantsController(IConsultantsStore store) : ControllerBase
 {
     // ---- Asignaciones ----

@@ -50,6 +50,7 @@ public sealed class WafController(
     /// <summary>GET /waf/status — health check del módulo (asegura el schema). Port de waf_status.</summary>
     [HttpGet("status")]
     [AllowAnonymous]
+    [RequireModule(Modules.Waf)]
     public async Task<IActionResult> Status(CancellationToken ct)
     {
         await WafSchema.EnsureWafSchemaAsync(factory, ct);
@@ -66,6 +67,7 @@ public sealed class WafController(
 
     /// <summary>GET summary. Port de waf_client_summary.</summary>
     [HttpGet("clients/{clientId:int}/summary")]
+    [RequireModule(Modules.Waf)]
     public async Task<IActionResult> Summary(int clientId, CancellationToken ct)
     {
         var guard = await GuardAsync(clientId, ct);
@@ -94,6 +96,7 @@ public sealed class WafController(
 
     /// <summary>GET sections — tarjetas por pilar (siempre 5). Port de waf_client_sections.</summary>
     [HttpGet("clients/{clientId:int}/sections")]
+    [RequireModule(Modules.Waf)]
     public async Task<IActionResult> Sections(int clientId, CancellationToken ct)
     {
         var guard = await GuardAsync(clientId, ct);
@@ -114,6 +117,7 @@ public sealed class WafController(
 
     /// <summary>GET advisor-score — último snapshot guardado (no consulta ARM). Port de waf_client_advisor_score.</summary>
     [HttpGet("clients/{clientId:int}/advisor-score")]
+    [RequireModule(Modules.Waf)]
     public async Task<IActionResult> AdvisorScore(int clientId, [FromQuery] bool detail = false, CancellationToken ct = default)
     {
         var guard = await GuardAsync(clientId, ct);
@@ -125,6 +129,7 @@ public sealed class WafController(
 
     /// <summary>GET cost-reference — costo referencial del pilar 5 reutilizando el módulo de costos. Port de waf_cost_reference.</summary>
     [HttpGet("clients/{clientId:int}/cost-reference")]
+    [RequireModule(Modules.WafCost)]
     public async Task<IActionResult> CostReference(int clientId, CancellationToken ct)
     {
         var guard = await GuardAsync(clientId, ct);
@@ -266,6 +271,7 @@ public sealed class WafController(
 
     /// <summary>GET recommendations. Port de list_waf_recommendations.</summary>
     [HttpGet("clients/{clientId:int}/recommendations")]
+    [RequireModule(Modules.Waf)]
     public async Task<IActionResult> ListRecommendations(
         int clientId, [FromQuery] int? pillar, [FromQuery(Name = "active_only")] bool activeOnly = true, CancellationToken ct = default)
     {
@@ -336,6 +342,7 @@ public sealed class WafController(
 
     /// <summary>GET ingestion-runs. Port de list_waf_ingestion_runs (marca corridas colgadas).</summary>
     [HttpGet("clients/{clientId:int}/ingestion-runs")]
+    [RequireModule(Modules.WafIngestions)]
     public async Task<IActionResult> IngestionRuns(int clientId, CancellationToken ct)
     {
         var guard = await GuardAsync(clientId, ct);
@@ -379,6 +386,7 @@ public sealed class WafController(
 
     /// <summary>GET recommendation resources (findings). Port de list_waf_recommendation_resources.</summary>
     [HttpGet("clients/{clientId:int}/recommendations/{canonicalId:int}/resources")]
+    [RequireModule(Modules.Waf)]
     public async Task<IActionResult> ListResources(int clientId, int canonicalId, CancellationToken ct)
     {
         var chk = await access.AssertClientAccessAsync(User, clientId, ct);
@@ -405,6 +413,7 @@ public sealed class WafController(
 
     /// <summary>GET recommendation detail. Port de get_waf_recommendation.</summary>
     [HttpGet("clients/{clientId:int}/recommendations/{canonicalId:int}")]
+    [RequireModule(Modules.Waf)]
     public async Task<IActionResult> GetRecommendation(int clientId, int canonicalId, CancellationToken ct)
     {
         var chk = await access.AssertClientAccessAsync(User, clientId, ct);
@@ -444,6 +453,7 @@ public sealed class WafController(
 
     /// <summary>GET comments. Port de list_waf_comments.</summary>
     [HttpGet("clients/{clientId:int}/recommendations/{canonicalId:int}/comments")]
+    [RequireModule(Modules.Waf)]
     public async Task<IActionResult> ListComments(int clientId, int canonicalId, CancellationToken ct)
     {
         var guard = await GuardRecommendationAsync(clientId, canonicalId, ct);
@@ -461,6 +471,7 @@ public sealed class WafController(
 
     /// <summary>GET history. Port de list_waf_history.</summary>
     [HttpGet("clients/{clientId:int}/recommendations/{canonicalId:int}/history")]
+    [RequireModule(Modules.Waf)]
     public async Task<IActionResult> ListHistory(int clientId, int canonicalId, CancellationToken ct)
     {
         var guard = await GuardRecommendationAsync(clientId, canonicalId, ct);
@@ -482,6 +493,7 @@ public sealed class WafController(
 
     /// <summary>POST advisor-sync — sincroniza con Azure Advisor API. Port de start_waf_advisor_sync + _run_advisor_sync_job.</summary>
     [HttpPost("clients/{clientId:int}/advisor-sync")]
+    [RequireModule(Modules.Waf, ModuleAccess.Edit)]
     public async Task<IActionResult> AdvisorSync(int clientId, [FromBody] WafAdvisorSyncRequest payload, CancellationToken ct)
     {
         var guard = await GuardAsync(clientId, ct);
@@ -531,7 +543,7 @@ public sealed class WafController(
 
     /// <summary>POST consolidate-duplicates (admin/consultor). Port de consolidate_waf_duplicates.</summary>
     [HttpPost("clients/{clientId:int}/consolidate-duplicates")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Waf, ModuleAccess.Edit)]
     public async Task<IActionResult> ConsolidateDuplicates(int clientId, [FromQuery(Name = "use_ai")] bool useAi = true, CancellationToken ct = default)
     {
         var guard = await GuardAsync(clientId, ct);
@@ -557,6 +569,7 @@ public sealed class WafController(
 
     /// <summary>DELETE recommendation — descarta (soft delete). Port de dismiss_waf_recommendation.</summary>
     [HttpDelete("clients/{clientId:int}/recommendations/{canonicalId:int}")]
+    [RequireModule(Modules.Waf, ModuleAccess.Edit)]
     public async Task<IActionResult> Dismiss(int clientId, int canonicalId, [FromBody] WafRecommendationDismiss? payload = null, CancellationToken ct = default)
     {
         var chk = await access.AssertClientAccessAsync(User, clientId, ct);
@@ -576,6 +589,7 @@ public sealed class WafController(
 
     /// <summary>PUT tracking. Port de update_waf_tracking.</summary>
     [HttpPut("clients/{clientId:int}/recommendations/{canonicalId:int}/tracking")]
+    [RequireModule(Modules.Waf, ModuleAccess.Edit)]
     public async Task<IActionResult> UpdateTracking(int clientId, int canonicalId, [FromBody] WafTrackingUpdate payload, CancellationToken ct)
     {
         if (!AnyTrackingFieldSet(payload))
@@ -590,6 +604,7 @@ public sealed class WafController(
 
     /// <summary>POST comment. Port de create_waf_comment.</summary>
     [HttpPost("clients/{clientId:int}/recommendations/{canonicalId:int}/comments")]
+    [RequireModule(Modules.Waf, ModuleAccess.Edit)]
     public async Task<IActionResult> CreateComment(int clientId, int canonicalId, [FromBody] WafCommentCreate payload, CancellationToken ct)
     {
         if (payload is null || string.IsNullOrWhiteSpace(payload.CommentText))
@@ -607,6 +622,7 @@ public sealed class WafController(
 
     /// <summary>GET export-excel. Port de export_waf_client_excel.</summary>
     [HttpGet("clients/{clientId:int}/export-excel")]
+    [RequireModule(Modules.Waf)]
     public async Task<IActionResult> ExportExcel(int clientId, CancellationToken ct)
     {
         var chk = await access.AssertClientAccessAsync(User, clientId, ct);
@@ -626,6 +642,7 @@ public sealed class WafController(
 
     /// <summary>GET excel-import/status. Port de waf_excel_import_status.</summary>
     [HttpGet("clients/{clientId:int}/excel-import/status")]
+    [RequireModule(Modules.Waf)]
     public async Task<IActionResult> ExcelImportStatus(int clientId, CancellationToken ct)
     {
         var guard = await GuardAsync(clientId, ct);
@@ -643,6 +660,7 @@ public sealed class WafController(
 
     /// <summary>POST excel-import/preview. Port de preview_waf_excel_import.</summary>
     [HttpPost("clients/{clientId:int}/excel-import/preview")]
+    [RequireModule(Modules.Waf, ModuleAccess.Edit)]
     public async Task<IActionResult> ExcelImportPreview(
         int clientId, IFormFile file, [FromQuery(Name = "use_ai")] bool useAi = true, CancellationToken ct = default)
     {
@@ -691,6 +709,7 @@ public sealed class WafController(
 
     /// <summary>POST excel-import/apply. Port de apply_waf_excel_import.</summary>
     [HttpPost("clients/{clientId:int}/excel-import/apply")]
+    [RequireModule(Modules.Waf, ModuleAccess.Edit)]
     public async Task<IActionResult> ExcelImportApply(int clientId, [FromBody] WafExcelApplyRequest payload, CancellationToken ct)
     {
         if (payload?.Rows is null || payload.Rows.Count == 0)
@@ -732,6 +751,7 @@ public sealed class WafController(
 
     /// <summary>POST ingestions — carga CSV de Advisor (síncrona). Port de upload_waf_ingestion.</summary>
     [HttpPost("clients/{clientId:int}/ingestions")]
+    [RequireModule(Modules.WafIngestions, ModuleAccess.Edit)]
     public async Task<IActionResult> UploadIngestion(int clientId, IFormFile file, CancellationToken ct)
     {
         var fileName = SafeFileName(file?.FileName);

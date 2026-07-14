@@ -12,6 +12,7 @@ namespace OptimizacionCostos.Api.Features.PolicyCatalog;
 [ApiController]
 [Route("policy-catalog")]
 [Authorize]
+[RequireModule(Modules.Policies)]
 public sealed class PolicyCatalogController(IPolicyCatalogStore store) : ControllerBase
 {
     [HttpGet]
@@ -26,7 +27,7 @@ public sealed class PolicyCatalogController(IPolicyCatalogStore store) : Control
     }
 
     [HttpPost]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Policies, ModuleAccess.Edit)]
     public async Task<IActionResult> CreatePolicy([FromBody] PolicyCreate payload, CancellationToken ct)
     {
         var id = await store.CreatePolicyAsync(payload, ct);
@@ -34,7 +35,7 @@ public sealed class PolicyCatalogController(IPolicyCatalogStore store) : Control
     }
 
     [HttpPut("{policyId:int}")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Policies, ModuleAccess.Edit)]
     public async Task<IActionResult> UpdatePolicy(int policyId, [FromBody] JsonElement body, CancellationToken ct)
     {
         var (fields, error) = BuildFields(body, PolicyColumns.Policy, nameMaxLength: 300);
@@ -46,7 +47,7 @@ public sealed class PolicyCatalogController(IPolicyCatalogStore store) : Control
     }
 
     [HttpDelete("{policyId:int}")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Policies, ModuleAccess.Edit)]
     public async Task<IActionResult> DeletePolicy(int policyId, CancellationToken ct)
     {
         if (!await store.SoftDeletePolicyAsync(policyId, ct))

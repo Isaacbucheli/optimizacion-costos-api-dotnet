@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.AzureIntegration;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 
@@ -12,6 +13,7 @@ namespace OptimizacionCostos.Api.Features.Inventory.Api;
 [ApiController]
 [Authorize]
 [Route("azure/import")]
+[RequireModule(Modules.Costos)]
 public sealed class AzureImportController(
     IInventoryImportService import,
     IAnalysisAccess access,
@@ -21,6 +23,7 @@ public sealed class AzureImportController(
 
     // -------------------- POST /azure/import/inventory/{analysisId} --------------------
     [HttpPost("inventory/{analysisId:int}")]
+    [RequireModule(Modules.Costos, ModuleAccess.Edit)]
     public async Task<IActionResult> ImportInventory(int analysisId, [FromBody] ImportRequest? payload, CancellationToken ct)
     {
         var chk = await access.AssertAnalysisAccessAsync(User, analysisId, ct);
@@ -53,6 +56,7 @@ public sealed class AzureImportController(
 
     // -------------------- POST /azure/import/discover/{clientId} --------------------
     [HttpPost("discover/{clientId:int}")]
+    [RequireModule(Modules.Costos, ModuleAccess.Edit)]
     public async Task<IActionResult> Discover(int clientId, CancellationToken ct)
     {
         var chk = await access.AssertClientAccessAsync(User, clientId, ct);

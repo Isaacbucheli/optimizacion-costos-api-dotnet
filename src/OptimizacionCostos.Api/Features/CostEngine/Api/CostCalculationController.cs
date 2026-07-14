@@ -26,6 +26,7 @@ namespace OptimizacionCostos.Api.Features.CostEngine.Api;
 /// </summary>
 [ApiController]
 [Authorize]
+[RequireModule(Modules.Costos)]
 public sealed class CostCalculationController(
     IAnalysisAccess access,
     CostEngineService engine,
@@ -38,6 +39,7 @@ public sealed class CostCalculationController(
     // -------------------- POST /analysis/{id}/calculate --------------------
 
     [HttpPost("analysis/{analysisId:int}/calculate")]
+    [RequireModule(Modules.Costos, ModuleAccess.Edit)]
     public async Task<IActionResult> Calculate(
         int analysisId, [FromBody] CalculateRequest? payload, CancellationToken ct)
     {
@@ -106,6 +108,7 @@ public sealed class CostCalculationController(
     // -------------------- POST /analysis/{id}/scenarios --------------------
 
     [HttpPost("analysis/{analysisId:int}/scenarios")]
+    [RequireModule(Modules.Costos, ModuleAccess.Edit)]
     public async Task<IActionResult> RecalculateScenarios(int analysisId, CancellationToken ct)
     {
         var check = await access.AssertAnalysisAccessAsync(User, analysisId, ct);
@@ -153,6 +156,7 @@ public sealed class CostCalculationController(
     // -------------------- PUT /cost-results/{id}/manual-cost --------------------
 
     [HttpPut("cost-results/{costResultId:int}/manual-cost")]
+    [RequireModule(Modules.Costos, ModuleAccess.Edit)]
     public async Task<IActionResult> SetManualCost(
         int costResultId, [FromBody] ManualCostRequest payload, CancellationToken ct)
     {

@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 
 namespace OptimizacionCostos.Api.Features.Cdc.Api;
@@ -12,6 +13,7 @@ namespace OptimizacionCostos.Api.Features.Cdc.Api;
 /// </summary>
 [ApiController]
 [Authorize]
+[RequireModule(Modules.Costos)]
 public sealed class AnalysisRefreshController(
     IRiCoverageService riCoverage,
     IPowerHistoryJobQueue powerQueue,
@@ -20,6 +22,7 @@ public sealed class AnalysisRefreshController(
     ILogger<AnalysisRefreshController> logger) : ControllerBase
 {
     [HttpPost("analysis/{analysisId:int}/ri-coverage/refresh")]
+    [RequireModule(Modules.Costos, ModuleAccess.Edit)]
     public async Task<IActionResult> RefreshRiCoverage(int analysisId, CancellationToken ct)
     {
         var chk = await access.AssertAnalysisAccessAsync(User, analysisId, ct);
@@ -34,6 +37,7 @@ public sealed class AnalysisRefreshController(
 
     /// <summary>Encola un refresh de encendido/apagado (202). Guard: no encola doble si ya corre.</summary>
     [HttpPost("analysis/{analysisId:int}/power-history/refresh")]
+    [RequireModule(Modules.Costos, ModuleAccess.Edit)]
     public async Task<IActionResult> RefreshPowerHistory(int analysisId, CancellationToken ct)
     {
         var chk = await access.AssertAnalysisAccessAsync(User, analysisId, ct);
