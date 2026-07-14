@@ -67,4 +67,5 @@ public static class WafConstants
     // API versions (ARM / Azure OpenAI). Port de los valores del runbook/advisor.
     public const string AdvisorScoreApiVersion = "2023-01-01";
     public const string AdvisorGenerateApiVersion = "2025-01-01";
+    public const string AdvisorRecommendationsFallbackApiVersion = "2023-01-01";
 }

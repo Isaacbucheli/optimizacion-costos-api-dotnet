@@ -27,6 +27,8 @@ public sealed class WafController(
     IWafExcelExporter excelExporter,
     IWafExcelImporter excelImporter,
     IWafSyncOrchestrator orchestrator,
+    IWafAdvisorSyncJobStore advisorSyncJobs,
+    IWafAdvisorSyncJobQueue advisorSyncQueue,
     ILogger<WafController> logger) : ControllerBase
 {
     private const string CostReferenceDisclaimer =
@@ -490,7 +492,7 @@ public sealed class WafController(
 
     // ==================== POR CLIENTE — MODIFICACIÓN ====================
 
-    /// <summary>POST advisor-sync — sincroniza con Azure Advisor API. Port de start_waf_advisor_sync + _run_advisor_sync_job.</summary>
+    /// <summary>POST advisor-sync — crea una corrida persistida y la procesa fuera de la petición HTTP.</summary>
     [HttpPost("clients/{clientId:int}/advisor-sync")]
     [RequireModule(Modules.Waf, ModuleAccess.Edit)]
     public async Task<IActionResult> AdvisorSync(int clientId, [FromBody] WafAdvisorSyncRequest payload, CancellationToken ct)
@@ -511,33 +513,38 @@ public sealed class WafController(
                 return BadRequest(new { detail = $"Suscripciones no registradas o inactivas para este cliente: [{string.Join(", ", unknown)}]" });
         }
 
-        try
-        {
-            var result = await orchestrator.RunAdvisorSyncAsync(
-                clientId, payload.Subscriptions, Email, payload.TimeoutSecondsPerSubscription, ct);
-            return Ok(new
-            {
-                run_id = result.RunId,
-                status = result.Status,
-                source = "advisor_api",
-                subscriptions_queued = result.SubscriptionsQueued,
-                subscriptions_processed = result.SubscriptionsProcessed,
-                subscriptions_failed = result.SubscriptionsFailed,
-                new_recommendations = result.NewRecommendations,
-                new_findings = result.NewFindings,
-                resolved_findings = result.ResolvedFindings,
-                merged_duplicates = result.MergedDuplicates,
-                ai_processed = result.AiProcessed,
-                ai_errors = result.AiErrors,
-                warnings = result.Warnings,
-                timeout_seconds_per_subscription = payload.TimeoutSecondsPerSubscription,
-            });
-        }
-        catch (Exception ex)
-        {
-            logger.LogError(ex, "No se pudo completar Advisor sync client_id={Cid}", clientId);
-            return Problem(statusCode: 500, detail: $"Advisor sync failed: {ex.GetType().Name}");
-        }
+        var selected = payload.Subscriptions is { Count: > 0 }
+            ? payload.Subscriptions
+            : available.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
+        var (job, created) = await advisorSyncJobs.CreateOrGetActiveAsync(
+            clientId, selected, Email, payload.TimeoutSecondsPerSubscription, ct);
+        if (created)
+            advisorSyncQueue.Enqueue(new WafAdvisorSyncJob(
+                job.JobId, clientId, selected, Email, payload.TimeoutSecondsPerSubscription));
+
+        return StatusCode(StatusCodes.Status202Accepted, AdvisorSyncJobResponse(job, created));
+    }
+
+    /// <summary>GET de una corrida de Advisor para polling del loader global.</summary>
+    [HttpGet("clients/{clientId:int}/advisor-sync/{jobId:int}")]
+    public async Task<IActionResult> AdvisorSyncStatus(int clientId, int jobId, CancellationToken ct)
+    {
+        var guard = await GuardAsync(clientId, ct);
+        if (guard is not null) return guard;
+        var job = await advisorSyncJobs.GetAsync(clientId, jobId, ct);
+        return job is null ? NotFound(new { detail = "Corrida de Advisor no encontrada." }) : Ok(AdvisorSyncJobResponse(job, false));
+    }
+
+    /// <summary>GET de la corrida activa; permite recuperar el bloqueo después de recargar.</summary>
+    [HttpGet("clients/{clientId:int}/advisor-sync/active")]
+    public async Task<IActionResult> ActiveAdvisorSync(int clientId, CancellationToken ct)
+    {
+        var guard = await GuardAsync(clientId, ct);
+        if (guard is not null) return guard;
+        var job = await advisorSyncJobs.GetActiveAsync(clientId, ct);
+        return Ok(job is null
+            ? (object)new { active = false }
+            : AdvisorSyncJobResponse(job, false));
     }
 
     /// <summary>POST consolidate-duplicates (admin/consultor). Port de consolidate_waf_duplicates.</summary>
@@ -1056,6 +1063,28 @@ public sealed class WafController(
         captured_at = (string?)null,
         stale = true,
         message = "Advisor Score pendiente de refresh programado.",
+    };
+
+    private static object AdvisorSyncJobResponse(WafAdvisorSyncJobStatus job, bool created) => new
+    {
+        active = job.Status is "queued" or "running",
+        created,
+        job_id = job.JobId,
+        client_id = job.ClientId,
+        status = job.Status,
+        subscriptions_total = job.SubscriptionsTotal,
+        subscriptions_queued = job.SubscriptionsTotal,
+        subscriptions_processed = job.SubscriptionsProcessed,
+        subscriptions_failed = job.SubscriptionsFailed,
+        current_subscription = job.CurrentSubscription,
+        run_id = job.IngestionRunId,
+        new_recommendations = job.NewRecommendations,
+        new_findings = job.NewFindings,
+        resolved_findings = job.ResolvedFindings,
+        warnings = JsonOrDefault(job.WarningsJson),
+        error = job.Error,
+        started_at = job.StartedAt,
+        completed_at = job.CompletedAt,
     };
 
     private static object JsonOrDefault(string? json)

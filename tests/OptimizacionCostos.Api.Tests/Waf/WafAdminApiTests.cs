@@ -117,7 +117,8 @@ public sealed class WafAdminApiTests : IClassFixture<WafAdminApiTests.Factory>
             => throw new NotSupportedException();
 
         public Task<(IReadOnlyList<AdvisorRow> Rows, WafIngestionMetrics Metrics)> GenerateAndListRecommendationsAsync(
-            int credentialId, string subscriptionId, string subscriptionName, CancellationToken ct = default)
+            int credentialId, string subscriptionId, string subscriptionName,
+            int timeoutSeconds = 600, CancellationToken ct = default)
             => throw new NotSupportedException();
     }
 }

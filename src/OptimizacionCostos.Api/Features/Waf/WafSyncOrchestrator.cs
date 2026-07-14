@@ -52,7 +52,9 @@ public sealed class WafSyncOrchestrator(
 
     public async Task<WafAdvisorSyncResult> RunAdvisorSyncAsync(
         int clientId, IReadOnlyList<string>? subscriptions, string? createdBy,
-        int timeoutSecondsPerSubscription, CancellationToken ct = default)
+        int timeoutSecondsPerSubscription,
+        Func<WafAdvisorSyncProgress, CancellationToken, Task>? progress = null,
+        CancellationToken ct = default)
     {
         var groups = await advisorScoreStore.LoadClientSubscriptionGroupsAsync(clientId, ct);
 
@@ -67,6 +69,8 @@ public sealed class WafSyncOrchestrator(
         var successfulSubscriptions = new List<string>();
         var subsTotal = 0;
         var subsFailed = 0;
+        var expectedTotal = groups.Values.Sum(group => group.Subscriptions.Keys.Count(subscriptionId =>
+            requested is null || requested.Contains(subscriptionId)));
 
         foreach (var (_, group) in groups)
         {
@@ -77,7 +81,8 @@ public sealed class WafSyncOrchestrator(
                 try
                 {
                     var (subRows, _) = await advisorScore.GenerateAndListRecommendationsAsync(
-                        group.CredentialId, subscriptionId, subscriptionName, ct);
+                        group.CredentialId, subscriptionId, subscriptionName,
+                        timeoutSecondsPerSubscription, ct);
                     rows.AddRange(subRows);
                     successfulSubscriptions.Add(subscriptionId);
                 }
@@ -95,6 +100,9 @@ public sealed class WafSyncOrchestrator(
                         error = $"{ex.GetType().Name}: {Truncate(ex.Message, 500)}",
                     });
                 }
+                if (progress is not null)
+                    await progress(new WafAdvisorSyncProgress(
+                        successfulSubscriptions.Count + subsFailed, subsFailed, expectedTotal, subscriptionName), ct);
             }
         }
 
