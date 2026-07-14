@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Configuration;
+using OptimizacionCostos.Api.Features.Identity;
 
 namespace OptimizacionCostos.Api.Features.Identity.Api;
 
@@ -16,7 +17,9 @@ namespace OptimizacionCostos.Api.Features.Identity.Api;
 public sealed class AuthController(
     IAppUserStore users,
     TokenIssuer tokens,
-    AppConfig config) : ControllerBase
+    AppConfig config,
+    IModulePermissionStore moduleStore,
+    IModulePermissionService modulePerms) : ControllerBase
 {
     // -------------------- DTOs --------------------
     public sealed record LoginRequest(string? Username, string? Password);
@@ -25,6 +28,8 @@ public sealed class AuthController(
     public sealed record UserUpdateRequest(string? Email, string? FullName, string? Role, string? Password, bool? IsActive);
     public sealed record ClientAssignmentRequest(List<int>? ClientIds);
     public sealed record ChangePasswordRequest(string? CurrentPassword, string? NewPassword);
+    public sealed record ModulePermissionRowDto(string? ModuleKey, bool CanView, bool CanEdit);
+    public sealed record ModulePermissionsUpdateRequest(Dictionary<string, List<ModulePermissionRowDto>>? Permissions);
 
     // -------------------- GET /auth/status --------------------
     [HttpGet("status")]
@@ -135,6 +140,7 @@ public sealed class AuthController(
                     ["role"] = row.Role,
                     ["is_active"] = row.IsActive,
                     ["must_change_password"] = row.MustChangePassword,
+                    ["modules"] = await BuildModulesAsync(row.Role, ct),
                 });
         }
         // Fallback a claims (token válido sin fila): mantiene la sesión funcionando.
@@ -146,6 +152,7 @@ public sealed class AuthController(
             ["full_name"] = name,
             ["email"] = email,
             ["role"] = User.FindFirst(ClaimTypes.Role)?.Value,
+            ["modules"] = await BuildModulesAsync(User.FindFirst(ClaimTypes.Role)?.Value ?? "", ct),
         });
     }
 
@@ -266,6 +273,48 @@ public sealed class AuthController(
         }
     }
 
+    // -------------------- GET /auth/module-permissions --------------------
+    // Matriz rol×módulo para la pantalla "Permisos de grupos" (solo admin).
+    [HttpGet("module-permissions")]
+    [Authorize(Roles = Roles.Admin)]
+    public async Task<IActionResult> GetModulePermissions(CancellationToken ct)
+        => Ok(await MatrixResponseAsync(ct));
+
+    // -------------------- PUT /auth/module-permissions --------------------
+    // Guarda la matriz completa. Candado: lector jamás can_edit; edit ⇒ view.
+    [HttpPut("module-permissions")]
+    [Authorize(Roles = Roles.Admin)]
+    public async Task<IActionResult> PutModulePermissions([FromBody] ModulePermissionsUpdateRequest payload, CancellationToken ct)
+    {
+        if (payload.Permissions is null || payload.Permissions.Count == 0)
+            return BadRequest(new { detail = "permissions is required" });
+
+        var normalized = new Dictionary<string, IReadOnlyList<ModulePermission>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (roleRaw, rows) in payload.Permissions)
+        {
+            var role = (roleRaw ?? "").Trim().ToLowerInvariant();
+            if (role is not (Roles.Consultor or Roles.Lector))
+                return BadRequest(new { detail = $"Invalid role '{roleRaw}'" });
+
+            var clean = new List<ModulePermission>();
+            foreach (var row in rows ?? [])
+            {
+                var key = (row.ModuleKey ?? "").Trim().ToLowerInvariant();
+                if (!Modules.ValidKeys.Contains(key))
+                    return BadRequest(new { detail = $"Invalid module_key '{row.ModuleKey}'" });
+                var canEdit = row.CanEdit && role != Roles.Lector; // candado duro
+                var canView = row.CanView || canEdit;               // edit ⇒ view
+                clean.Add(new ModulePermission(key, canView, canEdit));
+            }
+            normalized[role] = clean;
+        }
+
+        var actor = User.FindFirst("sub")?.Value ?? "";
+        await moduleStore.ReplaceMatrixAsync(normalized, actor, ct);
+        modulePerms.Invalidate();
+        return Ok(await MatrixResponseAsync(ct));
+    }
+
     // -------------------- helpers --------------------
     private Dictionary<string, object?> TokenResponse(PublicUser user)
     {
@@ -289,5 +338,59 @@ public sealed class AuthController(
     {
         normalized = (role ?? "").Trim().ToLowerInvariant();
         return Roles.Valid.Contains(normalized);
+    }
+
+    // Los 11 módulos del catálogo con los permisos efectivos del rol:
+    // admin todo true; lector jamás can_edit; fila ausente = false/false.
+    private async Task<List<Dictionary<string, object?>>> BuildModulesAsync(string role, CancellationToken ct)
+    {
+        var isAdmin = string.Equals(role, Roles.Admin, StringComparison.OrdinalIgnoreCase);
+        var isLector = string.Equals(role, Roles.Lector, StringComparison.OrdinalIgnoreCase);
+        var perms = isAdmin
+            ? null
+            : await modulePerms.GetForRoleAsync(role, ct);
+
+        return Modules.All.Select(m =>
+        {
+            ModulePermission? p = null;
+            perms?.TryGetValue(m.Key, out p);
+            return new Dictionary<string, object?>
+            {
+                ["key"] = m.Key,
+                ["can_view"] = isAdmin || (p?.CanView ?? false),
+                ["can_edit"] = isAdmin || (!isLector && (p?.CanEdit ?? false)),
+            };
+        }).ToList();
+    }
+
+    private static List<Dictionary<string, object?>> ToMatrixRows(
+        IReadOnlyDictionary<string, IReadOnlyList<ModulePermission>> matrix, string role)
+    {
+        var rows = matrix.TryGetValue(role, out var list)
+            ? list.ToDictionary(p => p.ModuleKey, p => p, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, ModulePermission>(StringComparer.OrdinalIgnoreCase);
+        return Modules.All.Select(m => new Dictionary<string, object?>
+        {
+            ["module_key"] = m.Key,
+            ["can_view"] = rows.TryGetValue(m.Key, out var p) && p.CanView,
+            ["can_edit"] = rows.TryGetValue(m.Key, out var p2) && p2.CanEdit,
+        }).ToList();
+    }
+
+    private async Task<Dictionary<string, object?>> MatrixResponseAsync(CancellationToken ct)
+    {
+        var matrix = await moduleStore.GetMatrixAsync(ct);
+        return new Dictionary<string, object?>
+        {
+            ["modules"] = Modules.All.Select(m => new Dictionary<string, object?>
+            {
+                ["key"] = m.Key, ["label"] = m.Label, ["group"] = m.Group,
+            }).ToList(),
+            ["permissions"] = new Dictionary<string, object?>
+            {
+                [Roles.Consultor] = ToMatrixRows(matrix, Roles.Consultor),
+                [Roles.Lector] = ToMatrixRows(matrix, Roles.Lector),
+            },
+        };
     }
 }
