@@ -39,6 +39,10 @@ public sealed class ModulePermissionService(IModulePermissionStore store, IMemor
         return fresh;
     }
 
+    // Solo limpia la caché en memoria de ESTA instancia del proceso. Con varias instancias
+    // de App Service, las demás no se enteran de este PUT y siguen sirviendo su copia
+    // cacheada hasta que expire: el límite de seguridad real es el TTL de 60s de arriba,
+    // no esta invalidación (que es solo una optimización de latencia para la instancia local).
     public void Invalidate()
     {
         cache.Remove(CacheKey(Roles.Consultor));

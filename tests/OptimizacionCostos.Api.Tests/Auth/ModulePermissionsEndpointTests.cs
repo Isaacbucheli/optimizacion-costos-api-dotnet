@@ -88,6 +88,19 @@ public sealed class ModulePermissionsEndpointTests : IClassFixture<ModulePermiss
     }
 
     [Fact]
+    public async Task Put_valida_module_key_duplicado()
+    {
+        var client = ClientFor("admin3b@bit.ec", Roles.Admin);
+        var res = await client.PutAsync("/auth/module-permissions", Json("""
+            {"permissions":{"consultor":[
+              {"module_key":"alerts","can_view":true,"can_edit":false},
+              {"module_key":"ALERTS","can_view":true,"can_edit":true}
+            ]}}
+            """));
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+    }
+
+    [Fact]
     public async Task Put_valida_rol_desconocido()
     {
         var client = ClientFor("admin4@bit.ec", Roles.Admin);

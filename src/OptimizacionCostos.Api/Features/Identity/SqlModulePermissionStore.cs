@@ -50,13 +50,22 @@ public sealed class SqlModulePermissionStore(ISqlConnectionFactory factory) : IM
             if (Convert.ToInt32(await check.ExecuteScalarAsync(ct)) > 0) return;
         }
 
+        // INSERT ... WHERE NOT EXISTS por fila (no un solo COUNT(*) previo): dos primeras
+        // requests concurrentes pueden ambas ver COUNT=0 y llegar hasta aquí; con el guard
+        // por (role, module_key) la segunda no reinserta lo que la primera ya confirmó,
+        // evitando la violación de PK sobre PK_role_module_permission.
         foreach (var m in Modules.All)
         {
             var lectorView = m.Key != Modules.Optimization;
             await using var seed = conn.CreateCommand();
             seed.CommandText = """
                 INSERT INTO dbo.role_module_permission (role, module_key, can_view, can_edit)
-                VALUES (@consultor, @key, 1, 1), (@lector, @key, @lectorView, 0)
+                SELECT r.role, @key, r.can_view, r.can_edit
+                FROM (VALUES (@consultor, CAST(1 AS BIT), CAST(1 AS BIT)), (@lector, @lectorView, CAST(0 AS BIT))) AS r(role, can_view, can_edit)
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM dbo.role_module_permission p
+                    WHERE p.role = r.role AND p.module_key = @key
+                )
                 """;
             seed.Parameters.AddWithValue("@consultor", Roles.Consultor);
             seed.Parameters.AddWithValue("@lector", Roles.Lector);

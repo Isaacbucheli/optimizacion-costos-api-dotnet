@@ -297,11 +297,14 @@ public sealed class AuthController(
                 return BadRequest(new { detail = $"Invalid role '{roleRaw}'" });
 
             var clean = new List<ModulePermission>();
+            var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var row in rows ?? [])
             {
                 var key = (row.ModuleKey ?? "").Trim().ToLowerInvariant();
                 if (!Modules.ValidKeys.Contains(key))
                     return BadRequest(new { detail = $"Invalid module_key '{row.ModuleKey}'" });
+                if (!seenKeys.Add(key))
+                    return BadRequest(new { detail = $"Duplicated module_key '{key}'" });
                 var canEdit = row.CanEdit && role != Roles.Lector; // candado duro
                 var canView = row.CanView || canEdit;               // edit ⇒ view
                 clean.Add(new ModulePermission(key, canView, canEdit));
