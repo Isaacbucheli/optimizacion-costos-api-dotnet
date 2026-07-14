@@ -7,11 +7,12 @@ namespace OptimizacionCostos.Api.Features.AlertCatalog;
 
 /// <summary>
 /// CRUD del catalogo de alertas Azure Monitor. Equivale a app/routes/alerts.py.
-/// Ver -> cualquier autenticado; crear/editar/eliminar -> admin/consultor.
+/// Ver -> permiso "alerts" del perfil; crear/editar/eliminar -> permiso de edición (lector nunca).
 /// </summary>
 [ApiController]
 [Route("alert-catalog")]
 [Authorize]
+[RequireModule(Modules.Alerts)]
 public sealed class AlertCatalogController(IAlertCatalogStore store) : ControllerBase
 {
     // ---- Biblioteca KQL ----
@@ -21,7 +22,7 @@ public sealed class AlertCatalogController(IAlertCatalogStore store) : Controlle
         => await store.ListKqlAsync(ct: ct);
 
     [HttpPost("kql")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Alerts, ModuleAccess.Edit)]
     public async Task<IActionResult> CreateKql([FromBody] KqlCreate payload, CancellationToken ct)
     {
         var id = await store.CreateKqlAsync(payload, ct);
@@ -29,7 +30,7 @@ public sealed class AlertCatalogController(IAlertCatalogStore store) : Controlle
     }
 
     [HttpPut("kql/{kqlId:int}")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Alerts, ModuleAccess.Edit)]
     public async Task<IActionResult> UpdateKql(int kqlId, [FromBody] JsonElement body, CancellationToken ct)
     {
         var (fields, error) = BuildFields(body, AlertColumns.Kql, nameMaxLength: 200);
@@ -41,7 +42,7 @@ public sealed class AlertCatalogController(IAlertCatalogStore store) : Controlle
     }
 
     [HttpDelete("kql/{kqlId:int}")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Alerts, ModuleAccess.Edit)]
     public async Task<IActionResult> DeleteKql(int kqlId, CancellationToken ct)
     {
         if (!await store.SoftDeleteKqlAsync(kqlId, ct))
@@ -56,7 +57,7 @@ public sealed class AlertCatalogController(IAlertCatalogStore store) : Controlle
         => await store.ListAlertsAsync(ct: ct);
 
     [HttpPost]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Alerts, ModuleAccess.Edit)]
     public async Task<IActionResult> CreateAlert([FromBody] AlertCreate payload, CancellationToken ct)
     {
         var id = await store.CreateAlertAsync(payload, ct);
@@ -71,7 +72,7 @@ public sealed class AlertCatalogController(IAlertCatalogStore store) : Controlle
     }
 
     [HttpPut("{alertId:int}")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Alerts, ModuleAccess.Edit)]
     public async Task<IActionResult> UpdateAlert(int alertId, [FromBody] JsonElement body, CancellationToken ct)
     {
         var (fields, error) = BuildFields(body, AlertColumns.Alert, nameMaxLength: 300);
@@ -83,7 +84,7 @@ public sealed class AlertCatalogController(IAlertCatalogStore store) : Controlle
     }
 
     [HttpDelete("{alertId:int}")]
-    [Authorize(Roles = Roles.Editors)]
+    [RequireModule(Modules.Alerts, ModuleAccess.Edit)]
     public async Task<IActionResult> DeleteAlert(int alertId, CancellationToken ct)
     {
         if (!await store.SoftDeleteAlertAsync(alertId, ct))

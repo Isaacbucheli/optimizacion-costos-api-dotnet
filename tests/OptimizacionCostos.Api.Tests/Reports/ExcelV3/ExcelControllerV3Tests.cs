@@ -9,6 +9,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
+using OptimizacionCostos.Api.Features.Identity;
 using OptimizacionCostos.Api.Features.Reports;
 using OptimizacionCostos.Api.Features.Reports.ExcelV3;
 using OptimizacionCostos.Api.Features.Storage;
@@ -104,6 +105,8 @@ public sealed class ExcelV3ApiTestFactory : WebApplicationFactory<Program>
             services.AddSingleton<IAnalysisFileStore>(Files);
             services.RemoveAll<ICostExcelDataSourceV3>();
             services.AddSingleton<ICostExcelDataSourceV3>(new FakeCostExcelDataSourceV3ForController());
+            services.RemoveAll<IModulePermissionStore>();
+            services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
         });
     }
 }

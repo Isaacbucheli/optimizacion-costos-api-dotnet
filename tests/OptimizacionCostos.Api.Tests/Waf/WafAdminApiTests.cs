@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Features.Identity;
 using OptimizacionCostos.Api.Features.Waf;
 using Xunit;
 
@@ -85,6 +86,8 @@ public sealed class WafAdminApiTests : IClassFixture<WafAdminApiTests.Factory>
                 services.AddSingleton<IUserDirectory>(Directory);
                 services.RemoveAll<IAdvisorScoreService>();
                 services.AddSingleton<IAdvisorScoreService>(Advisor);
+                services.RemoveAll<IModulePermissionStore>();
+                services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
             });
         }
     }

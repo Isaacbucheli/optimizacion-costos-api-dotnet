@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.Clients;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
+using OptimizacionCostos.Api.Features.Identity;
 using OptimizacionCostos.Api.Features.Optimization;
 using OptimizacionCostos.Api.Tests.CostEngine.Api;
 
@@ -83,6 +84,8 @@ public sealed class OptimizationExcelApiTestFactory : WebApplicationFactory<Prog
             services.RemoveAll<IAnalysisAccess>(); services.AddSingleton<IAnalysisAccess>(Access);
             services.RemoveAll<IOptimizationService>(); services.AddSingleton<IOptimizationService>(Svc);
             services.RemoveAll<IClientStore>(); services.AddSingleton<IClientStore>(Clients);
+            services.RemoveAll<IModulePermissionStore>();
+            services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
         });
     }
 }

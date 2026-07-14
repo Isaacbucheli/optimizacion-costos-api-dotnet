@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.Consultants;
+using OptimizacionCostos.Api.Features.Identity;
 
 namespace OptimizacionCostos.Api.Tests.Consultants;
 
@@ -535,6 +536,8 @@ public sealed class ConsultantsApiTests : IClassFixture<ConsultantsApiTests.Fact
                 services.AddSingleton<IUserDirectory>(Directory);
                 services.RemoveAll<IConsultantsStore>();
                 services.AddSingleton<IConsultantsStore>(Store);
+                services.RemoveAll<IModulePermissionStore>();
+                services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
             });
         }
     }

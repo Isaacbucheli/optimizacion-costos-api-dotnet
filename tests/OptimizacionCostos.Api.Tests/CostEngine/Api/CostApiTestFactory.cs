@@ -9,6 +9,7 @@ using OptimizacionCostos.Api.Features.CostEngine.Engine;
 using OptimizacionCostos.Api.Features.CostEngine.Pricing;
 using OptimizacionCostos.Api.Features.CostEngine.Scenarios;
 using OptimizacionCostos.Api.Features.FinOpsData;
+using OptimizacionCostos.Api.Features.Identity;
 using OptimizacionCostos.Api.Tests.CostEngine;
 
 namespace OptimizacionCostos.Api.Tests.CostEngine.Api;
@@ -66,6 +67,9 @@ public sealed class CostApiTestFactory : WebApplicationFactory<Program>
             // (AddHttpClient -> HTTP/SQL real) por un fake determinista que solo cuenta llamadas.
             services.RemoveAll<IFinOpsDataRefreshService>();
             services.AddSingleton<IFinOpsDataRefreshService>(FinOpsRefresh);
+
+            services.RemoveAll<IModulePermissionStore>();
+            services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
         });
     }
 }

@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.AzureIntegration.UserSessions;
+using OptimizacionCostos.Api.Features.Identity;
 
 namespace OptimizacionCostos.Api.Tests.AzureIntegration.UserSessions;
 
@@ -36,6 +37,8 @@ public class UserSessionsApiTestFactory : WebApplicationFactory<Program>
             services.AddSingleton<IUserDirectory>(Directory);
             services.RemoveAll<IDeviceCodeFlow>();
             services.AddSingleton<IDeviceCodeFlow>(Flow);
+            services.RemoveAll<IModulePermissionStore>();
+            services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
         });
     }
 }

@@ -240,6 +240,8 @@ public sealed class TemporaryPasswordApiTests : IClassFixture<TemporaryPasswordA
                 services.AddSingleton<IUserDirectory>(Directory);
                 services.RemoveAll<IAppUserStore>();
                 services.AddSingleton<IAppUserStore>(Users);
+                services.RemoveAll<IModulePermissionStore>();
+                services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
             });
         }
     }

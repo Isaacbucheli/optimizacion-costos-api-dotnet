@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.Cdc;
+using OptimizacionCostos.Api.Features.Identity;
 using OptimizacionCostos.Api.Tests.CostEngine.Api; // FakeAnalysisAccess
 
 namespace OptimizacionCostos.Api.Tests.Cdc.Api;
@@ -43,6 +44,8 @@ public sealed class CdcApiTestFactory : WebApplicationFactory<Program>
             services.AddSingleton<IPowerHistoryJobStore>(Store);
             services.RemoveAll<IPowerHistoryJobQueue>();
             services.AddSingleton<IPowerHistoryJobQueue>(Queue);
+            services.RemoveAll<IModulePermissionStore>();
+            services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
         });
     }
 }

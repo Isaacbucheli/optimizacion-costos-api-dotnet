@@ -6,6 +6,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.AlertCatalog;
+using OptimizacionCostos.Api.Features.Identity;
 
 namespace OptimizacionCostos.Api.Tests;
 
@@ -36,6 +37,8 @@ public sealed class TestAppFactory : WebApplicationFactory<Program>
             services.AddSingleton<IUserDirectory>(Directory);
             services.RemoveAll<IAlertCatalogStore>();
             services.AddSingleton<IAlertCatalogStore>(Store);
+            services.RemoveAll<IModulePermissionStore>();
+            services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
         });
     }
 }

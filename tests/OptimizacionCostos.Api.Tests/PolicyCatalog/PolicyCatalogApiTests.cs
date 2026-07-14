@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Features.Identity;
 using OptimizacionCostos.Api.Features.PolicyCatalog;
 
 namespace OptimizacionCostos.Api.Tests.PolicyCatalog;
@@ -209,6 +210,8 @@ public sealed class PolicyCatalogApiTests : IClassFixture<PolicyCatalogApiTests.
                 services.AddSingleton<IUserDirectory>(Directory);
                 services.RemoveAll<IPolicyCatalogStore>();
                 services.AddSingleton<IPolicyCatalogStore>(Store);
+                services.RemoveAll<IModulePermissionStore>();
+                services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
             });
         }
     }

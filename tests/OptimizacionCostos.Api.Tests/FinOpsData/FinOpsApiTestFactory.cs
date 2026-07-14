@@ -7,6 +7,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.FinOpsData;
+using OptimizacionCostos.Api.Features.Identity;
 
 namespace OptimizacionCostos.Api.Tests.FinOpsData;
 
@@ -147,6 +148,9 @@ public sealed class FinOpsApiTestFactory : WebApplicationFactory<Program>
             services.AddSingleton<IRiDiagnosticsQuery>(Diagnostics);
             services.RemoveAll<ICoverageQuery>();
             services.AddSingleton<ICoverageQuery>(Coverage);
+
+            services.RemoveAll<IModulePermissionStore>();
+            services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
         });
     }
 }
