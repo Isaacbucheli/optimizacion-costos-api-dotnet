@@ -605,6 +605,17 @@ public sealed class WafController(
         }
     }
 
+    /// <summary>POST read — marca la recomendación como vista por el usuario actual (idempotente).</summary>
+    [HttpPost("clients/{clientId:int}/recommendations/{canonicalId:int}/read")]
+    [RequireModule(Modules.Waf)]
+    public async Task<IActionResult> MarkRead(int clientId, int canonicalId, CancellationToken ct = default)
+    {
+        var guard = await GuardAsync(clientId, ct);
+        if (guard is not null) return guard;
+        await recommendations.MarkReadAsync(clientId, canonicalId, Email ?? "", ct);
+        return NoContent();
+    }
+
     /// <summary>PUT tracking. Port de update_waf_tracking.</summary>
     [HttpPut("clients/{clientId:int}/recommendations/{canonicalId:int}/tracking")]
     [RequireModule(Modules.Waf, ModuleAccess.Edit)]

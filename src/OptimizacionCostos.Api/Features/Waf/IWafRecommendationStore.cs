@@ -44,6 +44,9 @@ public interface IWafRecommendationStore
     Task DismissAsync(
         int clientId, int canonicalId, string? reason, string? actor, CancellationToken ct = default);
 
+    /// <summary>Marca (idempotente) la recomendación como leída por el usuario dado.</summary>
+    Task MarkReadAsync(int clientId, int canonicalId, string userKey, CancellationToken ct = default);
+
     /// <summary>Resumen de la matriz del cliente (totales + última ingestión). Port de waf_client_summary.</summary>
     Task<WafClientSummary> GetSummaryAsync(int clientId, CancellationToken ct = default);
 
