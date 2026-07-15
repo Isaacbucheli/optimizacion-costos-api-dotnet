@@ -610,7 +610,7 @@ public sealed class WafController(
     [RequireModule(Modules.Waf)]
     public async Task<IActionResult> MarkRead(int clientId, int canonicalId, CancellationToken ct = default)
     {
-        var guard = await GuardAsync(clientId, ct);
+        var guard = await GuardRecommendationAsync(clientId, canonicalId, ct);
         if (guard is not null) return guard;
         await recommendations.MarkReadAsync(clientId, canonicalId, Email ?? "", ct);
         return NoContent();
