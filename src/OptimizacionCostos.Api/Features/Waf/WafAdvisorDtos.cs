@@ -70,4 +70,5 @@ public sealed record WafIngestionMetrics(
     int RowsDuplicateSkipped,
     int AdvisorItems,
     string SubscriptionId,
-    string SubscriptionName);
+    string SubscriptionName,
+    bool PaginationTruncated = false);

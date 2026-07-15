@@ -66,6 +66,7 @@ public sealed class WafSyncOrchestrator(
 
         var rows = new List<AdvisorRow>();
         var warnings = new List<object>();
+        var subscriptionResults = new List<object>();
         var successfulSubscriptions = new List<string>();
         var subsTotal = 0;
         var subsFailed = 0;
@@ -80,11 +81,19 @@ public sealed class WafSyncOrchestrator(
                 subsTotal++;
                 try
                 {
-                    var (subRows, _) = await advisorScore.GenerateAndListRecommendationsAsync(
+                    var (subRows, subMetrics) = await advisorScore.GenerateAndListRecommendationsAsync(
                         group.CredentialId, subscriptionId, subscriptionName,
                         timeoutSecondsPerSubscription, ct);
                     rows.AddRange(subRows);
                     successfulSubscriptions.Add(subscriptionId);
+                    subscriptionResults.Add(new
+                    {
+                        credential_name = group.CredentialName,
+                        subscription_id = subscriptionId,
+                        subscription_name = subscriptionName,
+                        status = subMetrics.PaginationTruncated ? "partial" : "ok",
+                        error = (string?)null,
+                    });
                 }
                 catch (Exception ex)
                 {
@@ -97,6 +106,14 @@ public sealed class WafSyncOrchestrator(
                         credential_name = group.CredentialName,
                         subscription_id = subscriptionId,
                         subscription_name = subscriptionName,
+                        error = $"{ex.GetType().Name}: {Truncate(ex.Message, 500)}",
+                    });
+                    subscriptionResults.Add(new
+                    {
+                        credential_name = group.CredentialName,
+                        subscription_id = subscriptionId,
+                        subscription_name = subscriptionName,
+                        status = "error",
                         error = $"{ex.GetType().Name}: {Truncate(ex.Message, 500)}",
                     });
                 }
@@ -123,6 +140,7 @@ public sealed class WafSyncOrchestrator(
             replaceSubscriptionIds: successfulSubscriptions,
             dedupResolver: resolver,
             warnings: warnings,
+            subscriptionResults: subscriptionResults,
             ct: ct);
 
         var mergedDuplicates = state.Merged;

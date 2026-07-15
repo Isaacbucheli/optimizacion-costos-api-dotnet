@@ -357,7 +357,7 @@ public sealed class WafController(
         cmd.CommandText = """
             SELECT run_id, source_file_name, status, rows_total, rows_processed,
                    new_recommendations, new_findings, resolved_findings,
-                   started_at, completed_at, created_by, error_message
+                   started_at, completed_at, created_by, error_message, subscription_results
             FROM dbo.waf_ingestion_run
             WHERE client_id = @cid
             ORDER BY started_at DESC
@@ -380,6 +380,9 @@ public sealed class WafController(
                 completed_at = r.IsDBNull(9) ? (DateTime?)null : r.GetDateTime(9),
                 created_by = r.IsDBNull(10) ? null : r.GetString(10),
                 error_message = r.IsDBNull(11) ? null : r.GetString(11),
+                subscription_results = r.IsDBNull(12)
+                    ? (object?)null
+                    : System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(r.GetString(12)),
             });
         }
         return Ok(runs);

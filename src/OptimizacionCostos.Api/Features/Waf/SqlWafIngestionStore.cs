@@ -171,7 +171,8 @@ public sealed partial class SqlWafIngestionStore(
         int clientId, string sourceName, IReadOnlyList<AdvisorRow> rows, string? createdBy,
         WafIngestionMetrics? metrics, IReadOnlyList<string>? replaceSubscriptionIds,
         Func<SqlConnection, SqlTransaction, AdvisorRow, Task<int?>>? dedupResolver,
-        IReadOnlyList<object>? warnings = null, CancellationToken ct = default)
+        IReadOnlyList<object>? warnings = null, IReadOnlyList<object>? subscriptionResults = null,
+        CancellationToken ct = default)
     {
         metrics ??= new WafIngestionMetrics(rows.Count, rows.Count, 0, 0, 0, "", "");
         warnings ??= [];
@@ -231,12 +232,13 @@ public sealed partial class SqlWafIngestionStore(
         await Exec(conn, tx, ct, """
             UPDATE dbo.waf_ingestion_run
             SET status = @status, completed_at = @now, new_recommendations = @nr, new_findings = @nf,
-                resolved_findings = @rf, unmapped_recommendations = @warn, error_message = @err
+                resolved_findings = @rf, unmapped_recommendations = @warn, subscription_results = @subres, error_message = @err
             WHERE run_id = @id
             """,
             ("@status", warnings.Count > 0 ? "completed_with_errors" : "completed"), ("@now", now),
             ("@nr", newRecommendations), ("@nf", newFindings), ("@rf", resolvedFindings),
             ("@warn", warnings.Count > 0 ? Trunc(JsonSerializer.Serialize(warnings), 4000) : (object)DBNull.Value),
+            ("@subres", subscriptionResults is { Count: > 0 } ? Trunc(JsonSerializer.Serialize(subscriptionResults), 8000) : (object)DBNull.Value),
             ("@err", warnings.Count > 0 ? $"{warnings.Count} suscripcion(es) con error parcial" : (object)DBNull.Value),
             ("@id", runId));
 

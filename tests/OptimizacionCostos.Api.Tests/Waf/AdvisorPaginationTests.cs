@@ -33,9 +33,10 @@ public sealed class AdvisorPaginationTests
         var http = new HttpClient(new RouteHandler(req =>
             req.RequestUri!.Query.Contains("skiptoken") ? NotFound() : Ok(TwoItemsWithNext)));
 
-        var items = await AdvisorApiClient.ListAllPagesAsync(http, "tok", "sub-x", 200, CancellationToken.None);
+        var (items, truncated) = await AdvisorApiClient.ListAllPagesAsync(http, "tok", "sub-x", 200, CancellationToken.None);
 
         Assert.Equal(2, items.Count); // solo la página 1, pero sin excepción
+        Assert.True(truncated); // el nextLink roto marca resultado parcial
     }
 
     [Fact]
@@ -47,9 +48,10 @@ public sealed class AdvisorPaginationTests
                 ? NotFound()
                 : Ok("{\"value\":[{\"name\":\"a\",\"properties\":{\"category\":\"Cost\"}}]}")));
 
-        var items = await AdvisorApiClient.ListAllPagesAsync(http, "tok", "sub-x", 200, CancellationToken.None);
+        var (items, truncated) = await AdvisorApiClient.ListAllPagesAsync(http, "tok", "sub-x", 200, CancellationToken.None);
 
         Assert.Single(items);
+        Assert.False(truncated); // fallback a versión estable no es truncamiento
     }
 
     [Fact]
@@ -70,8 +72,9 @@ public sealed class AdvisorPaginationTests
         var http = new HttpClient(new RouteHandler(req =>
             req.RequestUri!.Query.Contains("skiptoken") ? Ok(page2) : Ok(page1)));
 
-        var items = await AdvisorApiClient.ListAllPagesAsync(http, "tok", "sub-x", 200, CancellationToken.None);
+        var (items, truncated) = await AdvisorApiClient.ListAllPagesAsync(http, "tok", "sub-x", 200, CancellationToken.None);
 
         Assert.Equal(3, items.Count); // 1 + 2
+        Assert.False(truncated); // todas las páginas dieron 200
     }
 }

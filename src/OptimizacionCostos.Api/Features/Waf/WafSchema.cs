@@ -191,6 +191,7 @@ public static class WafSchema
                 new_findings INT NULL,
                 resolved_findings INT NULL,
                 unmapped_recommendations NVARCHAR(MAX) NULL,
+                subscription_results NVARCHAR(MAX) NULL,
                 status NVARCHAR(30) NOT NULL CONSTRAINT DF_waf_run_status DEFAULT 'running',
                 error_message NVARCHAR(MAX) NULL,
                 started_at DATETIME2 NOT NULL CONSTRAINT DF_waf_run_started DEFAULT SYSUTCDATETIME(),
@@ -200,6 +201,10 @@ public static class WafSchema
             );
             CREATE INDEX IX_waf_run_client_started ON dbo.waf_ingestion_run(client_id, started_at DESC);
         END
+        """,
+        // soft-migration ingestion_run (tablas preexistentes): resultado por suscripción de la corrida
+        """
+        IF COL_LENGTH('dbo.waf_ingestion_run', 'subscription_results') IS NULL ALTER TABLE dbo.waf_ingestion_run ADD subscription_results NVARCHAR(MAX) NULL;
         """,
         // 8. advisor_score_snapshot
         """
