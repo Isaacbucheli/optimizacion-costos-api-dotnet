@@ -22,7 +22,7 @@ public interface IWafIngestionStore
         WafIngestionMetrics? metrics, IReadOnlyList<string>? replaceSubscriptionIds,
         Func<SqlConnection, SqlTransaction, AdvisorRow, Task<int?>>? dedupResolver,
         IReadOnlyList<object>? warnings = null, IReadOnlyList<object>? subscriptionResults = null,
-        CancellationToken ct = default);
+        string source = "advisor", CancellationToken ct = default);
 
     /// <summary>Cierra como 'failed' las corridas colgadas en 'running' (port de mark_stale_ingestion_runs_failed).</summary>
     Task<int> MarkStaleRunsFailedAsync(int maxAgeHours = 24, CancellationToken ct = default);

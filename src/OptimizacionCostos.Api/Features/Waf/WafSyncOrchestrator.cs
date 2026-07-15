@@ -41,6 +41,7 @@ public sealed class WafSyncOrchestrator(
             replaceSubscriptionIds: null, // carga manual: no resuelve hallazgos previos
             dedupResolver: resolver,
             warnings: null,
+            source: "csv",
             ct: ct);
 
         // merged_duplicates sale del estado del resolver (paridad con
@@ -141,6 +142,7 @@ public sealed class WafSyncOrchestrator(
             dedupResolver: resolver,
             warnings: warnings,
             subscriptionResults: subscriptionResults,
+            source: "advisor",
             ct: ct);
 
         var mergedDuplicates = state.Merged;
