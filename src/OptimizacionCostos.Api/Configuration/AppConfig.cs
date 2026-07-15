@@ -20,6 +20,17 @@ public sealed class AppConfig
     // Lista blanca de emails con acceso al módulo Optimización (B6). Vacía = abierto a todos.
     public string[] OptimizationAllowedEmails { get; init; } = [];
 
+    // Superadmins protegidos (por email; se lee de SUPERADMIN_EMAILS, misma mecánica que las
+    // otras listas). Un superadmin no puede ser eliminado, desactivado, degradado ni editado por
+    // OTRO usuario; se auto-repara a rol=admin + activo. Vacía = sin superadmins (default seguro).
+    // El correo real va en el .env / docs privados, nunca en código (repos públicos).
+    public string[] SuperAdminEmails { get; init; } = [];
+
+    /// <summary>True si el email está en la lista de superadmins protegidos (case-insensitive).</summary>
+    public bool IsSuperAdmin(string? email) =>
+        !string.IsNullOrWhiteSpace(email) &&
+        SuperAdminEmails.Any(e => string.Equals(e, email.Trim(), StringComparison.OrdinalIgnoreCase));
+
     // Sesiones Azure con cuenta de usuario (Lighthouse, clientes temporales). Ver spec 2026-07-06.
     // Flag default false; client id default = Azure CLI first-party (sin app registration propio).
     public bool UserSessionAuthEnabled { get; init; }
@@ -81,6 +92,9 @@ public sealed class AppConfig
             AuthBootstrapEnabled = Get("APP_AUTH_BOOTSTRAP_ENABLED").Trim().ToLowerInvariant() is "true" or "1",
             OptimizationAllowedEmails = Get("OPTIMIZATION_ALLOWED_EMAILS")
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            SuperAdminEmails = Get("SUPERADMIN_EMAILS")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(e => e.ToLowerInvariant()).ToArray(),
             AdvisorScoreSchedulerEnabled = Get("ADVISOR_SCORE_SCHEDULER_ENABLED").Trim().ToLowerInvariant() is "true" or "1",
             AdvisorScoreSchedulerTz = Get("ADVISOR_SCORE_SCHEDULER_TZ", "America/Bogota"),
             AdvisorScoreSchedulerTime = Get("ADVISOR_SCORE_SCHEDULER_TIME", "06:00"),

@@ -208,6 +208,20 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
+// Auto-reparación de superadmins al arrancar: fuerza rol=admin + activo para los correos
+// protegidos (SUPERADMIN_EMAILS). Best-effort: si la BD no está lista, el login del superadmin
+// reconcilia igual. No hace nada si la lista está vacía (default seguro).
+if (config.SuperAdminEmails.Length > 0)
+{
+    try
+    {
+        using var scope = app.Services.CreateScope();
+        await scope.ServiceProvider.GetRequiredService<IAppUserStore>()
+            .EnsureSuperAdminsAsync(config.SuperAdminEmails);
+    }
+    catch { /* la BD puede no responder en el arranque; se reintenta en el próximo login del superadmin */ }
+}
+
 app.Run();
 
 // Necesario para WebApplicationFactory<Program> en los tests.

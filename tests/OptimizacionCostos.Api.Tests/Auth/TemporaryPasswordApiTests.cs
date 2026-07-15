@@ -267,6 +267,9 @@ public sealed class FakeAppUserStore : IAppUserStore
     private readonly Dictionary<int, List<int>> _assignments = [];
     private int _seq;
 
+    /// <summary>Vacía el store (para fixtures compartidos entre tests).</summary>
+    public void Clear() { _users.Clear(); _assignments.Clear(); _seq = 0; }
+
     public FakeAppUser AddUser(string email, string password, string role, bool mustChange)
     {
         var u = new FakeAppUser
@@ -386,4 +389,15 @@ public sealed class FakeAppUserStore : IAppUserStore
 
     public Task<bool> UserExistsAsync(int userId, CancellationToken ct = default) =>
         Task.FromResult(_users.Any(x => x.UserId == userId));
+
+    public Task EnsureSuperAdminsAsync(IReadOnlyList<string> emails, CancellationToken ct = default)
+    {
+        var set = new HashSet<string>(emails.Select(e => e.Trim().ToLowerInvariant()), StringComparer.OrdinalIgnoreCase);
+        foreach (var u in _users.Where(u => set.Contains(u.Email.Trim().ToLowerInvariant())))
+        {
+            u.Role = "admin";
+            u.IsActive = true;
+        }
+        return Task.CompletedTask;
+    }
 }

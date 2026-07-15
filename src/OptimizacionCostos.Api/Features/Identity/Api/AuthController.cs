@@ -75,6 +75,11 @@ public sealed class AuthController(
         if (string.IsNullOrWhiteSpace(payload.Username) || string.IsNullOrEmpty(payload.Password))
             return Unauthorized(new { detail = "Invalid credentials" });
 
+        // Auto-reparación del superadmin ANTES de resolver el login: si su fila fue degradada o
+        // desactivada (p. ej. por BD directa), se corrige a admin+activo para que pueda entrar.
+        if (config.IsSuperAdmin(payload.Username))
+            await users.EnsureSuperAdminsAsync(config.SuperAdminEmails, ct);
+
         var row = await users.GetForLoginAsync(payload.Username!, ct);
         if (row is null || !row.IsActive || !PasswordHasher.Verify(payload.Password!, row.PasswordHash))
             return Unauthorized(new { detail = "Invalid credentials" });
@@ -140,6 +145,7 @@ public sealed class AuthController(
                     ["role"] = row.Role,
                     ["is_active"] = row.IsActive,
                     ["must_change_password"] = row.MustChangePassword,
+                    ["is_super_admin"] = config.IsSuperAdmin(row.Email),
                     ["modules"] = await BuildModulesAsync(row.Role, ct),
                 });
         }
@@ -152,6 +158,7 @@ public sealed class AuthController(
             ["full_name"] = name,
             ["email"] = email,
             ["role"] = User.FindFirst(ClaimTypes.Role)?.Value,
+            ["is_super_admin"] = config.IsSuperAdmin(email),
             ["modules"] = await BuildModulesAsync(User.FindFirst(ClaimTypes.Role)?.Value ?? "", ct),
         });
     }
@@ -159,7 +166,9 @@ public sealed class AuthController(
     // -------------------- GET /auth/users --------------------
     [HttpGet("users")]
     [Authorize(Roles = Roles.Admin)]
-    public async Task<IActionResult> ListUsers(CancellationToken ct) => Ok(await users.ListUsersAsync(ct));
+    public async Task<IActionResult> ListUsers(CancellationToken ct) =>
+        Ok((await users.ListUsersAsync(ct))
+            .Select(u => u with { IsSuperAdmin = config.IsSuperAdmin(u.Email) }).ToList());
 
     // -------------------- POST /auth/users --------------------
     [HttpPost("users")]
@@ -208,6 +217,25 @@ public sealed class AuthController(
         if (payload.Password is not null && payload.Password.Length < 8)
             return BadRequest(new { detail = "password must be at least 8 chars" });
 
+        var target = await users.GetByIdAsync(userId, ct);
+        if (target is null) return NotFound(new { detail = "User not found" });
+
+        // Blindaje del superadministrador: OTRO usuario no puede modificarlo. Él mismo puede
+        // cambiar su nombre/contraseña, pero no dejar de ser admin, ni desactivarse, ni cambiar su correo.
+        if (config.IsSuperAdmin(target.Email))
+        {
+            var actor = (User.FindFirst("sub")?.Value ?? "").Trim().ToLowerInvariant();
+            var isSelf = actor.Length > 0 && actor == target.Email.Trim().ToLowerInvariant();
+            if (!isSelf)
+                return StatusCode(StatusCodes.Status403Forbidden, new { detail = "No se puede modificar un superadministrador." });
+            if (role is not null && role != Roles.Admin)
+                return BadRequest(new { detail = "Un superadministrador no puede dejar de ser administrador." });
+            if (payload.IsActive == false)
+                return BadRequest(new { detail = "Un superadministrador no puede desactivarse." });
+            if (email is not null && email != target.Email.Trim().ToLowerInvariant())
+                return BadRequest(new { detail = "Un superadministrador no puede cambiar su correo." });
+        }
+
         if (email is not null && await users.EmailExistsAsync(email, userId, ct))
             return Conflict(new { detail = "User already exists" });
 
@@ -216,8 +244,6 @@ public sealed class AuthController(
         bool? mustChange = null;
         if (payload.Password is not null)
         {
-            var target = await users.GetByIdAsync(userId, ct);
-            if (target is null) return NotFound(new { detail = "User not found" });
             var actorEmail = (User.FindFirst("sub")?.Value ?? "").Trim().ToLowerInvariant();
             mustChange = actorEmail.Length == 0 || actorEmail != target.Email.Trim().ToLowerInvariant();
         }
@@ -236,6 +262,10 @@ public sealed class AuthController(
         // Resolver el email ANTES de borrar para el chequeo de "no eliminarse a sí mismo".
         var target = await users.GetByIdAsync(userId, ct);
         if (target is null) return NotFound(new { detail = "User not found" });
+
+        // Un superadministrador no se puede eliminar (por nadie, ni por sí mismo).
+        if (config.IsSuperAdmin(target.Email))
+            return StatusCode(StatusCodes.Status403Forbidden, new { detail = "No se puede eliminar un superadministrador." });
 
         var actorEmail = (User.FindFirst("sub")?.Value ?? "").Trim().ToLowerInvariant();
         if (actorEmail.Length > 0 && actorEmail == target.Email.Trim().ToLowerInvariant())

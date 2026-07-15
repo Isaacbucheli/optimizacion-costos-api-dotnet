@@ -4,7 +4,8 @@ using OptimizacionCostos.Api.Data;
 namespace OptimizacionCostos.Api.Features.Identity;
 
 /// <summary>Proyección pública de un usuario (port de public_user de app/auth.py).</summary>
-public sealed record PublicUser(int UserId, string Email, string FullName, string Role, bool IsActive, string CreatedAt, bool MustChangePassword = false);
+/// <remarks>IsSuperAdmin se deriva de la config (SUPERADMIN_EMAILS), no se persiste; lo fija el controller.</remarks>
+public sealed record PublicUser(int UserId, string Email, string FullName, string Role, bool IsActive, string CreatedAt, bool MustChangePassword = false, bool IsSuperAdmin = false);
 
 /// <summary>Fila de login: incluye el hash y el estado (no se expone al cliente).</summary>
 public sealed record LoginRow(int UserId, string Email, string FullName, string Role, string PasswordHash, bool IsActive, bool MustChangePassword = false);
@@ -32,6 +33,8 @@ public interface IAppUserStore
     Task<IReadOnlyList<int>> GetAssignmentsAsync(int userId, CancellationToken ct = default);
     Task<IReadOnlyList<int>> ReplaceAssignmentsAsync(int userId, IReadOnlyList<int> clientIds, CancellationToken ct = default);
     Task<bool> UserExistsAsync(int userId, CancellationToken ct = default);
+    /// <summary>Fuerza rol=admin + is_active=1 para los emails superadmin que existan (auto-reparación).</summary>
+    Task EnsureSuperAdminsAsync(IReadOnlyList<string> emails, CancellationToken ct = default);
 }
 
 public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserStore
@@ -305,6 +308,28 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
         cmd.CommandText = "SELECT 1 FROM dbo.app_users WHERE user_id = @id";
         cmd.Parameters.Add(new SqlParameter("@id", userId));
         return await cmd.ExecuteScalarAsync(ct) is not null;
+    }
+
+    public async Task EnsureSuperAdminsAsync(IReadOnlyList<string> emails, CancellationToken ct = default)
+    {
+        var clean = emails.Where(e => !string.IsNullOrWhiteSpace(e))
+            .Select(e => e.Trim().ToLowerInvariant()).Distinct().ToList();
+        if (clean.Count == 0) return;
+
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureAuthSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        // IN parametrizado (@sa0, @sa1, ...) → SQL seguro. Solo corrige lo que difiere.
+        var placeholders = string.Join(", ", clean.Select((_, i) => $"@sa{i}"));
+        cmd.CommandText = $"""
+            UPDATE dbo.app_users
+            SET role = 'admin', is_active = 1
+            WHERE LOWER(email) IN ({placeholders})
+              AND (role <> 'admin' OR is_active = 0)
+            """;
+        for (var i = 0; i < clean.Count; i++)
+            cmd.Parameters.Add(new SqlParameter($"@sa{i}", clean[i]));
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     public async Task<IReadOnlyList<int>> GetAssignmentsAsync(int userId, CancellationToken ct = default)
