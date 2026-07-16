@@ -128,6 +128,20 @@ public sealed class WafController(
         return Ok(snapshot is null ? MissingSnapshotResponse(clientId) : SnapshotToResponse(snapshot, detail));
     }
 
+    /// <summary>GET advisor-score/history — serie histórica del Advisor Score (global + pilares).</summary>
+    [HttpGet("clients/{clientId:int}/advisor-score/history")]
+    [RequireModule(Modules.Waf)]
+    public async Task<IActionResult> AdvisorScoreHistory(
+        int clientId, [FromQuery] string granularity = "month", CancellationToken ct = default)
+    {
+        var guard = await GuardAsync(clientId, ct);
+        if (guard is not null) return guard;
+
+        var gran = ScoreHistory.GranularityChar(granularity);
+        var points = await advisorScoreStore.LoadHistoryAsync(clientId, gran, ct);
+        return Ok(ScoreHistory.BuildResponse(ScoreHistory.GranularityName(gran), points));
+    }
+
     /// <summary>GET cost-reference — costo referencial del pilar 5 reutilizando el módulo de costos. Port de waf_cost_reference.</summary>
     [HttpGet("clients/{clientId:int}/cost-reference")]
     [RequireModule(Modules.WafCost)]
