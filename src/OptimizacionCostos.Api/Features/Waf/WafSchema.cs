@@ -230,6 +230,23 @@ public static class WafSchema
             CREATE INDEX IX_waf_score_client_captured ON dbo.waf_advisor_score_snapshot(client_id, captured_at DESC);
         END
         """,
+        // 8b. advisor_score_history (histórico agregado por cliente, D/W/M)
+        """
+        IF OBJECT_ID('dbo.waf_advisor_score_history', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.waf_advisor_score_history (
+                client_id INT NOT NULL,
+                granularity CHAR(1) NOT NULL,           -- 'D' | 'W' | 'M'
+                point_date DATE NOT NULL,
+                score_global DECIMAL(5,2) NULL,
+                score_p1 DECIMAL(5,2) NULL, score_p2 DECIMAL(5,2) NULL, score_p3 DECIMAL(5,2) NULL,
+                score_p4 DECIMAL(5,2) NULL, score_p5 DECIMAL(5,2) NULL,
+                refreshed_at DATETIME2 NOT NULL CONSTRAINT DF_waf_hist_refreshed DEFAULT SYSUTCDATETIME(),
+                CONSTRAINT PK_waf_advisor_score_history PRIMARY KEY (client_id, granularity, point_date),
+                CONSTRAINT FK_waf_hist_client FOREIGN KEY (client_id) REFERENCES dbo.clients(client_id)
+            );
+        END
+        """,
         // 9. canonical_alias
         """
         IF OBJECT_ID('dbo.waf_canonical_alias', 'U') IS NULL

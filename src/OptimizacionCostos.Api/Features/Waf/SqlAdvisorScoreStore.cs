@@ -484,4 +484,75 @@ public sealed class SqlAdvisorScoreStore(ISqlConnectionFactory factory) : IAdvis
         }
         return list;
     }
+
+    // ---------------------------------------------------------------------
+    // Historial agregado (waf_advisor_score_history): persist + load por granularidad.
+    // ---------------------------------------------------------------------
+    public async Task PersistHistoryAsync(
+        int clientId, IReadOnlyList<ClientScoreHistory> histories, CancellationToken ct = default)
+    {
+        var rows = histories
+            .SelectMany(h => h.Points.Select(p => (h.Granularity, p)))
+            .ToList();
+        if (rows.Count == 0) return;
+
+        await using var conn = await factory.OpenAsync(ct);
+        await WafSchema.EnsureWafSchemaAsync(conn, ct);
+
+        foreach (var (gran, point) in rows)
+        {
+            decimal? S(int k) => point.Series.TryGetValue(k, out var v) ? v : null;
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                MERGE dbo.waf_advisor_score_history AS target
+                USING (SELECT @client_id AS client_id, @gran AS granularity, @date AS point_date) AS src
+                ON target.client_id = src.client_id AND target.granularity = src.granularity
+                   AND target.point_date = src.point_date
+                WHEN MATCHED THEN
+                    UPDATE SET score_global=@g, score_p1=@p1, score_p2=@p2, score_p3=@p3,
+                               score_p4=@p4, score_p5=@p5, refreshed_at=SYSUTCDATETIME()
+                WHEN NOT MATCHED THEN
+                    INSERT (client_id, granularity, point_date, score_global, score_p1, score_p2, score_p3, score_p4, score_p5)
+                    VALUES (@client_id, @gran, @date, @g, @p1, @p2, @p3, @p4, @p5);
+                """;
+            cmd.Parameters.Add(new SqlParameter("@client_id", clientId));
+            cmd.Parameters.Add(new SqlParameter("@gran", gran.ToString()));
+            cmd.Parameters.Add(new SqlParameter("@date", point.Date.ToDateTime(TimeOnly.MinValue)) { SqlDbType = System.Data.SqlDbType.Date });
+            cmd.Parameters.Add(new SqlParameter("@g", (object?)S(0) ?? DBNull.Value));
+            cmd.Parameters.Add(new SqlParameter("@p1", (object?)S(1) ?? DBNull.Value));
+            cmd.Parameters.Add(new SqlParameter("@p2", (object?)S(2) ?? DBNull.Value));
+            cmd.Parameters.Add(new SqlParameter("@p3", (object?)S(3) ?? DBNull.Value));
+            cmd.Parameters.Add(new SqlParameter("@p4", (object?)S(4) ?? DBNull.Value));
+            cmd.Parameters.Add(new SqlParameter("@p5", (object?)S(5) ?? DBNull.Value));
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+    }
+
+    public async Task<IReadOnlyList<ClientScoreHistoryPoint>> LoadHistoryAsync(
+        int clientId, char granularity, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await WafSchema.EnsureWafSchemaAsync(conn, ct);
+
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT point_date, score_global, score_p1, score_p2, score_p3, score_p4, score_p5
+            FROM dbo.waf_advisor_score_history
+            WHERE client_id = @cid AND granularity = @gran
+            ORDER BY point_date
+            """;
+        cmd.Parameters.Add(new SqlParameter("@cid", clientId));
+        cmd.Parameters.Add(new SqlParameter("@gran", granularity.ToString()));
+
+        var points = new List<ClientScoreHistoryPoint>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+        {
+            var series = new Dictionary<int, decimal>();
+            void Add(int key, int ordinal) { if (!r.IsDBNull(ordinal)) series[key] = r.GetDecimal(ordinal); }
+            Add(0, 1); Add(1, 2); Add(2, 3); Add(3, 4); Add(4, 5); Add(5, 6);
+            points.Add(new ClientScoreHistoryPoint(DateOnly.FromDateTime(r.GetDateTime(0)), series));
+        }
+        return points;
+    }
 }

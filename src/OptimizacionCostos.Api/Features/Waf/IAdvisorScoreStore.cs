@@ -49,4 +49,17 @@ public interface IAdvisorScoreStore
     /// está disponible. El builder del informe lo embebe en 'advisor_score_history'.
     /// </summary>
     Task<JsonObject> BuildScoreHistoryAsync(int clientId, int year, int month, CancellationToken ct = default);
+
+    /// <summary>
+    /// Persiste (MERGE por client_id+granularity+point_date) el histórico agregado del cliente.
+    /// Idempotente: re-refrescar actualiza los puntos existentes.
+    /// </summary>
+    Task PersistHistoryAsync(int clientId, IReadOnlyList<ClientScoreHistory> histories, CancellationToken ct = default);
+
+    /// <summary>
+    /// Carga los puntos del histórico del cliente para una granularidad ('D'/'W'/'M'), ordenados por
+    /// fecha ascendente. Cada punto trae series 0=global y 1..5=pilar (solo claves no NULL).
+    /// </summary>
+    Task<IReadOnlyList<ClientScoreHistoryPoint>> LoadHistoryAsync(
+        int clientId, char granularity, CancellationToken ct = default);
 }
