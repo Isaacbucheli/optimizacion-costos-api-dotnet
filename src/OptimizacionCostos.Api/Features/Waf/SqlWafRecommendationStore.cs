@@ -85,6 +85,23 @@ public sealed class SqlWafRecommendationStore(ISqlConnectionFactory factory) : I
         return await rd.ReadAsync(ct) ? MapRecommendation(rd) : null;
     }
 
+    public async Task MarkReadAsync(int clientId, int canonicalId, string userKey, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await WafSchema.EnsureWafSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            IF NOT EXISTS (SELECT 1 FROM dbo.waf_recommendation_read
+                           WHERE client_id = @cid AND canonical_id = @canon AND user_key = @user)
+                INSERT INTO dbo.waf_recommendation_read (client_id, canonical_id, user_key)
+                VALUES (@cid, @canon, @user);
+            """;
+        cmd.Parameters.Add(new SqlParameter("@cid", clientId));
+        cmd.Parameters.Add(new SqlParameter("@canon", canonicalId));
+        cmd.Parameters.Add(new SqlParameter("@user", userKey ?? ""));
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     public async Task<IReadOnlyList<WafResourceFinding>> ListResourcesAsync(
         int clientId, int canonicalId, CancellationToken ct = default)
     {

@@ -260,5 +260,38 @@ public static class WafSchema
             );
         END
         """,
+        // 11. soft-migration: origen de la recomendación (excel/csv/advisor)
+        """
+        IF COL_LENGTH('dbo.waf_recommendation', 'source') IS NULL
+            ALTER TABLE dbo.waf_recommendation ADD source NVARCHAR(20) NULL;
+        """,
+        // 12. estado de lectura por usuario (badge "Nuevo")
+        """
+        IF OBJECT_ID('dbo.waf_recommendation_read', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.waf_recommendation_read (
+                client_id    INT           NOT NULL,
+                canonical_id INT           NOT NULL,
+                user_key     NVARCHAR(255) NOT NULL,
+                read_at      DATETIME2     NOT NULL CONSTRAINT DF_waf_read_at DEFAULT SYSUTCDATETIME(),
+                CONSTRAINT PK_waf_read PRIMARY KEY (client_id, canonical_id, user_key)
+            );
+        END
+        """,
+        // 13. baseline del badge "Nuevo" (sembrado una sola vez, en el primer arranque)
+        """
+        IF OBJECT_ID('dbo.waf_feature_baseline', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.waf_feature_baseline (
+                feature     NVARCHAR(60) NOT NULL PRIMARY KEY,
+                baseline_at DATETIME2    NOT NULL
+            );
+        END
+        """,
+        // 14. seed del baseline (idempotente)
+        """
+        IF NOT EXISTS (SELECT 1 FROM dbo.waf_feature_baseline WHERE feature = 'new_badge')
+            INSERT INTO dbo.waf_feature_baseline (feature, baseline_at) VALUES ('new_badge', SYSUTCDATETIME());
+        """,
     ];
 }

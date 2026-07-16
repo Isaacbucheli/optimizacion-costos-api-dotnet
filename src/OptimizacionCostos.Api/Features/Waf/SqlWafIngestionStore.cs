@@ -172,7 +172,7 @@ public sealed partial class SqlWafIngestionStore(
         WafIngestionMetrics? metrics, IReadOnlyList<string>? replaceSubscriptionIds,
         Func<SqlConnection, SqlTransaction, AdvisorRow, Task<int?>>? dedupResolver,
         IReadOnlyList<object>? warnings = null, IReadOnlyList<object>? subscriptionResults = null,
-        CancellationToken ct = default)
+        string source = "advisor", CancellationToken ct = default)
     {
         metrics ??= new WafIngestionMetrics(rows.Count, rows.Count, 0, 0, 0, "", "");
         warnings ??= [];
@@ -215,7 +215,7 @@ public sealed partial class SqlWafIngestionStore(
         {
             var (canonicalId, pillar, created) = await catalog.GetOrCreateCanonicalAsync(conn, tx, row, dedupResolver, ct);
             if (created) newCanonicalIds.Add(canonicalId);
-            var (recId, recCreated, dismissed) = await UpsertRecommendationAsync(conn, tx, clientId, canonicalId, pillar, row, now, ct);
+            var (recId, recCreated, dismissed) = await UpsertRecommendationAsync(conn, tx, clientId, canonicalId, pillar, row, now, source, ct);
             if (dismissed) continue;
             if (recCreated) newRecommendations++;
             if (await UpsertFindingAsync(conn, tx, recId, row, now, ct)) newFindings++;
@@ -257,7 +257,7 @@ public sealed partial class SqlWafIngestionStore(
     }
 
     private async Task<(int RecId, bool Created, bool Dismissed)> UpsertRecommendationAsync(
-        SqlConnection conn, SqlTransaction tx, int clientId, int canonicalId, int pillar, AdvisorRow row, DateTime now, CancellationToken ct)
+        SqlConnection conn, SqlTransaction tx, int clientId, int canonicalId, int pillar, AdvisorRow row, DateTime now, string source, CancellationToken ct)
     {
         await using (var find = NewCmd(conn, tx, "SELECT recommendation_id, is_dismissed FROM dbo.waf_recommendation WHERE client_id = @cid AND canonical_id = @canon"))
         {
@@ -280,13 +280,14 @@ public sealed partial class SqlWafIngestionStore(
         }
         var impactNumber = ImpactToNumber.GetValueOrDefault(row.BusinessImpact.ToLowerInvariant(), (byte)2);
         await using var ins = NewCmd(conn, tx, """
-            INSERT INTO dbo.waf_recommendation (client_id, canonical_id, matrix_code, business_impact, impact_number, first_seen_at, last_seen_at)
-            OUTPUT INSERTED.recommendation_id VALUES (@cid, @canon, @code, @impact, @num, @now, @now)
+            INSERT INTO dbo.waf_recommendation (client_id, canonical_id, matrix_code, business_impact, impact_number, first_seen_at, last_seen_at, source)
+            OUTPUT INSERTED.recommendation_id VALUES (@cid, @canon, @code, @impact, @num, @now, @now, @source)
             """);
         ins.Parameters.AddRange([
             new SqlParameter("@cid", clientId), new SqlParameter("@canon", canonicalId),
             new SqlParameter("@code", MatrixCode(pillar, row.AdvisorName, row.AdvisorCategory)),
-            new SqlParameter("@impact", row.BusinessImpact), new SqlParameter("@num", impactNumber), new SqlParameter("@now", now)]);
+            new SqlParameter("@impact", row.BusinessImpact), new SqlParameter("@num", impactNumber),
+            new SqlParameter("@now", now), new SqlParameter("@source", source)]);
         return (Convert.ToInt32(await ins.ExecuteScalarAsync(ct)), true, false);
     }
 

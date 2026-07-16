@@ -287,6 +287,7 @@ public sealed class WafController(
         // directamente (port 1:1 del SELECT de list_waf_recommendations).
         var where = new List<string> { "r.client_id = @cid" };
         await using var conn = await factory.OpenAsync(ct);
+        await WafSchema.EnsureWafSchemaAsync(conn, ct);
         await using var cmd = conn.CreateCommand();
         cmd.Parameters.Add(new SqlParameter("@cid", clientId));
         if (activeOnly)
@@ -299,6 +300,7 @@ public sealed class WafController(
             where.Add("c.pillar_number = @pillar");
             cmd.Parameters.Add(new SqlParameter("@pillar", (byte)pillar.Value));
         }
+        cmd.Parameters.Add(new SqlParameter("@userKey", (object?)Email ?? ""));
         cmd.CommandText = $"""
             SELECT
                 r.recommendation_id, r.canonical_id, r.matrix_code,
@@ -306,11 +308,16 @@ public sealed class WafController(
                 r.business_impact, r.resource_count, r.is_active,
                 COALESCE(t.completion_pct, 0) AS completion_pct,
                 t.remediation_start_date, t.remediation_end_date, t.projected_bit_effort,
-                r.first_seen_at, r.last_seen_at
+                r.first_seen_at, r.last_seen_at,
+                CASE WHEN r.first_seen_at > (SELECT baseline_at FROM dbo.waf_feature_baseline WHERE feature = 'new_badge')
+                          AND rr.read_at IS NULL THEN 1 ELSE 0 END AS is_new,
+                r.source
             FROM dbo.waf_recommendation r
             INNER JOIN dbo.waf_recommendation_canonical c ON c.canonical_id = r.canonical_id
             LEFT JOIN dbo.waf_recommendation_tracking t
                 ON t.client_id = r.client_id AND t.canonical_id = r.canonical_id
+            LEFT JOIN dbo.waf_recommendation_read rr
+                ON rr.client_id = r.client_id AND rr.canonical_id = r.canonical_id AND rr.user_key = @userKey
             WHERE {string.Join(" AND ", where)}
             ORDER BY c.pillar_number, r.impact_number, c.review_scope_es
             """;
@@ -336,6 +343,8 @@ public sealed class WafController(
                 projected_bit_effort = rd.IsDBNull(12) ? null : rd.GetString(12),
                 first_seen_at = rd.GetDateTime(13),
                 last_seen_at = rd.GetDateTime(14),
+                is_new = rd.GetInt32(15) == 1,
+                source = rd.IsDBNull(16) ? null : rd.GetString(16),
             });
         }
         return Ok(rows);
@@ -594,6 +603,17 @@ public sealed class WafController(
         {
             return NotFound(new { detail = "Recommendation not found" });
         }
+    }
+
+    /// <summary>POST read — marca la recomendación como vista por el usuario actual (idempotente).</summary>
+    [HttpPost("clients/{clientId:int}/recommendations/{canonicalId:int}/read")]
+    [RequireModule(Modules.Waf)]
+    public async Task<IActionResult> MarkRead(int clientId, int canonicalId, CancellationToken ct = default)
+    {
+        var guard = await GuardRecommendationAsync(clientId, canonicalId, ct);
+        if (guard is not null) return guard;
+        await recommendations.MarkReadAsync(clientId, canonicalId, Email ?? "", ct);
+        return NoContent();
     }
 
     /// <summary>PUT tracking. Port de update_waf_tracking.</summary>

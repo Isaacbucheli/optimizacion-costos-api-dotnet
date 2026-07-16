@@ -1005,10 +1005,10 @@ public sealed partial class ClosedXmlWafImporter(
                 insRec.CommandText = """
                     INSERT INTO dbo.waf_recommendation (
                         client_id, canonical_id, matrix_code, business_impact,
-                        impact_number, first_seen_at, last_seen_at
+                        impact_number, first_seen_at, last_seen_at, source
                     )
                     OUTPUT INSERTED.recommendation_id
-                    VALUES (@client_id, @canonical_id, @code, @impact, @impactNumber, @now, @now)
+                    VALUES (@client_id, @canonical_id, @code, @impact, @impactNumber, @now, @now, @source)
                     """;
                 insRec.Parameters.Add(new SqlParameter("@client_id", clientId));
                 insRec.Parameters.Add(new SqlParameter("@canonical_id", canonicalId));
@@ -1016,6 +1016,7 @@ public sealed partial class ClosedXmlWafImporter(
                 insRec.Parameters.Add(new SqlParameter("@impact", businessImpact));
                 insRec.Parameters.Add(new SqlParameter("@impactNumber", impactNumber));
                 insRec.Parameters.Add(new SqlParameter("@now", now));
+                insRec.Parameters.Add(new SqlParameter("@source", "excel"));
                 recommendationId = Convert.ToInt32(await insRec.ExecuteScalarAsync(ct));
             }
         }
