@@ -57,4 +57,38 @@ public sealed class AdvisorScoreHistoryTests
         var result = AdvisorApiClient.ParseScoreHistory(doc.RootElement);
         Assert.Empty(result); // Foo no mapea; "year" no es D/W/M → nada
     }
+
+    [Fact]
+    public void Aggregate_pondera_por_consumo_entre_suscripciones()
+    {
+        // Dos subs, misma fecha, misma serie 3 (Security): sub A score 40 peso 10, sub B score 80 peso 30.
+        // Ponderado = (40*10 + 80*30) / (10+30) = 2800/40 = 70.
+        var date = new DateOnly(2026, 6, 1);
+        AdvisorHistoryPoint P(decimal s, decimal w) => new(date, s, w);
+        SubscriptionScoreHistory Sub(decimal s, decimal w) => new('M',
+            new Dictionary<int, IReadOnlyList<AdvisorHistoryPoint>> { [3] = new[] { P(s, w) } });
+
+        var result = ScoreHistory.Aggregate(new[] { Sub(40, 10), Sub(80, 30) });
+
+        var month = result.Single(h => h.Granularity == 'M');
+        var point = month.Points.Single();
+        Assert.Equal(date, point.Date);
+        Assert.Equal(70m, point.Series[3]);
+    }
+
+    [Fact]
+    public void Aggregate_sin_peso_usa_media_simple_y_ordena_por_fecha()
+    {
+        var early = new DateOnly(2026, 5, 1);
+        var late = new DateOnly(2026, 6, 1);
+        var sub = new SubscriptionScoreHistory('M', new Dictionary<int, IReadOnlyList<AdvisorHistoryPoint>>
+        {
+            [0] = new[] { new AdvisorHistoryPoint(late, 60, 0), new AdvisorHistoryPoint(early, 40, 0) },
+        });
+
+        var month = ScoreHistory.Aggregate(new[] { sub }).Single(h => h.Granularity == 'M');
+
+        Assert.Equal(new[] { early, late }, month.Points.Select(p => p.Date).ToArray()); // orden asc
+        Assert.Equal(40m, month.Points[0].Series[0]);
+    }
 }
