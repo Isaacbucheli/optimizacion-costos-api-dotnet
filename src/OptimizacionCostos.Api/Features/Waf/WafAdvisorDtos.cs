@@ -72,3 +72,21 @@ public sealed record WafIngestionMetrics(
     string SubscriptionId,
     string SubscriptionName,
     bool PaginationTruncated = false);
+
+/// <summary>Un punto histórico crudo de una suscripción para una serie (global o pilar), una granularidad.</summary>
+public sealed record AdvisorHistoryPoint(DateOnly Date, decimal Score, decimal Weight);
+
+/// <summary>
+/// timeSeries de UNA suscripción para UN nivel de agregación. Series: clave 0 = global ("Advisor"),
+/// 1..5 = pilar WAF. Cada valor es la lista de puntos por fecha.
+/// </summary>
+public sealed record SubscriptionScoreHistory(
+    char Granularity, // 'D' | 'W' | 'M'
+    IReadOnlyDictionary<int, IReadOnlyList<AdvisorHistoryPoint>> Series);
+
+/// <summary>Punto agregado del cliente (una fecha). Series: 0=global, 1..5=pilar; solo claves con dato.</summary>
+public sealed record ClientScoreHistoryPoint(
+    DateOnly Date, IReadOnlyDictionary<int, decimal> Series);
+
+/// <summary>Historial agregado del cliente para una granularidad; puntos ordenados por fecha asc.</summary>
+public sealed record ClientScoreHistory(char Granularity, IReadOnlyList<ClientScoreHistoryPoint> Points);

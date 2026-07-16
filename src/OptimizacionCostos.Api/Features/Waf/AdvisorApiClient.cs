@@ -83,6 +83,82 @@ public sealed partial class AdvisorApiClient(
     }
 
     // ---------------------------------------------------------------------
+    // Advisor Score HISTÓRICO por suscripción (timeSeries del mismo endpoint advisorScore)
+    // ---------------------------------------------------------------------
+
+    public async Task<IReadOnlyList<SubscriptionScoreHistory>> FetchSubscriptionScoreHistoryAsync(
+        int credentialId, string subscriptionId, CancellationToken ct = default)
+    {
+        var (http, token) = await ClientAsync(credentialId, ct);
+        var url = ArmUrl($"/subscriptions/{subscriptionId}/providers/Microsoft.Advisor/advisorScore")
+                + $"?api-version={WafConstants.AdvisorScoreApiVersion}";
+
+        using var response = await RequestWithRetryAsync(http, token, HttpMethod.Get, url, ct);
+        if (response.StatusCode != HttpStatusCode.OK)
+            throw new AdvisorApiException($"Advisor score history failed HTTP {(int)response.StatusCode}: {await SafeErrorAsync(response, ct)}");
+
+        var body = await response.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(body);
+        return ParseScoreHistory(doc.RootElement);
+    }
+
+    /// <summary>
+    /// Extrae el timeSeries del endpoint advisorScore. Devuelve una entrada por nivel de agregación
+    /// (D/W/M) con series 0=global ("Advisor") y 1..5=pilar. Puro y testeable.
+    /// </summary>
+    internal static IReadOnlyList<SubscriptionScoreHistory> ParseScoreHistory(JsonElement root)
+    {
+        // granularidad -> (serie 0..5 -> puntos)
+        var byGran = new Dictionary<char, Dictionary<int, List<AdvisorHistoryPoint>>>();
+
+        if (root.TryGetProperty("value", out var value) && value.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in value.EnumerateArray())
+            {
+                var category = Normalize(Str(item, "name")).ToLowerInvariant().Replace(" ", "");
+                int seriesIndex;
+                if (category == "advisor") seriesIndex = 0;
+                else if (WafConstants.CategoryToPillar.TryGetValue(category, out var pillar)) seriesIndex = pillar;
+                else continue;
+
+                if (!item.TryGetProperty("properties", out var props) || props.ValueKind != JsonValueKind.Object) continue;
+                if (!props.TryGetProperty("timeSeries", out var ts) || ts.ValueKind != JsonValueKind.Array) continue;
+
+                foreach (var seriesEl in ts.EnumerateArray())
+                {
+                    var level = Normalize(Str(seriesEl, "aggregationLevel")).ToLowerInvariant();
+                    var gran = level switch { "day" => 'D', "week" => 'W', "month" => 'M', _ => '\0' };
+                    if (gran == '\0') continue;
+                    if (!seriesEl.TryGetProperty("scoreHistory", out var hist) || hist.ValueKind != JsonValueKind.Array) continue;
+
+                    var bucket = byGran.TryGetValue(gran, out var b) ? b : (byGran[gran] = new());
+                    var points = bucket.TryGetValue(seriesIndex, out var p) ? p : (bucket[seriesIndex] = new());
+
+                    foreach (var pt in hist.EnumerateArray())
+                    {
+                        if (!TryGetDouble(pt, "score", out var score)) continue;
+                        var rawDate = Str(pt, "date");
+                        if (string.IsNullOrEmpty(rawDate)
+                            || !DateTimeOffset.TryParse(rawDate, System.Globalization.CultureInfo.InvariantCulture,
+                                System.Globalization.DateTimeStyles.AssumeUniversal, out var dto))
+                            continue;
+                        var weight = TryGetDouble(pt, "consumptionUnits", out var w) ? w : 0.0;
+                        points.Add(new AdvisorHistoryPoint(
+                            Date: DateOnly.FromDateTime(dto.UtcDateTime),
+                            Score: (decimal)Math.Round(score, 2),
+                            Weight: (decimal)Math.Max(0.0, weight)));
+                    }
+                }
+            }
+        }
+
+        return byGran.Select(g => new SubscriptionScoreHistory(
+                g.Key,
+                g.Value.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<AdvisorHistoryPoint>)kv.Value)))
+            .ToList();
+    }
+
+    // ---------------------------------------------------------------------
     // 2) Generar + listar recomendaciones (generate_and_list_subscription_recommendations)
     // ---------------------------------------------------------------------
 

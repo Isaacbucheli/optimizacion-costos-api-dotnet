@@ -18,6 +18,13 @@ public interface IAdvisorApiClient
         int credentialId, string subscriptionId, CancellationToken ct = default);
 
     /// <summary>
+    /// Devuelve el histórico (timeSeries) del Advisor Score de una suscripción por nivel de agregación
+    /// (D/W/M), con series 0=global y 1..5=pilar. Mismo GET que FetchSubscriptionScoreAsync.
+    /// </summary>
+    Task<IReadOnlyList<SubscriptionScoreHistory>> FetchSubscriptionScoreHistoryAsync(
+        int credentialId, string subscriptionId, CancellationToken ct = default);
+
+    /// <summary>
     /// Dispara la generación de recomendaciones (POST generateRecommendations -> 202 + Location),
     /// hace polling hasta 204 y luego lista las recomendaciones paginadas, devolviendo filas
     /// deduplicadas más métricas. Port de generate_and_list_subscription_recommendations.
