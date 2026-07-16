@@ -75,4 +75,29 @@ public static class ScoreHistory
         public double SimpleSum;
         public int Count;
     }
+
+    public static char GranularityChar(string? granularity) =>
+        (granularity ?? "").Trim().ToLowerInvariant() switch { "day" => 'D', "week" => 'W', _ => 'M' };
+
+    public static string GranularityName(char granularity) =>
+        granularity switch { 'D' => "day", 'W' => "week", _ => "month" };
+
+    /// <summary>Forma snake_case de la respuesta del endpoint de historial (global + pilares 1..5).</summary>
+    public static object BuildResponse(string granularity, IReadOnlyList<ClientScoreHistoryPoint> points) => new
+    {
+        granularity,
+        series = points.Select(p => new
+        {
+            date = p.Date.ToString("yyyy-MM-dd"),
+            global = p.Series.TryGetValue(0, out var g) ? (decimal?)g : null,
+            pillars = new Dictionary<string, decimal?>
+            {
+                ["1"] = p.Series.TryGetValue(1, out var v1) ? v1 : null,
+                ["2"] = p.Series.TryGetValue(2, out var v2) ? v2 : null,
+                ["3"] = p.Series.TryGetValue(3, out var v3) ? v3 : null,
+                ["4"] = p.Series.TryGetValue(4, out var v4) ? v4 : null,
+                ["5"] = p.Series.TryGetValue(5, out var v5) ? v5 : null,
+            },
+        }),
+    };
 }

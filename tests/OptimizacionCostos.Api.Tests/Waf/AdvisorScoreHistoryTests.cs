@@ -91,4 +91,30 @@ public sealed class AdvisorScoreHistoryTests
         Assert.Equal(new[] { early, late }, month.Points.Select(p => p.Date).ToArray()); // orden asc
         Assert.Equal(40m, month.Points[0].Series[0]);
     }
+
+    [Fact]
+    public void GranularityChar_mapea_y_default_month()
+    {
+        Assert.Equal('D', ScoreHistory.GranularityChar("day"));
+        Assert.Equal('W', ScoreHistory.GranularityChar("week"));
+        Assert.Equal('M', ScoreHistory.GranularityChar("month"));
+        Assert.Equal('M', ScoreHistory.GranularityChar("otra"));
+        Assert.Equal('M', ScoreHistory.GranularityChar(null));
+    }
+
+    [Fact]
+    public void BuildResponse_expone_global_y_pilares_1a5_con_null_donde_falta()
+    {
+        var points = new List<ClientScoreHistoryPoint>
+        {
+            new(new DateOnly(2026, 6, 1), new Dictionary<int, decimal> { [0] = 76m, [3] = 45m }),
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(ScoreHistory.BuildResponse("month", points));
+
+        Assert.Contains("\"granularity\":\"month\"", json);
+        Assert.Contains("\"date\":\"2026-06-01\"", json);
+        Assert.Contains("\"global\":76", json);
+        Assert.Contains("\"3\":45", json);
+        Assert.Contains("\"1\":null", json); // pilar sin dato → null explícito
+    }
 }
