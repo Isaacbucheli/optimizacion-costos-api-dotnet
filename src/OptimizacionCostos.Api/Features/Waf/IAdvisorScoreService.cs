@@ -30,6 +30,12 @@ public interface IAdvisorScoreService
         int clientId, DateOnly? snapshotDate, string source, bool includeInReports, CancellationToken ct = default);
 
     /// <summary>
+    /// Refresca y persiste el histórico agregado del Advisor Score del cliente (timeSeries de Azure).
+    /// Best-effort por suscripción: una que falle se registra y no aborta las demás.
+    /// </summary>
+    Task RefreshClientScoreHistoryAsync(int clientId, CancellationToken ct = default);
+
+    /// <summary>
     /// Refresca los scores de varios clientes (o todos los activos si clientIds es null).
     /// Port de refresh_all_advisor_scores. Nunca lanza por un cliente: lo cuenta como fallido.
     /// </summary>

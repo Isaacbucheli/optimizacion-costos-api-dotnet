@@ -1,4 +1,8 @@
 using System.Text.Json;
+using Azure.Core;
+using Microsoft.Extensions.Logging.Abstractions;
+using OptimizacionCostos.Api.Data;
+using OptimizacionCostos.Api.Features.AzureIntegration;
 using OptimizacionCostos.Api.Features.Waf;
 
 namespace OptimizacionCostos.Api.Tests.Waf;
@@ -116,5 +120,74 @@ public sealed class AdvisorScoreHistoryTests
         Assert.Contains("\"global\":76", json);
         Assert.Contains("\"3\":45", json);
         Assert.Contains("\"1\":null", json); // pilar sin dato → null explícito
+    }
+
+    private sealed class FakeApi : IAdvisorApiClient
+    {
+        private readonly Dictionary<string, IReadOnlyList<SubscriptionScoreHistory>> _bySub;
+        public FakeApi(Dictionary<string, IReadOnlyList<SubscriptionScoreHistory>> bySub) => _bySub = bySub;
+        public Task<IReadOnlyList<SubscriptionScoreHistory>> FetchSubscriptionScoreHistoryAsync(
+            int credentialId, string subscriptionId, CancellationToken ct = default)
+            => _bySub.TryGetValue(subscriptionId, out var h)
+                ? Task.FromResult(h)
+                : throw new AdvisorApiException("boom"); // sub sin datos → error, best-effort la salta
+        public Task<IReadOnlyDictionary<int, AdvisorScoreData>> FetchSubscriptionScoreAsync(
+            int credentialId, string subscriptionId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<(IReadOnlyList<AdvisorRow> Rows, WafIngestionMetrics Metrics)> GenerateAndListRecommendationsAsync(
+            int credentialId, string subscriptionId, string subscriptionName,
+            int timeoutSeconds = 600, int pageSize = 200, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
+    private sealed class CaptureStore : IAdvisorScoreStore
+    {
+        private readonly IReadOnlyDictionary<int, WafSubscriptionGroup> _groups;
+        public IReadOnlyList<ClientScoreHistory>? Persisted { get; private set; }
+        public CaptureStore(IReadOnlyDictionary<int, WafSubscriptionGroup> groups) => _groups = groups;
+        public Task<IReadOnlyDictionary<int, WafSubscriptionGroup>> LoadClientSubscriptionGroupsAsync(int clientId, CancellationToken ct = default)
+            => Task.FromResult(_groups);
+        public Task PersistHistoryAsync(int clientId, IReadOnlyList<ClientScoreHistory> histories, CancellationToken ct = default)
+        { Persisted = histories; return Task.CompletedTask; }
+        public Task<IReadOnlyList<ClientScoreHistoryPoint>> LoadHistoryAsync(int clientId, char granularity, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<int>> ListActiveClientIdsAsync(CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<WafAdvisorScoreSnapshot?> PersistSnapshotAsync(int clientId, WafAdvisorScoreResult score, DateOnly? snapshotDate, string source, bool includeInReports, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<WafAdvisorScoreSnapshot?> LoadLatestSnapshotAsync(int clientId, bool includeBreakdown = false, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<bool> TryAcquireJobLockAsync(string jobName, int leaseSeconds = 21600, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<System.Text.Json.Nodes.JsonObject> BuildScoreHistoryAsync(int clientId, int year, int month, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
+    private sealed class ThrowingCreds : IAzureCredentialFactory
+    {
+        public Task<TokenCredential> GetClientSecretCredentialAsync(int credentialId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<CredentialAuthResult> TestCredentialAuthAsync(int credentialId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task UpdateValidationStatusAsync(int credentialId, bool success, string? errorMessage = null, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task WriteAuditLogAsync(int credentialId, string action, string? actor = null, string? details = null, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+    private sealed class ThrowingFactory : ISqlConnectionFactory
+    {
+        public Task<Microsoft.Data.SqlClient.SqlConnection> OpenAsync(CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
+    [Fact]
+    public async Task RefreshClientScoreHistoryAsync_agrega_dos_subs_y_persiste()
+    {
+        var group = new WafSubscriptionGroup(1, "cred", new Dictionary<string, string> { ["sA"] = "A", ["sB"] = "B" });
+        var groups = new Dictionary<int, WafSubscriptionGroup> { [1] = group };
+
+        SubscriptionScoreHistory Hist(decimal score, decimal weight) => new('M',
+            new Dictionary<int, IReadOnlyList<AdvisorHistoryPoint>>
+            { [0] = new[] { new AdvisorHistoryPoint(new DateOnly(2026, 6, 1), score, weight) } });
+
+        var api = new FakeApi(new()
+        {
+            ["sA"] = new[] { Hist(40, 10) },
+            ["sB"] = new[] { Hist(80, 30) },
+        });
+        var store = new CaptureStore(groups);
+        var svc = new AdvisorScoreService(api, store, new ThrowingCreds(), new ThrowingFactory(), NullLogger<AdvisorScoreService>.Instance);
+
+        await svc.RefreshClientScoreHistoryAsync(clientId: 7, CancellationToken.None);
+
+        var month = store.Persisted!.Single(h => h.Granularity == 'M');
+        Assert.Equal(70m, month.Points.Single().Series[0]); // (40*10+80*30)/40
     }
 }

@@ -108,6 +108,8 @@ public sealed class WafAdminApiTests : IClassFixture<WafAdminApiTests.Factory>
             int clientId, DateOnly? snapshotDate, string source, bool includeInReports, CancellationToken ct = default)
             => throw new NotSupportedException();
 
+        public Task RefreshClientScoreHistoryAsync(int clientId, CancellationToken ct = default) => Task.CompletedTask;
+
         public Task<IReadOnlyDictionary<int, AdvisorScoreData>> FetchSubscriptionScoreAsync(
             int credentialId, string subscriptionId, CancellationToken ct = default)
             => throw new NotSupportedException();

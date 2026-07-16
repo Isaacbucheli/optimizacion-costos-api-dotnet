@@ -153,8 +153,42 @@ public sealed class AdvisorScoreService(
         // Cálculo (llamadas vivas a ARM).
         var score = await ComputeScoreAsync(groups, detail: true, ct);
 
-        // Fase 2: persistencia.
-        return await store.PersistSnapshotAsync(clientId, score, snapshotDate, source, includeInReports, ct);
+        // Fase 2: persistencia del snapshot.
+        var snapshot = await store.PersistSnapshotAsync(clientId, score, snapshotDate, source, includeInReports, ct);
+
+        // Fase 3: histórico (best-effort; nunca rompe el snapshot).
+        try { await RefreshClientScoreHistoryAsync(clientId, ct); }
+        catch (Exception ex) { logger.LogWarning(ex, "Advisor score history refresh falló client_id={Cid}", clientId); }
+
+        return snapshot;
+    }
+
+    // ---------------------------------------------------------------------
+    // refresh del histórico (timeSeries) — best-effort por suscripción
+    // ---------------------------------------------------------------------
+    public async Task RefreshClientScoreHistoryAsync(int clientId, CancellationToken ct = default)
+    {
+        var groups = await store.LoadClientSubscriptionGroupsAsync(clientId, ct);
+        var collected = new List<SubscriptionScoreHistory>();
+
+        foreach (var (credentialId, group) in groups)
+        {
+            foreach (var (subscriptionId, _) in group.Subscriptions)
+            {
+                try
+                {
+                    var hist = await apiClient.FetchSubscriptionScoreHistoryAsync(credentialId, subscriptionId, ct);
+                    collected.AddRange(hist);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "Advisor score history failed subscription_id={Sub}", subscriptionId);
+                }
+            }
+        }
+
+        var aggregated = ScoreHistory.Aggregate(collected);
+        await store.PersistHistoryAsync(clientId, aggregated, ct);
     }
 
     private async Task EnsureClientExistsAsync(int clientId, CancellationToken ct)
