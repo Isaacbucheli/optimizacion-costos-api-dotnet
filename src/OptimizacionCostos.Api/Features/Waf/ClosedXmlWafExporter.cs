@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.IO.Compression;
+using System.Linq;
 using System.Reflection;
 using System.Xml.Linq;
 using ClosedXML.Excel;
@@ -33,6 +34,20 @@ public sealed class ClosedXmlWafExporter : IWafExcelExporter
     private const string SheetEntry = "xl/worksheets/sheet2.xml";
     private const string StylesEntry = "xl/styles.xml";
     private const string SpreadsheetNs = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+
+    // Orden canónico de los hijos de CT_Worksheet (esquema OOXML). Excel exige esta secuencia; si
+    // pageSetup/legacyDrawing/extLst quedan fuera de orden, marca el archivo como corrupto.
+    private static readonly string[] WorksheetChildOrder =
+    {
+        "sheetPr", "dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData",
+        "sheetCalcPr", "sheetProtection", "protectedRanges", "scenarios", "autoFilter",
+        "sortState", "dataConsolidate", "customSheetViews", "mergeCells", "phoneticPr",
+        "conditionalFormatting", "dataValidations", "hyperlinks", "printOptions",
+        "pageMargins", "pageSetup", "headerFooter", "rowBreaks", "colBreaks",
+        "customProperties", "cellWatches", "ignoredErrors", "smartTags", "drawing",
+        "legacyDrawing", "legacyDrawingHF", "picture", "oleObjects", "controls",
+        "webPublishItems", "tableParts", "extLst",
+    };
 
     public Task<byte[]> ExportAsync(
         int clientId, IReadOnlyList<WafExportRow> recommendations, CancellationToken ct = default)
@@ -391,6 +406,19 @@ public sealed class ClosedXmlWafExporter : IWafExcelExporter
             if (templateElement is not null)
                 generatedRoot.Add(new XElement(templateElement));
         }
+
+        // Reordena los hijos del <worksheet> a la secuencia canónica del esquema. Sin esto,
+        // los elementos reinyectados (pageSetup/legacyDrawing/extLst) quedan al final y Excel
+        // rechaza el archivo por orden inválido (OpenXmlValidator: Sch_UnexpectedElementContentExpectingComplex).
+        int Rank(XElement e)
+        {
+            var idx = Array.IndexOf(WorksheetChildOrder, e.Name.LocalName);
+            return idx < 0 ? int.MaxValue : idx;
+        }
+        // OrderBy es estable: preserva el orden relativo de elementos con el mismo rango (p. ej. varios cols).
+        var ordered = generatedRoot.Elements().OrderBy(Rank).Select(e => new XElement(e)).ToList();
+        generatedRoot.RemoveNodes();
+        generatedRoot.Add(ordered);
 
         using var ms = new MemoryStream();
         var settings = new System.Xml.XmlWriterSettings
