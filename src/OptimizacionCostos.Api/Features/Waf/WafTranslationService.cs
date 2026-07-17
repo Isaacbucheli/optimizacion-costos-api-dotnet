@@ -32,17 +32,39 @@ public sealed class WafTranslationService(IChatCompletionClient chat, AppConfig 
         var map = new Dictionary<string, string>(StringComparer.Ordinal);
         if (unique.Count > 0)
         {
-            var userJson = JsonSerializer.Serialize(unique);
-            var maxTokens = Math.Clamp(unique.Sum(t => t.Length) + 512, 512, 8000);
-            var translated = await TranslateBatchAsync(userJson, unique.Count, maxTokens, ct);
-            for (var i = 0; i < unique.Count; i++)
-                map[unique[i]] = translated[i];
+            foreach (var chunk in Chunk(unique, maxItems: 100, maxChars: 8000))
+            {
+                var userJson = JsonSerializer.Serialize(chunk);
+                var maxTokens = Math.Clamp(chunk.Sum(t => t.Length) * 2 + 512, 512, 8000);
+                var translated = await TranslateBatchAsync(userJson, chunk.Count, maxTokens, ct);
+                for (var i = 0; i < chunk.Count; i++)
+                    map[chunk[i]] = translated[i];
+            }
         }
 
         // Re-expande a los ítems originales por clave; vacíos/espacios sin cambio.
         return items
             .Select(i => new WafTranslationItem(i.Key, map.TryGetValue(i.Text ?? "", out var en) ? en : (i.Text ?? "")))
             .ToList();
+    }
+
+    // Divide en lotes que quepan en el presupuesto de un solo completion (por items y por chars).
+    private static IEnumerable<List<string>> Chunk(IReadOnlyList<string> items, int maxItems, int maxChars)
+    {
+        var cur = new List<string>();
+        var chars = 0;
+        foreach (var it in items)
+        {
+            if (cur.Count > 0 && (cur.Count >= maxItems || chars + it.Length > maxChars))
+            {
+                yield return cur;
+                cur = new List<string>();
+                chars = 0;
+            }
+            cur.Add(it);
+            chars += it.Length;
+        }
+        if (cur.Count > 0) yield return cur;
     }
 
     // 3 intentos; el IChatCompletionClient esconde la capa HTTP, así que se reintenta ante cualquier fallo.

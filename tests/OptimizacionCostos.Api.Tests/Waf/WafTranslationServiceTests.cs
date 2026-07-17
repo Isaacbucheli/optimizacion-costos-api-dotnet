@@ -69,4 +69,29 @@ public sealed class WafTranslationServiceTests
         await Assert.ThrowsAsync<ArgumentException>(
             () => svc.TranslateAsync("fr", new List<WafTranslationItem> { new("a", "Hola") }, default));
     }
+
+    private sealed class EchoChat : IChatCompletionClient
+    {
+        public int Calls { get; private set; }
+        public string? Complete(string systemPrompt, string userJson, int maxCompletionTokens = 500)
+        {
+            Calls++;
+            var arr = System.Text.Json.JsonSerializer.Deserialize<string[]>(userJson) ?? System.Array.Empty<string>();
+            return System.Text.Json.JsonSerializer.Serialize(arr.Select(s => "EN::" + s).ToArray());
+        }
+    }
+
+    [Fact]
+    public async Task TranslateAsync_DivideEnVariosLotesCuandoExcedeElLimite()
+    {
+        var chat = new EchoChat();
+        var svc = new WafTranslationService(chat, Configured());
+        var big = new string('x', 4000);
+        var items = new List<WafTranslationItem> { new("a", big + "1"), new("b", big + "2"), new("c", big + "3") };
+        var result = await svc.TranslateAsync("en", items, default);
+        Assert.True(chat.Calls >= 2); // no cabe en un solo lote de 8000 chars
+        var map = result.ToDictionary(x => x.Key, x => x.Text);
+        Assert.Equal($"EN::{big}1", map["a"]);
+        Assert.Equal($"EN::{big}3", map["c"]);
+    }
 }
