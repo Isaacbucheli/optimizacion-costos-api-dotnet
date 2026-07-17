@@ -76,6 +76,7 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafTrackingStore
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafIngestionStore, OptimizacionCostos.Api.Features.Waf.SqlWafIngestionStore>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafDedupService, OptimizacionCostos.Api.Features.Waf.WafDedupService>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafCuratorService, OptimizacionCostos.Api.Features.Waf.WafCuratorService>();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafTranslationService, OptimizacionCostos.Api.Features.Waf.WafTranslationService>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafConsolidationService, OptimizacionCostos.Api.Features.Waf.WafConsolidationService>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafDedupResolverFactory, OptimizacionCostos.Api.Features.Waf.WafDedupResolverFactory>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IAdvisorApiClient, OptimizacionCostos.Api.Features.Waf.AdvisorApiClient>();

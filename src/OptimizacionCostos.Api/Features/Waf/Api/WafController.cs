@@ -24,6 +24,7 @@ public sealed class WafController(
     IWafIngestionStore ingestionStore,
     IAdvisorScoreStore advisorScoreStore,
     IWafCuratorService curator,
+    IWafTranslationService translation,
     IWafExcelExporter excelExporter,
     IWafExcelImporter excelImporter,
     IWafSyncOrchestrator orchestrator,
@@ -114,6 +115,36 @@ public sealed class WafController(
             high_recs = x.HighRecs,
             medium_recs = x.MediumRecs,
         }));
+    }
+
+    /// <summary>POST /waf/translate — traduce textos WAF es→en en vivo (sin persistir).</summary>
+    [HttpPost("translate")]
+    [RequireModule(Modules.Waf)]
+    public async Task<IActionResult> Translate([FromBody] WafTranslateRequest payload, CancellationToken ct)
+    {
+        if (payload?.Items is null || payload.Items.Count == 0)
+            return BadRequest(new { detail = "No hay textos para traducir." });
+        if (!string.Equals(payload.Target, "en", StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { detail = "Solo se admite target=en." });
+        if (payload.Items.Count > 500)
+            return BadRequest(new { detail = "Demasiados textos en una sola solicitud (max 500)." });
+        if (payload.Items.Sum(i => (i.Text ?? "").Length) > 200_000)
+            return BadRequest(new { detail = "El texto total excede el limite permitido." });
+        if (!translation.IsConfigured)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                new { detail = "Traduccion no disponible: Azure OpenAI no esta configurado." });
+
+        try
+        {
+            var input = payload.Items.Select(i => new WafTranslationItem(i.Key, i.Text ?? "")).ToList();
+            var result = await translation.TranslateAsync("en", input, ct);
+            return Ok(new { items = result.Select(t => new { key = t.Key, text = t.Text }) });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "WAF translate failed");
+            return Problem(statusCode: StatusCodes.Status502BadGateway, detail: "La traduccion fallo. Intenta de nuevo.");
+        }
     }
 
     /// <summary>GET advisor-score — último snapshot guardado (no consulta ARM). Port de waf_client_advisor_score.</summary>

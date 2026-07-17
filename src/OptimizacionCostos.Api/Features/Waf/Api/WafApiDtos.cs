@@ -142,3 +142,7 @@ public sealed record WafExcelApplyItemRequest(
 /// <summary>Body de apply Excel. Port de WafExcelApplyRequest (rows).</summary>
 public sealed record WafExcelApplyRequest(
     List<WafExcelApplyItemRequest> Rows);
+
+/// <summary>Request de POST /waf/translate. Sin DataAnnotations (regresión 2026-07-02).</summary>
+public sealed record WafTranslateItemDto(string Key, string Text);
+public sealed record WafTranslateRequest(string Target, List<WafTranslateItemDto> Items);

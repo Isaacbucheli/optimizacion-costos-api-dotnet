@@ -102,4 +102,19 @@ public static class WafPrompts
         JSON requerido:
         {{"match": true, "canonical_id": 123, "confidence": 0.0, "reason": ""}}
         """;
+
+    /// <summary>
+    /// System prompt de traducción es→en. El contenido de usuario es un arreglo JSON de cadenas;
+    /// la respuesta debe ser un arreglo JSON de cadenas de la MISMA longitud y orden.
+    /// </summary>
+    public const string TranslateEsToEnSystem =
+        """
+        Eres un traductor tecnico de Azure. Traduce del espanol al ingles cada cadena del arreglo
+        JSON que recibes.
+        Reglas:
+        - Devuelve UNICAMENTE un arreglo JSON de cadenas, sin markdown ni texto adicional.
+        - El arreglo de salida debe tener EXACTAMENTE la misma longitud y el mismo orden que el de entrada.
+        - Preserva sin cambios los nombres propios de servicios Azure, SKUs, siglas y codigos.
+        - No agregues numeracion, comentarios ni comillas extra; solo la traduccion de cada elemento.
+        """;
 }
