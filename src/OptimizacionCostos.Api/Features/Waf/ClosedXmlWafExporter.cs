@@ -1,26 +1,31 @@
 using System.Globalization;
-using System.IO.Compression;
 using System.Linq;
 using System.Reflection;
-using System.Xml.Linq;
 using ClosedXML.Excel;
 
 namespace OptimizacionCostos.Api.Features.Waf;
 
 /// <summary>
-/// Port fiel de app/waf/excel_exporter.py. Rellena la hoja "Resultados" de la plantilla con
-/// ClosedXML (equivalente a openpyxl) y luego RESTAURA el paquete original con un parche de ZIP/XML
-/// para conservar imágenes, comentarios enriquecidos (legacyDrawing/VML), pageSetup y extLst, que
-/// ClosedXML descarta al reescribir el .xlsx (igual que openpyxl en el Python).
+/// Rellena la hoja "Resultados" de la plantilla BIT con ClosedXML (equivalente a openpyxl del
+/// Python) y devuelve el .xlsx generado por ClosedXML tal cual.
 ///
-/// RIESGO ClosedXML (documentado, no bloqueante): ClosedXML reescribe TODO el paquete OOXML al
-/// guardar y NO preserva legacyDrawing/VML (comentarios) ni el drawing de imágenes. Por eso se
-/// replica _restore_template_package: se toma sheet2.xml del archivo generado (datos + estilos
-/// nuevos referenciados desde styles.xml), se le re-inyectan pageSetup/legacyDrawing/extLst de la
-/// plantilla, y el resto de entradas del paquete (media, drawings, rels, vml) salen TAL CUAL de la
-/// plantilla. styles.xml sale del generado (estilos que creó ClosedXML para las celdas). Si ClosedXML
-/// renombrara internamente la hoja a otro sheetN.xml, el restore caería al estilo "datos sin
-/// branding" en vez de fallar (ver SafeReadEntry / fallback al guardado de ClosedXML).
+/// HISTORIA (por qué YA NO se parcha el paquete): el port original replicaba
+/// _restore_template_package del Python, que tomaba el sheet2.xml/styles.xml generados y los metía
+/// dentro del paquete ORIGINAL de la plantilla para conservar imágenes/comentarios/pageSetup que
+/// openpyxl descartaba. Ese hÍbrido era la causa del bug "Excel encontró un problema con el
+/// contenido": ClosedXML escribe las cadenas como *shared strings* (índices a xl/sharedStrings.xml)
+/// mientras que openpyxl las escribía *inline*. Al conservar el sharedStrings.xml de la plantilla
+/// (36 cadenas) junto al sheet2.xml reindexado por ClosedXML (índices hasta ~64), las celdas de
+/// datos apuntaban a entradas inexistentes → paquete corrupto. (El OpenXmlValidator no lo detecta:
+/// un índice de shared string fuera de rango no viola el esquema.)
+///
+/// ClosedXML 0.105 preserva por sí solo lo que el restore intentaba proteger: imágenes (drawing de
+/// la portada "Health Check" + media), comentarios threaded, legacyDrawing/VML, pageSetup,
+/// pageMargins y extLst. Su salida es autoconsistente (sheet + styles + sharedStrings del mismo
+/// paso), valida limpia y abre sin pedir reparación. Por eso se devuelve directamente y se eliminó
+/// toda la cirugía de ZIP/XML. Único cambio cosmético frente al restore: se pierde el texto
+/// *placeholder* de los comentarios legacy de la plantilla ("[Comentario]"), que no es dato del
+/// cliente; los comentarios threaded reales se conservan intactos.
 /// </summary>
 public sealed class ClosedXmlWafExporter : IWafExcelExporter
 {
@@ -31,28 +36,11 @@ public sealed class ClosedXmlWafExporter : IWafExcelExporter
     private const int MaxResourcesListed = 10;
 
     private const string SheetName = "Resultados";
-    private const string SheetEntry = "xl/worksheets/sheet2.xml";
-    private const string StylesEntry = "xl/styles.xml";
-    private const string SpreadsheetNs = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
-
-    // Orden canónico de los hijos de CT_Worksheet (esquema OOXML). Excel exige esta secuencia; si
-    // pageSetup/legacyDrawing/extLst quedan fuera de orden, marca el archivo como corrupto.
-    private static readonly string[] WorksheetChildOrder =
-    {
-        "sheetPr", "dimension", "sheetViews", "sheetFormatPr", "cols", "sheetData",
-        "sheetCalcPr", "sheetProtection", "protectedRanges", "scenarios", "autoFilter",
-        "sortState", "dataConsolidate", "customSheetViews", "mergeCells", "phoneticPr",
-        "conditionalFormatting", "dataValidations", "hyperlinks", "printOptions",
-        "pageMargins", "pageSetup", "headerFooter", "rowBreaks", "colBreaks",
-        "customProperties", "cellWatches", "ignoredErrors", "smartTags", "drawing",
-        "legacyDrawing", "legacyDrawingHF", "picture", "oleObjects", "controls",
-        "webPublishItems", "tableParts", "extLst",
-    };
 
     public Task<byte[]> ExportAsync(
         int clientId, IReadOnlyList<WafExportRow> recommendations, CancellationToken ct = default)
     {
-        // CPU/IO síncrono (ClosedXML + ZIP). Se envuelve en Task para respetar la firma async.
+        // CPU/IO síncrono (ClosedXML). Se envuelve en Task para respetar la firma async.
         return Task.Run(() => Export(recommendations), ct);
     }
 
@@ -60,60 +48,54 @@ public sealed class ClosedXmlWafExporter : IWafExcelExporter
     {
         var templateBytes = LoadTemplateBytes();
 
-        byte[] generatedBytes;
-        using (var templateStream = new MemoryStream(templateBytes, writable: false))
-        using (var workbook = new XLWorkbook(templateStream))
+        using var templateStream = new MemoryStream(templateBytes, writable: false);
+        using var workbook = new XLWorkbook(templateStream);
+        if (!workbook.Worksheets.TryGetWorksheet(SheetName, out var sheet))
+            throw new InvalidOperationException("La plantilla WAF no contiene la hoja Resultados.");
+
+        // by_pillar = {1..5: []}; pillar inválido/None -> 2 (port exacto).
+        var byPillar = new Dictionary<int, List<WafExportRow>>();
+        for (var p = 1; p <= 5; p++) byPillar[p] = [];
+        foreach (var rec in recommendations)
         {
-            if (!workbook.Worksheets.TryGetWorksheet(SheetName, out var sheet))
-                throw new InvalidOperationException("La plantilla WAF no contiene la hoja Resultados.");
-
-            // by_pillar = {1..5: []}; pillar inválido/None -> 2 (port exacto).
-            var byPillar = new Dictionary<int, List<WafExportRow>>();
-            for (var p = 1; p <= 5; p++) byPillar[p] = [];
-            foreach (var rec in recommendations)
-            {
-                var pillar = rec.PillarNumber ?? 2;
-                if (!byPillar.ContainsKey(pillar)) pillar = 2;
-                byPillar[pillar].Add(rec);
-            }
-
-            // sort estable por _sort_key dentro de cada pilar (snapshot de claves: no se puede
-            // mutar el diccionario mientras se enumera su colección de claves).
-            foreach (var p in byPillar.Keys.ToList())
-                byPillar[p] = byPillar[p].OrderBy(SortKey, SortKeyComparer.Instance).ToList();
-
-            var maxColumn = sheet.LastColumnUsed()?.ColumnNumber() ?? 12;
-
-            // Iterar pilares en orden INVERSO (5,4,3,2,1) para no correr índices al insertar.
-            foreach (var pillar in new[] { 5, 4, 3, 2, 1 })
-            {
-                var headerRow = SectionHeaderRows[pillar];
-                var firstDataRow = headerRow + 1;
-                var pillarRecs = byPillar[pillar];
-
-                if (pillarRecs.Count > PlaceholdersPerSection)
-                {
-                    var extraRows = pillarRecs.Count - PlaceholdersPerSection;
-                    var insertAt = headerRow + PlaceholdersPerSection + 1;
-                    // insert_rows(insert_at, amount=extra_rows): inserta arriba de insertAt.
-                    sheet.Row(insertAt).InsertRowsAbove(extraRows);
-                    for (var offset = 0; offset < extraRows; offset++)
-                        CopyRowStyle(sheet, firstDataRow, insertAt + offset, maxColumn);
-                }
-
-                for (var offset = 0; offset < pillarRecs.Count; offset++)
-                    FillRow(sheet, firstDataRow + offset, pillarRecs[offset]);
-                for (var offset = pillarRecs.Count; offset < PlaceholdersPerSection; offset++)
-                    ClearRow(sheet, firstDataRow + offset, maxColumn);
-            }
-
-            using var outStream = new MemoryStream();
-            workbook.SaveAs(outStream);
-            generatedBytes = outStream.ToArray();
+            var pillar = rec.PillarNumber ?? 2;
+            if (!byPillar.ContainsKey(pillar)) pillar = 2;
+            byPillar[pillar].Add(rec);
         }
 
-        // Restaura el paquete de la plantilla (imágenes, comentarios, pageSetup, extLst).
-        return RestoreTemplatePackage(templateBytes, generatedBytes);
+        // sort estable por _sort_key dentro de cada pilar (snapshot de claves: no se puede
+        // mutar el diccionario mientras se enumera su colección de claves).
+        foreach (var p in byPillar.Keys.ToList())
+            byPillar[p] = byPillar[p].OrderBy(SortKey, SortKeyComparer.Instance).ToList();
+
+        var maxColumn = sheet.LastColumnUsed()?.ColumnNumber() ?? 12;
+
+        // Iterar pilares en orden INVERSO (5,4,3,2,1) para no correr índices al insertar.
+        foreach (var pillar in new[] { 5, 4, 3, 2, 1 })
+        {
+            var headerRow = SectionHeaderRows[pillar];
+            var firstDataRow = headerRow + 1;
+            var pillarRecs = byPillar[pillar];
+
+            if (pillarRecs.Count > PlaceholdersPerSection)
+            {
+                var extraRows = pillarRecs.Count - PlaceholdersPerSection;
+                var insertAt = headerRow + PlaceholdersPerSection + 1;
+                // insert_rows(insert_at, amount=extra_rows): inserta arriba de insertAt.
+                sheet.Row(insertAt).InsertRowsAbove(extraRows);
+                for (var offset = 0; offset < extraRows; offset++)
+                    CopyRowStyle(sheet, firstDataRow, insertAt + offset, maxColumn);
+            }
+
+            for (var offset = 0; offset < pillarRecs.Count; offset++)
+                FillRow(sheet, firstDataRow + offset, pillarRecs[offset]);
+            for (var offset = pillarRecs.Count; offset < PlaceholdersPerSection; offset++)
+                ClearRow(sheet, firstDataRow + offset, maxColumn);
+        }
+
+        using var outStream = new MemoryStream();
+        workbook.SaveAs(outStream);
+        return outStream.ToArray();
     }
 
     // ---------- Carga de plantilla ----------
@@ -335,107 +317,5 @@ public sealed class ClosedXmlWafExporter : IWafExcelExporter
     {
         for (var column = 1; column <= maxColumn; column++)
             sheet.Cell(row, column).Clear(XLClearOptions.Contents);
-    }
-
-    // ---------- Restauración del paquete (port de _restore_template_package) ----------
-
-    private static byte[] RestoreTemplatePackage(byte[] templateBytes, byte[] generatedBytes)
-    {
-        using var templateZip = new ZipArchive(new MemoryStream(templateBytes, writable: false), ZipArchiveMode.Read);
-        using var generatedZip = new ZipArchive(new MemoryStream(generatedBytes, writable: false), ZipArchiveMode.Read);
-
-        var generatedSheetXml = SafeReadEntry(generatedZip, SheetEntry);
-        var generatedStylesXml = SafeReadEntry(generatedZip, StylesEntry);
-        // Si ClosedXML no produjo sheet2.xml/styles.xml con esos nombres exactos, no se puede
-        // parchar de forma fiable: se devuelve el .xlsx generado tal cual (datos sin branding).
-        if (generatedSheetXml is null || generatedStylesXml is null)
-            return generatedBytes;
-
-        var patchedSheet = PatchSheet(templateZip, generatedSheetXml);
-        if (patchedSheet is null)
-            return generatedBytes;
-
-        using var output = new MemoryStream();
-        using (var outputZip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen: true))
-        {
-            // Recorre las entradas de la PLANTILLA (preserva orden, media, drawings, vml, rels).
-            foreach (var entry in templateZip.Entries)
-            {
-                var name = entry.FullName;
-                var newEntry = outputZip.CreateEntry(name, CompressionLevel.Optimal);
-                using var dest = newEntry.Open();
-                if (name == StylesEntry)
-                {
-                    var bytes = System.Text.Encoding.UTF8.GetBytes(generatedStylesXml);
-                    dest.Write(bytes, 0, bytes.Length);
-                }
-                else if (name == SheetEntry)
-                {
-                    dest.Write(patchedSheet, 0, patchedSheet.Length);
-                }
-                else
-                {
-                    using var src = entry.Open();
-                    src.CopyTo(dest);
-                }
-            }
-        }
-        return output.ToArray();
-    }
-
-    /// <summary>
-    /// Toma el sheet2.xml generado (datos + estilos) y le re-inyecta pageSetup/legacyDrawing/extLst
-    /// de la plantilla (en ese orden), removiendo antes los del generado. Devuelve los bytes del XML
-    /// parcheado (UTF-8 con declaración), o null si no se pudo leer el sheet de la plantilla.
-    /// </summary>
-    private static byte[]? PatchSheet(ZipArchive templateZip, string generatedSheetXml)
-    {
-        var templateSheetXml = SafeReadEntry(templateZip, SheetEntry);
-        if (templateSheetXml is null) return null;
-
-        XNamespace ns = SpreadsheetNs;
-        var generatedDoc = XDocument.Parse(generatedSheetXml, System.Xml.Linq.LoadOptions.PreserveWhitespace);
-        var templateDoc = XDocument.Parse(templateSheetXml, System.Xml.Linq.LoadOptions.PreserveWhitespace);
-        var generatedRoot = generatedDoc.Root!;
-        var templateRoot = templateDoc.Root!;
-
-        foreach (var tag in new[] { "pageSetup", "legacyDrawing", "extLst" })
-        {
-            generatedRoot.Element(ns + tag)?.Remove();
-            var templateElement = templateRoot.Element(ns + tag);
-            if (templateElement is not null)
-                generatedRoot.Add(new XElement(templateElement));
-        }
-
-        // Reordena los hijos del <worksheet> a la secuencia canónica del esquema. Sin esto,
-        // los elementos reinyectados (pageSetup/legacyDrawing/extLst) quedan al final y Excel
-        // rechaza el archivo por orden inválido (OpenXmlValidator: Sch_UnexpectedElementContentExpectingComplex).
-        int Rank(XElement e)
-        {
-            var idx = Array.IndexOf(WorksheetChildOrder, e.Name.LocalName);
-            return idx < 0 ? int.MaxValue : idx;
-        }
-        // OrderBy es estable: preserva el orden relativo de elementos con el mismo rango (p. ej. varios cols).
-        var ordered = generatedRoot.Elements().OrderBy(Rank).Select(e => new XElement(e)).ToList();
-        generatedRoot.RemoveNodes();
-        generatedRoot.Add(ordered);
-
-        using var ms = new MemoryStream();
-        var settings = new System.Xml.XmlWriterSettings
-        {
-            Encoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false),
-            OmitXmlDeclaration = false,
-        };
-        using (var writer = System.Xml.XmlWriter.Create(ms, settings))
-            generatedDoc.Save(writer);
-        return ms.ToArray();
-    }
-
-    private static string? SafeReadEntry(ZipArchive zip, string name)
-    {
-        var entry = zip.GetEntry(name);
-        if (entry is null) return null;
-        using var reader = new StreamReader(entry.Open(), System.Text.Encoding.UTF8);
-        return reader.ReadToEnd();
     }
 }
