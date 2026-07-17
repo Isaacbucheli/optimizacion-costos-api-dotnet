@@ -203,6 +203,21 @@ var app = builder.Build();
 
 app.UseSwagger();
 app.UseSwaggerUI();
+
+// Red de seguridad (R1): sin CORS_ORIGINS en un entorno no-dev, la política CORS no agrega ningún
+// origen y el navegador bloquea TODAS las llamadas del front (SWA) con "Failed to fetch", aunque la
+// API responda perfecto por curl. ASP.NET no lanza excepción por esto, así que sin este aviso el
+// fallo es invisible en los logs del App Service. En desarrollo el front usa el proxy "/api" y no
+// necesita CORS, por eso solo avisamos fuera de Development. Ver STACK-NUEVO.md.
+if (!app.Environment.IsDevelopment() && config.CorsOrigins.Length == 0)
+{
+    app.Logger.LogError(
+        "CORS_ORIGINS está vacío en el entorno '{Environment}': la política CORS no permite ningún origen, " +
+        "por lo que el navegador bloqueará las llamadas del front con 'Failed to fetch'. Configura CORS_ORIGINS " +
+        "con el origen del Static Web App en la configuración del App Service.",
+        app.Environment.EnvironmentName);
+}
+
 app.UseCors(CorsPolicy);
 app.UseAuthentication();
 app.UseAuthorization();
