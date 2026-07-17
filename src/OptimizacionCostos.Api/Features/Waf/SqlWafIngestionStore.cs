@@ -270,11 +270,14 @@ public sealed partial class SqlWafIngestionStore(
                 await r.DisposeAsync();
                 if (dismissed) return (recId, false, true);
                 var impactNum = ImpactToNumber.GetValueOrDefault(row.BusinessImpact.ToLowerInvariant(), (byte)2);
+                // source = COALESCE(source, @source): rellena el origen si está vacío (recomendación
+                // previa a la columna 'source') sin pisar un origen ya conocido. Primer origen gana.
                 await Exec(conn, tx, ct, """
-                    UPDATE dbo.waf_recommendation SET matrix_code = @code, business_impact = @impact, impact_number = @num, last_seen_at = @now, is_active = 1
+                    UPDATE dbo.waf_recommendation SET matrix_code = @code, business_impact = @impact, impact_number = @num, last_seen_at = @now, is_active = 1,
+                        source = COALESCE(source, @source)
                     WHERE recommendation_id = @id
                     """, ("@code", MatrixCode(pillar, row.AdvisorName, row.AdvisorCategory)), ("@impact", row.BusinessImpact),
-                    ("@num", impactNum), ("@now", now), ("@id", recId));
+                    ("@num", impactNum), ("@now", now), ("@source", source), ("@id", recId));
                 return (recId, false, false);
             }
         }

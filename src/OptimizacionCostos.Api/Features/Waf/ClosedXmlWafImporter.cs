@@ -985,16 +985,20 @@ public sealed partial class ClosedXmlWafImporter(
                 recommendationId = Convert.ToInt32(existing);
                 await using var updRec = conn.CreateCommand();
                 updRec.Transaction = tx;
+                // source = COALESCE(source, 'excel'): al re-importar, marca como 'excel' las filas
+                // cuyo origen estaba vacío, sin pisar un origen ya conocido. Primer origen gana.
                 updRec.CommandText = """
                     UPDATE dbo.waf_recommendation
                     SET business_impact = @impact, impact_number = @impactNumber, last_seen_at = @now,
                         is_active = 1, is_dismissed = 0, dismissed_at = NULL,
-                        dismissed_by = NULL, dismissal_reason = NULL
+                        dismissed_by = NULL, dismissal_reason = NULL,
+                        source = COALESCE(source, @source)
                     WHERE recommendation_id = @id
                     """;
                 updRec.Parameters.Add(new SqlParameter("@impact", businessImpact));
                 updRec.Parameters.Add(new SqlParameter("@impactNumber", impactNumber));
                 updRec.Parameters.Add(new SqlParameter("@now", now));
+                updRec.Parameters.Add(new SqlParameter("@source", "excel"));
                 updRec.Parameters.Add(new SqlParameter("@id", recommendationId));
                 await updRec.ExecuteNonQueryAsync(ct);
             }
