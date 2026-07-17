@@ -126,8 +126,13 @@ public sealed partial class AdvisorApiClient(
 
                 foreach (var seriesEl in ts.EnumerateArray())
                 {
+                    // Azure devuelve "Daily"/"Weekly"/"Monthly" en la práctica; el doc REST muestra
+                    // "day"/"week"/"month". Aceptar AMBAS formas (ojo: "daily" NO empieza por "day").
                     var level = Normalize(Str(seriesEl, "aggregationLevel")).ToLowerInvariant();
-                    var gran = level switch { "day" => 'D', "week" => 'W', "month" => 'M', _ => '\0' };
+                    var gran = level is "day" or "daily" ? 'D'
+                             : level is "week" or "weekly" ? 'W'
+                             : level is "month" or "monthly" ? 'M'
+                             : '\0';
                     if (gran == '\0') continue;
                     if (!seriesEl.TryGetProperty("scoreHistory", out var hist) || hist.ValueKind != JsonValueKind.Array) continue;
 

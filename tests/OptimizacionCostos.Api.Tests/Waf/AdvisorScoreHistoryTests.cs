@@ -15,15 +15,15 @@ public sealed class AdvisorScoreHistoryTests
       {"name":"Security","properties":{
         "lastRefreshedScore":{"date":"2026-06-25T00:00:00Z","score":45,"consumptionUnits":10},
         "timeSeries":[
-          {"aggregationLevel":"day","scoreHistory":[
+          {"aggregationLevel":"Daily","scoreHistory":[
             {"date":"2026-06-25T00:00:00Z","score":45,"consumptionUnits":10},
             {"date":"2026-06-24T00:00:00Z","score":44,"consumptionUnits":10}]},
-          {"aggregationLevel":"month","scoreHistory":[
+          {"aggregationLevel":"Monthly","scoreHistory":[
             {"date":"2026-06-25T00:00:00Z","score":45,"consumptionUnits":10}]}
         ]}},
       {"name":"Advisor","properties":{
         "timeSeries":[
-          {"aggregationLevel":"day","scoreHistory":[
+          {"aggregationLevel":"Daily","scoreHistory":[
             {"date":"2026-06-25T00:00:00Z","score":76,"consumptionUnits":10}]}
         ]}}
     ]}
@@ -53,7 +53,7 @@ public sealed class AdvisorScoreHistoryTests
     {
         const string body = """
         {"value":[
-          {"name":"Foo","properties":{"timeSeries":[{"aggregationLevel":"day","scoreHistory":[{"date":"2026-06-25T00:00:00Z","score":1,"consumptionUnits":1}]}]}},
+          {"name":"Foo","properties":{"timeSeries":[{"aggregationLevel":"Daily","scoreHistory":[{"date":"2026-06-25T00:00:00Z","score":1,"consumptionUnits":1}]}]}},
           {"name":"Cost","properties":{"timeSeries":[{"aggregationLevel":"year","scoreHistory":[{"date":"2026-06-25T00:00:00Z","score":1,"consumptionUnits":1}]}]}}
         ]}
         """;
