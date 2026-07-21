@@ -27,6 +27,8 @@ public interface IClientStore
     Task UpdateLogoMetaAsync(int clientId, string blobName, string contentType, CancellationToken ct = default);
     Task<(string? BlobName, string? ContentType)?> GetLogoAsync(int clientId, CancellationToken ct = default);
     Task ClearLogoAsync(int clientId, CancellationToken ct = default);
+    Task<(bool Managed, string? Note)> GetSecurityManagementAsync(int clientId, CancellationToken ct = default);
+    Task SetSecurityManagementAsync(int clientId, bool managed, string? note, CancellationToken ct = default);
 }
 
 public sealed class SqlClientStore(ISqlConnectionFactory factory) : IClientStore
@@ -280,6 +282,52 @@ public sealed class SqlClientStore(ISqlConnectionFactory factory) : IClientStore
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = "UPDATE dbo.clients SET logo_blob_name = NULL, logo_content_type = NULL WHERE client_id = @id";
         cmd.Parameters.Add(new SqlParameter("@id", clientId));
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    // ---------- Gestión externa de seguridad (Gestión de Vulnerabilidades) ----------
+
+    private static async Task EnsureSecurityMgmtSchemaAsync(SqlConnection conn, SqlTransaction? tx, CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        if (tx is not null) cmd.Transaction = tx;
+        cmd.CommandText = """
+            IF COL_LENGTH('dbo.clients', 'security_managed_externally') IS NULL
+                ALTER TABLE dbo.clients ADD security_managed_externally BIT NOT NULL CONSTRAINT DF_clients_sec_mgmt DEFAULT 0;
+            IF COL_LENGTH('dbo.clients', 'security_managed_note') IS NULL
+                ALTER TABLE dbo.clients ADD security_managed_note NVARCHAR(1000) NULL;
+            """;
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<(bool Managed, string? Note)> GetSecurityManagementAsync(int clientId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSecurityMgmtSchemaAsync(conn, null, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT security_managed_externally, security_managed_note FROM dbo.clients WHERE client_id = @cid";
+        cmd.Parameters.Add(new SqlParameter("@cid", clientId));
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        if (!await r.ReadAsync(ct)) return (false, null);
+        var managed = !r.IsDBNull(0) && r.GetBoolean(0);
+        var note = r.IsDBNull(1) ? null : r.GetString(1);
+        return (managed, note);
+    }
+
+    public async Task SetSecurityManagementAsync(int clientId, bool managed, string? note, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSecurityMgmtSchemaAsync(conn, null, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dbo.clients
+            SET security_managed_externally = @managed, security_managed_note = @note
+            WHERE client_id = @cid
+            """;
+        var trimmed = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+        cmd.Parameters.Add(new SqlParameter("@managed", managed));
+        cmd.Parameters.Add(new SqlParameter("@note", (object?)trimmed ?? DBNull.Value)); // 8178: nunca null crudo
+        cmd.Parameters.Add(new SqlParameter("@cid", clientId));
         await cmd.ExecuteNonQueryAsync(ct);
     }
 }

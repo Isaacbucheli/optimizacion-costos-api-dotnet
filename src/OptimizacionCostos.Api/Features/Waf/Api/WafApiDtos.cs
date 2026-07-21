@@ -146,3 +146,6 @@ public sealed record WafExcelApplyRequest(
 /// <summary>Request de POST /waf/translate. Sin DataAnnotations (regresión 2026-07-02).</summary>
 public sealed record WafTranslateItemDto(string Key, string Text);
 public sealed record WafTranslateRequest(string Target, List<WafTranslateItemDto> Items);
+
+/// <summary>Request de PUT /waf/clients/{id}/security-management. Sin DataAnnotations (regresión 2026-07-02).</summary>
+public sealed record WafSecurityManagementRequest(bool ManagedExternally, string? Note);

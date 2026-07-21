@@ -59,6 +59,8 @@ public sealed class FakeClientStoreForExcel : IClientStore
     public Task UpdateLogoMetaAsync(int clientId, string blobName, string contentType, CancellationToken ct = default) => throw new NotSupportedException();
     public Task<(string? BlobName, string? ContentType)?> GetLogoAsync(int clientId, CancellationToken ct = default) => throw new NotSupportedException();
     public Task ClearLogoAsync(int clientId, CancellationToken ct = default) => throw new NotSupportedException();
+    public Task<(bool Managed, string? Note)> GetSecurityManagementAsync(int clientId, CancellationToken ct = default) => Task.FromResult((false, (string?)null));
+    public Task SetSecurityManagementAsync(int clientId, bool managed, string? note, CancellationToken ct = default) => Task.CompletedTask;
 }
 
 /// <summary>Levanta la API real en memoria (patrón TestAppFactory) con fakes de optimización.</summary>

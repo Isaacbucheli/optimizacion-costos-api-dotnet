@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Data;
+using OptimizacionCostos.Api.Features.Clients;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 
 namespace OptimizacionCostos.Api.Features.Waf.Api;
@@ -27,6 +28,7 @@ public sealed class WafController(
     IWafTranslationService translation,
     IWafExcelExporter excelExporter,
     IWafExcelImporter excelImporter,
+    IClientStore clientStore,
     IWafSyncOrchestrator orchestrator,
     IWafAdvisorSyncJobStore advisorSyncJobs,
     IWafAdvisorSyncJobQueue advisorSyncQueue,
@@ -75,7 +77,8 @@ public sealed class WafController(
         var guard = await GuardAsync(clientId, ct);
         if (guard is not null) return guard;
 
-        var s = await recommendations.GetSummaryAsync(clientId, ct);
+        var (secManaged, _) = await clientStore.GetSecurityManagementAsync(clientId, ct);
+        var s = await recommendations.GetSummaryAsync(clientId, excludeSecurityPillar: secManaged, ct);
         return Ok(new
         {
             client_id = s.ClientId,
@@ -104,17 +107,57 @@ public sealed class WafController(
         var guard = await GuardAsync(clientId, ct);
         if (guard is not null) return guard;
 
+        var (managed, note) = await clientStore.GetSecurityManagementAsync(clientId, ct);
+        var resolvedNote = string.IsNullOrWhiteSpace(note) ? WafConstants.SecurityManagedDefaultNote : note!;
         var sections = await recommendations.GetSectionsAsync(clientId, ct);
-        return Ok(sections.Select(x => new
+        return Ok(sections.Select(x =>
         {
-            section_num = x.SectionNum,
-            section_name = PillarSectionNames.GetValueOrDefault(x.SectionNum, x.SectionName),
-            total_recs = x.TotalRecs,
-            total_resources = x.TotalResources,
-            avg_progress = x.AvgProgress,
-            high_recs = x.HighRecs,
-            medium_recs = x.MediumRecs,
+            // El pilar de seguridad gestionado externamente conserva la tarjeta (para el score) pero
+            // se neutraliza a cero y se marca, para que la UI muestre la nota en vez del conteo.
+            var isSecMgmt = managed && x.SectionNum == WafConstants.SecurityPillar;
+            return new
+            {
+                section_num = x.SectionNum,
+                section_name = PillarSectionNames.GetValueOrDefault(x.SectionNum, x.SectionName),
+                total_recs = isSecMgmt ? 0 : x.TotalRecs,
+                total_resources = isSecMgmt ? 0 : x.TotalResources,
+                avg_progress = isSecMgmt ? 0.0 : x.AvgProgress,
+                high_recs = isSecMgmt ? 0 : x.HighRecs,
+                medium_recs = isSecMgmt ? 0 : x.MediumRecs,
+                managed_externally = isSecMgmt,
+                managed_note = isSecMgmt ? resolvedNote : (string?)null,
+            };
         }));
+    }
+
+    /// <summary>GET estado de gestión externa de seguridad (Gestión de Vulnerabilidades) del cliente.</summary>
+    [HttpGet("clients/{clientId:int}/security-management")]
+    [RequireModule(Modules.Waf)]
+    public async Task<IActionResult> GetSecurityManagement(int clientId, CancellationToken ct)
+    {
+        var guard = await GuardAsync(clientId, ct);
+        if (guard is not null) return guard;
+
+        var (managed, note) = await clientStore.GetSecurityManagementAsync(clientId, ct);
+        return Ok(new
+        {
+            managed_externally = managed,
+            note = string.IsNullOrWhiteSpace(note) ? WafConstants.SecurityManagedDefaultNote : note,
+        });
+    }
+
+    /// <summary>PUT estado de gestión externa de seguridad del cliente.</summary>
+    [HttpPut("clients/{clientId:int}/security-management")]
+    [RequireModule(Modules.Waf, ModuleAccess.Edit)]
+    public async Task<IActionResult> SetSecurityManagement(int clientId, [FromBody] WafSecurityManagementRequest payload, CancellationToken ct)
+    {
+        if (payload is null) return BadRequest(new { detail = "Cuerpo requerido." });
+        var guard = await GuardAsync(clientId, ct);
+        if (guard is not null) return guard;
+
+        var note = payload.Note is { Length: > 1000 } long_ ? long_[..1000] : payload.Note;
+        await clientStore.SetSecurityManagementAsync(clientId, payload.ManagedExternally, note, ct);
+        return Ok(new { message = "Configuración guardada", client_id = clientId, managed_externally = payload.ManagedExternally });
     }
 
     /// <summary>POST /waf/translate — traduce textos WAF es→en en vivo (sin persistir).</summary>
@@ -331,6 +374,8 @@ public sealed class WafController(
         // (completion/fecha/esfuerzo) que el modelo WafRecommendation no trae; se consulta el join
         // directamente (port 1:1 del SELECT de list_waf_recommendations).
         var where = new List<string> { "r.client_id = @cid" };
+        var (secManaged, _) = await clientStore.GetSecurityManagementAsync(clientId, ct);
+        if (secManaged) where.Add($"c.pillar_number <> {WafConstants.SecurityPillar}");
         await using var conn = await factory.OpenAsync(ct);
         await WafSchema.EnsureWafSchemaAsync(conn, ct);
         await using var cmd = conn.CreateCommand();
@@ -706,7 +751,8 @@ public sealed class WafController(
         var clientName = await ClientNameAsync(clientId, ct);
         if (clientName is null) return NotFound(new { detail = "Client not found" });
 
-        var rows = await BuildExportRowsAsync(clientId, ct);
+        var (secManaged, _) = await clientStore.GetSecurityManagementAsync(clientId, ct);
+        var rows = await BuildExportRowsAsync(clientId, secManaged, ct);
         var bytes = await excelExporter.ExportAsync(clientId, rows, ct);
 
         var safeName = new string((clientName ?? "").Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray()).Trim('-');
@@ -924,13 +970,16 @@ public sealed class WafController(
     }
 
     /// <summary>Arma las filas de exportación (canónica + tracking + recursos activos). Port del SELECT de export_waf_client_excel.</summary>
-    private async Task<IReadOnlyList<WafExportRow>> BuildExportRowsAsync(int clientId, CancellationToken ct)
+    private async Task<IReadOnlyList<WafExportRow>> BuildExportRowsAsync(int clientId, bool excludeSecurity, CancellationToken ct)
     {
         await using var conn = await factory.OpenAsync(ct);
         var rows = new List<(int RecId, WafExportRow Row)>();
+        // Si la seguridad se gestiona externamente, la sección Seguridad queda vacía (placeholders):
+        // se filtran las filas, sin reestructurar la plantilla del Excel.
+        var secFilter = excludeSecurity ? $" AND c.pillar_number <> {WafConstants.SecurityPillar}" : "";
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = """
+            cmd.CommandText = $"""
                 SELECT
                     r.recommendation_id, r.canonical_id, r.matrix_code,
                     c.pillar_number, c.review_scope_es, c.benefit_es,
@@ -945,7 +994,7 @@ public sealed class WafController(
                     ON t.client_id = r.client_id AND t.canonical_id = r.canonical_id
                 WHERE r.client_id = @cid
                   AND r.is_active = 1
-                  AND COALESCE(r.is_dismissed, 0) = 0
+                  AND COALESCE(r.is_dismissed, 0) = 0{secFilter}
                 ORDER BY c.pillar_number, r.impact_number, c.review_scope_es
                 """;
             cmd.Parameters.Add(new SqlParameter("@cid", clientId));

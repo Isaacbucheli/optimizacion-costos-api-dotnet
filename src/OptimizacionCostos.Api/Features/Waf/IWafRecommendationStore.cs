@@ -47,8 +47,9 @@ public interface IWafRecommendationStore
     /// <summary>Marca (idempotente) la recomendación como leída por el usuario dado.</summary>
     Task MarkReadAsync(int clientId, int canonicalId, string userKey, CancellationToken ct = default);
 
-    /// <summary>Resumen de la matriz del cliente (totales + última ingestión). Port de waf_client_summary.</summary>
-    Task<WafClientSummary> GetSummaryAsync(int clientId, CancellationToken ct = default);
+    /// <summary>Resumen de la matriz del cliente (totales + última ingestión). Port de waf_client_summary.
+    /// Si excludeSecurityPillar, los conteos omiten el pilar de seguridad (gestión externa).</summary>
+    Task<WafClientSummary> GetSummaryAsync(int clientId, bool excludeSecurityPillar = false, CancellationToken ct = default);
 
     /// <summary>Tarjetas por pilar (siempre las 5). Port de waf_client_sections.</summary>
     Task<IReadOnlyList<WafSection>> GetSectionsAsync(int clientId, CancellationToken ct = default);

@@ -226,15 +226,19 @@ public sealed class SqlWafRecommendationStore(ISqlConnectionFactory factory) : I
 
     // ---------- Summary / Sections ----------
 
-    public async Task<WafClientSummary> GetSummaryAsync(int clientId, CancellationToken ct = default)
+    public async Task<WafClientSummary> GetSummaryAsync(int clientId, bool excludeSecurityPillar = false, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
         await WafSchema.EnsureWafSchemaAsync(conn, ct);
 
+        // Filtro constante (literal, no viene de input) para omitir el pilar de seguridad si el
+        // cliente lo gestiona externamente (Gestión de Vulnerabilidades).
+        var secFilter = excludeSecurityPillar ? $" AND c.pillar_number <> {WafConstants.SecurityPillar}" : "";
+
         int recommendations = 0, activeRecs = 0, costRecs = 0, activeFindings = 0;
         await using (var counts = conn.CreateCommand())
         {
-            counts.CommandText = """
+            counts.CommandText = $"""
                 SELECT
                     COUNT(DISTINCT r.recommendation_id) AS recommendations,
                     COUNT(DISTINCT CASE WHEN r.is_active = 1 AND COALESCE(r.is_dismissed, 0) = 0 THEN r.recommendation_id END) AS active_recommendations,
@@ -243,7 +247,7 @@ public sealed class SqlWafRecommendationStore(ISqlConnectionFactory factory) : I
                 FROM dbo.waf_recommendation r
                 INNER JOIN dbo.waf_recommendation_canonical c ON c.canonical_id = r.canonical_id
                 LEFT JOIN dbo.waf_resource_finding f ON f.recommendation_id = r.recommendation_id
-                WHERE r.client_id = @clientId
+                WHERE r.client_id = @clientId{secFilter}
                 """;
             counts.Parameters.Add(new SqlParameter("@clientId", clientId));
             await using var r = await counts.ExecuteReaderAsync(ct);

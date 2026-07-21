@@ -43,6 +43,13 @@ public static class WafConstants
     };
     public const byte DefaultPillar = 2;
 
+    /// <summary>Pilar cuyas recomendaciones se excluyen cuando la seguridad se gestiona aparte.</summary>
+    public const byte SecurityPillar = 3;
+
+    /// <summary>Nota por defecto cuando la seguridad de un cliente se gestiona externamente.</summary>
+    public const string SecurityManagedDefaultNote =
+        "Controles de seguridad revisados por el servicio de Gestión de Vulnerabilidades.";
+
     /// <summary>Etiqueta legible por pilar (para secciones/UI).</summary>
     public static readonly IReadOnlyDictionary<byte, string> PillarLabels = new Dictionary<byte, string>
     {

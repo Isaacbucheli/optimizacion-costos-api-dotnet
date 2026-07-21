@@ -44,6 +44,10 @@ public sealed class FakeClientStore : IClientStore
         => throw new NotImplementedException();
     public Task ClearLogoAsync(int clientId, CancellationToken ct = default)
         => throw new NotImplementedException();
+    public Task<(bool Managed, string? Note)> GetSecurityManagementAsync(int clientId, CancellationToken ct = default)
+        => Task.FromResult((false, (string?)null));
+    public Task SetSecurityManagementAsync(int clientId, bool managed, string? note, CancellationToken ct = default)
+        => Task.CompletedTask;
 }
 
 /// <summary>CredentialStore fake: registra el upsert de sesión (idempotente por cliente+email+tenant,
