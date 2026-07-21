@@ -71,7 +71,9 @@ public sealed record WafIngestionMetrics(
     int AdvisorItems,
     string SubscriptionId,
     string SubscriptionName,
-    bool PaginationTruncated = false);
+    bool PaginationTruncated = false,
+    // Ítems ARM con suppressionIds (pospuestos/descartados en el portal): se omiten de la ingesta.
+    int RowsSuppressedSkipped = 0);
 
 /// <summary>Un punto histórico crudo de una suscripción para una serie (global o pilar), una granularidad.</summary>
 public sealed record AdvisorHistoryPoint(DateOnly Date, decimal Score, decimal Weight);

@@ -68,14 +68,19 @@ public sealed record AppJobLock(string JobName, DateTime LockedUntil, string? Ow
 public sealed record AdvisorRow(
     string AdvisorName, string AdvisorCategory, string BusinessImpact, string ResourceName,
     string ResourceType, string ResourceGroup, string SubscriptionId, string SubscriptionName,
-    string AzureResourceId, string? AdditionalInfo);
+    string AzureResourceId, string? AdditionalInfo,
+    // GUID (lower) del tipo de recomendación ARM. Solo sync Advisor; el CSV/Excel lo deja null.
+    string? RecommendationTypeId = null);
 
 /// <summary>Candidato unificado para dedup (ingesta) y consolidación (post-curación).</summary>
 public sealed record WafCandidate(
     int CanonicalId, int? RecommendationId, string? MatrixCode, byte PillarNumber,
     string AdvisorName, string AdvisorCategory, string ReviewScopeEs,
     string? BenefitEs, string? ClientActionEs, string? BitActionEs,
-    string? ResourcesText, int? CompletionPct, DateOnly? RemediationStartDate, string? ExecutionLog);
+    string? ResourcesText, int? CompletionPct, DateOnly? RemediationStartDate, string? ExecutionLog,
+    // recommendationTypeIds ARM (lower) presentes en los findings. Vacío/null = origen sin typeId
+    // (CSV/manual): la guarda anti-fusión no aplica y el comportamiento es el histórico.
+    IReadOnlyList<string>? TypeIds = null);
 
 public sealed record WafCurationResult(
     string Decision, bool PossibleAdditionalCost, string CostReason, string DuplicateGroupKey,

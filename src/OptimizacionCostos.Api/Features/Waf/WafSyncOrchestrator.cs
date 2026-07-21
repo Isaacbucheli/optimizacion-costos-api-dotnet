@@ -85,7 +85,18 @@ public sealed class WafSyncOrchestrator(
                     var (subRows, subMetrics) = await advisorScore.GenerateAndListRecommendationsAsync(
                         group.CredentialId, subscriptionId, subscriptionName,
                         timeoutSecondsPerSubscription, ct);
-                    rows.AddRange(subRows);
+
+                    // Cross-check Defender (regla del portal de Advisor): poda las filas de
+                    // Seguridad cuyo assessment ya no está vigente. Fail-open: set null => no filtra.
+                    var applicable = await advisorScore.FetchApplicableAssessmentTypesAsync(
+                        group.CredentialId, subscriptionId, ct);
+                    var (keptRows, defenderCheck, defenderSkipped) = ApplyDefenderCrossCheck(subRows, applicable);
+                    if (defenderCheck == "unavailable")
+                        logger.LogWarning("Cross-check Defender no disponible subscription_id={Sid}; se ingesta sin filtrar", subscriptionId);
+                    else if (defenderSkipped > 0)
+                        logger.LogInformation("Cross-check Defender omitió {N} recomendaciones de seguridad no vigentes subscription_id={Sid}", defenderSkipped, subscriptionId);
+
+                    rows.AddRange(keptRows);
                     successfulSubscriptions.Add(subscriptionId);
                     subscriptionResults.Add(new
                     {
@@ -94,6 +105,9 @@ public sealed class WafSyncOrchestrator(
                         subscription_name = subscriptionName,
                         status = subMetrics.PaginationTruncated ? "partial" : "ok",
                         error = (string?)null,
+                        defender_check = defenderCheck,
+                        defender_resolved_skipped = defenderSkipped,
+                        suppressed_skipped = subMetrics.RowsSuppressedSkipped,
                     });
                 }
                 catch (Exception ex)
@@ -167,6 +181,19 @@ public sealed class WafSyncOrchestrator(
             AiProcessed: curation.Processed,
             AiErrors: curation.Errors,
             Warnings: warnings);
+    }
+
+    /// <summary>
+    /// Aplica el filtro Defender a las filas de una suscripción y resume el resultado para
+    /// subscription_results. Set null => cross-check "unavailable" y NO se filtra (fail-open).
+    /// </summary>
+    internal static (IReadOnlyList<AdvisorRow> Rows, string DefenderCheck, int DefenderSkipped) ApplyDefenderCrossCheck(
+        IReadOnlyList<AdvisorRow> subRows, IReadOnlySet<string>? applicableTypes)
+    {
+        if (applicableTypes is null)
+            return (subRows, "unavailable", 0);
+        var (kept, dropped) = AdvisorApiClient.FilterSecurityRowsByDefender(subRows, applicableTypes);
+        return (kept, "ok", dropped);
     }
 
     // -------------------- Consolidación (port de _consolidate_client_duplicates) --------------------

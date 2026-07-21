@@ -215,10 +215,117 @@ public sealed partial class AdvisorApiClient(
     }
 
     // ---------------------------------------------------------------------
+    // 3) Cross-check Defender for Cloud (assessments vigentes por suscripción)
+    // ---------------------------------------------------------------------
+
+    public async Task<IReadOnlySet<string>?> FetchApplicableAssessmentTypesAsync(
+        int credentialId, string subscriptionId, CancellationToken ct = default)
+    {
+        try
+        {
+            var (http, token) = await ClientAsync(credentialId, ct);
+            return await ListApplicableAssessmentTypesAsync(http, token, subscriptionId, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch
+        {
+            // Fail-open: sin set no se filtra nada; el orquestador lo reporta como "unavailable".
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Set de tipos de assessment (GUID lower) VIGENTES en la suscripción: con al menos un
+    /// assessment cuyo status.code != "NotApplicable" (regla del portal de Advisor, Fase 0 del
+    /// spec 2026-07-21). Devuelve null ante cualquier error o paginación incompleta (fail-open):
+    /// un set parcial causaría descartes de más.
+    /// </summary>
+    internal static async Task<IReadOnlySet<string>?> ListApplicableAssessmentTypesAsync(
+        HttpClient http, string token, string subscriptionId, CancellationToken ct)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        string? url = ArmUrl($"/subscriptions/{subscriptionId}/providers/Microsoft.Security/assessments")
+                    + $"?api-version={WafConstants.DefenderAssessmentsApiVersion}";
+        try
+        {
+            while (!string.IsNullOrEmpty(url))
+            {
+                using var response = await RequestWithRetryAsync(http, token, HttpMethod.Get, url, ct);
+                if (response.StatusCode != HttpStatusCode.OK)
+                    return null;
+                var body = await response.Content.ReadAsStringAsync(ct);
+                using var doc = JsonDocument.Parse(body);
+                set.UnionWith(ParseApplicableAssessments(doc.RootElement));
+                var nextLink = doc.RootElement.TryGetProperty("nextLink", out var nl) && nl.ValueKind == JsonValueKind.String
+                    ? nl.GetString() : null;
+                url = string.IsNullOrEmpty(nextLink) ? "" : ValidateNextLink(nextLink);
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch
+        {
+            return null;
+        }
+        return set;
+    }
+
+    /// <summary>
+    /// Tipos con ≥1 assessment vigente en la página: status.code presente y != "NotApplicable"
+    /// (Unhealthy, Healthy o estados nuevos cuentan; entradas sin status se ignoran).
+    /// </summary>
+    internal static HashSet<string> ParseApplicableAssessments(JsonElement root)
+    {
+        var set = new HashSet<string>(StringComparer.Ordinal);
+        if (!root.TryGetProperty("value", out var value) || value.ValueKind != JsonValueKind.Array)
+            return set;
+        foreach (var item in value.EnumerateArray())
+        {
+            var name = Str(item, "name");
+            if (string.IsNullOrEmpty(name)) continue;
+            if (!item.TryGetProperty("properties", out var props) || props.ValueKind != JsonValueKind.Object) continue;
+            if (!props.TryGetProperty("status", out var status) || status.ValueKind != JsonValueKind.Object) continue;
+            var code = Str(status, "code");
+            if (string.IsNullOrEmpty(code)) continue;
+            if (code.Equals("NotApplicable", StringComparison.OrdinalIgnoreCase)) continue;
+            set.Add(name.ToLowerInvariant());
+        }
+        return set;
+    }
+
+    /// <summary>
+    /// Poda las filas de Seguridad cuyo tipo no está vigente en Defender (regla del portal).
+    /// applicableTypes null/vacío => no filtra (fail-open). Nunca toca otras categorías ni filas
+    /// sin RecommendationTypeId. Solo PODA: jamás agrega recomendaciones Defender-only.
+    /// </summary>
+    internal static (IReadOnlyList<AdvisorRow> Kept, int Dropped) FilterSecurityRowsByDefender(
+        IReadOnlyList<AdvisorRow> rows, IReadOnlySet<string>? applicableTypes)
+    {
+        if (applicableTypes is null || applicableTypes.Count == 0)
+            return (rows, 0);
+        var kept = new List<AdvisorRow>(rows.Count);
+        var dropped = 0;
+        foreach (var row in rows)
+        {
+            var isSecurity = row.AdvisorCategory.Replace(" ", "").Equals("security", StringComparison.OrdinalIgnoreCase);
+            if (isSecurity && row.RecommendationTypeId is { Length: > 0 } typeId && !applicableTypes.Contains(typeId))
+            {
+                dropped++;
+                continue;
+            }
+            kept.Add(row);
+        }
+        return (kept, dropped);
+    }
+
+    // ---------------------------------------------------------------------
     // Parsing de items a AdvisorRow (helpers puros, testeables)
     // ---------------------------------------------------------------------
 
-    /// <summary>Port de advisor_api_items_to_rows: dedup por (name,category,resource,subscription).</summary>
+    /// <summary>
+    /// Port de advisor_api_items_to_rows: dedup por (name,category,resource,subscription).
+    /// Los ítems con suppressionIds (pospuestos/descartados en Advisor) se omiten: el portal no los
+    /// muestra en la vista "Activas" y la matriz debe cuadrar con el portal.
+    /// </summary>
     internal static (IReadOnlyList<AdvisorRow> Rows, WafIngestionMetrics Metrics) ItemsToRows(
         IReadOnlyList<JsonElement> items, string subscriptionId, string subscriptionName)
     {
@@ -226,9 +333,15 @@ public sealed partial class AdvisorApiClient(
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var skipped = 0;
         var duplicates = 0;
+        var suppressed = 0;
 
         foreach (var item in items)
         {
+            if (IsSuppressed(item))
+            {
+                suppressed++;
+                continue;
+            }
             var row = ItemToRow(item, subscriptionId, subscriptionName);
             if (string.IsNullOrEmpty(row.AdvisorName) || string.IsNullOrEmpty(row.AdvisorCategory))
             {
@@ -251,14 +364,26 @@ public sealed partial class AdvisorApiClient(
         }
 
         var metrics = new WafIngestionMetrics(
-            RowsTotal: rows.Count + skipped + duplicates,
+            RowsTotal: rows.Count + skipped + duplicates + suppressed,
             RowsProcessed: rows.Count,
             RowsSkipped: skipped,
             RowsDuplicateSkipped: duplicates,
             AdvisorItems: 0,
             SubscriptionId: subscriptionId,
-            SubscriptionName: subscriptionName);
+            SubscriptionName: subscriptionName,
+            RowsSuppressedSkipped: suppressed);
         return (rows, metrics);
+    }
+
+    /// <summary>Pospuesta/descartada en Advisor: properties.suppressionIds con ≥1 entrada no vacía.</summary>
+    internal static bool IsSuppressed(JsonElement item)
+    {
+        if (!item.TryGetProperty("properties", out var props) || props.ValueKind != JsonValueKind.Object) return false;
+        if (!props.TryGetProperty("suppressionIds", out var ids) || ids.ValueKind != JsonValueKind.Array) return false;
+        foreach (var id in ids.EnumerateArray())
+            if (id.ValueKind == JsonValueKind.String && !string.IsNullOrEmpty(id.GetString()))
+                return true;
+        return false;
     }
 
     /// <summary>Port de advisor_api_item_to_row: extrae y trunca cada campo del item ARM.</summary>
@@ -287,6 +412,7 @@ public sealed partial class AdvisorApiClient(
         var category = Normalize(Str(properties, "category"));
         var impact = Normalize(Str(properties, "impact"));
         var subName = Normalize(subscriptionName);
+        var typeId = Normalize(Str(properties, "recommendationTypeId")).ToLowerInvariant();
 
         return new AdvisorRow(
             AdvisorName: Truncate(advisorName, 500),
@@ -298,7 +424,8 @@ public sealed partial class AdvisorApiClient(
             SubscriptionId: Truncate(Normalize(subscriptionId), 100),
             SubscriptionName: Truncate(string.IsNullOrEmpty(subName) ? Normalize(subscriptionId) : subName, 255),
             AzureResourceId: Truncate(resourceId, 2048),
-            AdditionalInfo: AdditionalInfo(properties, Normalize(Str(item, "name"))));
+            AdditionalInfo: AdditionalInfo(properties, Normalize(Str(item, "name"))),
+            RecommendationTypeId: string.IsNullOrEmpty(typeId) ? null : Truncate(typeId, 64));
     }
 
     /// <summary>Port de _resource_group: /resourceGroups/(grupo) (case-insensitive).</summary>

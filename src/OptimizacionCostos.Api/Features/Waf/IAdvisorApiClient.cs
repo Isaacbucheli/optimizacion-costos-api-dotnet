@@ -32,6 +32,14 @@ public interface IAdvisorApiClient
     Task<(IReadOnlyList<AdvisorRow> Rows, WafIngestionMetrics Metrics)> GenerateAndListRecommendationsAsync(
         int credentialId, string subscriptionId, string subscriptionName,
         int timeoutSeconds = 600, int pageSize = 200, CancellationToken ct = default);
+
+    /// <summary>
+    /// Tipos de assessment de Defender (GUID lower) VIGENTES en la suscripción (status !=
+    /// NotApplicable). Null si la llamada falla o la paginación queda incompleta (fail-open: sin
+    /// set NO se filtra). Base del cross-check que replica la vista del portal de Advisor.
+    /// </summary>
+    Task<IReadOnlySet<string>?> FetchApplicableAssessmentTypesAsync(
+        int credentialId, string subscriptionId, CancellationToken ct = default);
 }
 
 /// <summary>Se lanza cuando Azure Advisor no puede generar/retornar datos. Port de AdvisorApiError.</summary>

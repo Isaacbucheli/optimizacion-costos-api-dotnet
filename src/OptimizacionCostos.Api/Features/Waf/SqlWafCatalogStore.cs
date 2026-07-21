@@ -237,7 +237,8 @@ public sealed class SqlWafCatalogStore(ISqlConnectionFactory factory) : IWafCata
                 c.client_action_es, c.bit_action_es,
                 COALESCE(resources.resources_text, '') AS resources_text,
                 COALESCE(t.completion_pct, 0) AS completion_pct,
-                t.remediation_start_date, t.execution_log
+                t.remediation_start_date, t.execution_log,
+                COALESCE(types.type_ids, '') AS type_ids
             FROM dbo.waf_recommendation r
             INNER JOIN dbo.waf_recommendation_canonical c ON c.canonical_id = r.canonical_id
             LEFT JOIN dbo.waf_recommendation_tracking t
@@ -247,6 +248,15 @@ public sealed class SqlWafCatalogStore(ISqlConnectionFactory factory) : IWafCata
                 FROM dbo.waf_resource_finding f
                 WHERE f.recommendation_id = r.recommendation_id AND f.status = 'active'
             ) resources
+            OUTER APPLY (
+                SELECT STRING_AGG(CAST(x.tid AS NVARCHAR(MAX)), N' ') AS type_ids
+                FROM (
+                    SELECT DISTINCT LOWER(JSON_VALUE(f2.additional_info, '$.recommendationTypeId')) AS tid
+                    FROM dbo.waf_resource_finding f2
+                    WHERE f2.recommendation_id = r.recommendation_id
+                      AND JSON_VALUE(f2.additional_info, '$.recommendationTypeId') IS NOT NULL
+                ) x
+            ) types
             WHERE r.client_id = @clientId
               AND r.is_active = 1
               AND COALESCE(r.is_dismissed, 0) = 0
@@ -273,9 +283,58 @@ public sealed class SqlWafCatalogStore(ISqlConnectionFactory factory) : IWafCata
                 ResourcesText: r.IsDBNull(10) ? "" : r.GetString(10),
                 CompletionPct: r.IsDBNull(11) ? 0 : r.GetInt32(11),
                 RemediationStartDate: r.IsDBNull(12) ? null : DateOnly.FromDateTime(r.GetDateTime(12)),
-                ExecutionLog: r.IsDBNull(13) ? null : r.GetString(13)));
+                ExecutionLog: r.IsDBNull(13) ? null : r.GetString(13),
+                TypeIds: r.IsDBNull(14) || r.GetString(14).Length == 0
+                    ? null
+                    : r.GetString(14).Split(' ', StringSplitOptions.RemoveEmptyEntries)));
         }
         return items;
+    }
+
+    // ---------- typeId ARM (atajo/guarda de dedup; spec 2026-07-21) ----------
+
+    public async Task<int?> FindCanonicalByTypeIdAsync(
+        SqlConnection conn, SqlTransaction tx, string typeId, CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        // Solo hay match cuando el tipo vive en EXACTAMENTE una canónica (ambiguo => null).
+        cmd.CommandText = """
+            SELECT r.canonical_id
+            FROM dbo.waf_resource_finding f
+            INNER JOIN dbo.waf_recommendation r ON r.recommendation_id = f.recommendation_id
+            WHERE LOWER(JSON_VALUE(f.additional_info, '$.recommendationTypeId')) = LOWER(@tid)
+            GROUP BY r.canonical_id
+            """;
+        cmd.Parameters.Add(new SqlParameter("@tid", typeId));
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        int? found = null;
+        while (await r.ReadAsync(ct))
+        {
+            if (found is not null) return null; // más de una canónica: ambiguo
+            found = r.GetInt32(0);
+        }
+        return found;
+    }
+
+    public async Task<IReadOnlyList<string>> GetCanonicalTypeIdsAsync(
+        SqlConnection conn, SqlTransaction tx, int canonicalId, CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            SELECT DISTINCT LOWER(JSON_VALUE(f.additional_info, '$.recommendationTypeId'))
+            FROM dbo.waf_resource_finding f
+            INNER JOIN dbo.waf_recommendation r ON r.recommendation_id = f.recommendation_id
+            WHERE r.canonical_id = @id
+              AND JSON_VALUE(f.additional_info, '$.recommendationTypeId') IS NOT NULL
+            """;
+        cmd.Parameters.Add(new SqlParameter("@id", canonicalId));
+        var ids = new List<string>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+            if (!r.IsDBNull(0)) ids.Add(r.GetString(0));
+        return ids;
     }
 
     // ---------- ApplyAiSuggestion (port de _apply_ai_suggestion) ----------

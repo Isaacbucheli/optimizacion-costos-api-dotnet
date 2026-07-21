@@ -136,6 +136,9 @@ public sealed class AdvisorScoreHistoryTests
         public Task<(IReadOnlyList<AdvisorRow> Rows, WafIngestionMetrics Metrics)> GenerateAndListRecommendationsAsync(
             int credentialId, string subscriptionId, string subscriptionName,
             int timeoutSeconds = 600, int pageSize = 200, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlySet<string>?> FetchApplicableAssessmentTypesAsync(
+            int credentialId, string subscriptionId, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlySet<string>?>(null);
     }
 
     private sealed class CaptureStore : IAdvisorScoreStore

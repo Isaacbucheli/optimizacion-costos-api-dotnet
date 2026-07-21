@@ -68,6 +68,21 @@ public interface IWafCatalogStore
         SqlConnection conn, SqlTransaction tx, int clientId, CancellationToken ct);
 
     /// <summary>
+    /// Canónica cuyos findings (de cualquier cliente) llevan este recommendationTypeId en
+    /// additional_info. Null si ninguna o si el tipo aparece en más de una canónica (ambiguo).
+    /// Atajo determinista de dedup: mismo tipo ARM = misma recomendación aunque cambie el label.
+    /// </summary>
+    Task<int?> FindCanonicalByTypeIdAsync(
+        SqlConnection conn, SqlTransaction tx, string typeId, CancellationToken ct);
+
+    /// <summary>
+    /// recommendationTypeIds (lower, distinct) presentes en los findings de una canónica, de
+    /// cualquier cliente. Vacío si la canónica no tiene tipos conocidos (CSV/manual).
+    /// </summary>
+    Task<IReadOnlyList<string>> GetCanonicalTypeIdsAsync(
+        SqlConnection conn, SqlTransaction tx, int canonicalId, CancellationToken ct);
+
+    /// <summary>
     /// Persiste una sugerencia de curación IA en la canónica (todos los campos curados + ai_*):
     /// decision→ai_review_status (include→applied, exclude→excluded, review→requires_review),
     /// is_excluded según decision, ai_reviewed_by/at. Port de _apply_ai_suggestion. Participa en la

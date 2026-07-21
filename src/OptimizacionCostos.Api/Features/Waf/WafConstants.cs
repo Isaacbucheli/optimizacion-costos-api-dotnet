@@ -75,4 +75,5 @@ public static class WafConstants
     public const string AdvisorScoreApiVersion = "2023-01-01";
     public const string AdvisorGenerateApiVersion = "2025-01-01";
     public const string AdvisorRecommendationsFallbackApiVersion = "2023-01-01";
+    public const string DefenderAssessmentsApiVersion = "2021-06-01";
 }

@@ -28,6 +28,10 @@ public sealed class AdvisorScoreService(
         apiClient.GenerateAndListRecommendationsAsync(
             credentialId, subscriptionId, subscriptionName, timeoutSeconds, ct: ct);
 
+    public Task<IReadOnlySet<string>?> FetchApplicableAssessmentTypesAsync(
+        int credentialId, string subscriptionId, CancellationToken ct = default) =>
+        apiClient.FetchApplicableAssessmentTypesAsync(credentialId, subscriptionId, ct);
+
     // ---------------------------------------------------------------------
     // compute_advisor_score
     // ---------------------------------------------------------------------

@@ -122,5 +122,9 @@ public sealed class WafAdminApiTests : IClassFixture<WafAdminApiTests.Factory>
             int credentialId, string subscriptionId, string subscriptionName,
             int timeoutSeconds = 600, CancellationToken ct = default)
             => throw new NotSupportedException();
+
+        public Task<IReadOnlySet<string>?> FetchApplicableAssessmentTypesAsync(
+            int credentialId, string subscriptionId, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlySet<string>?>(null); // fail-open: no filtra
     }
 }

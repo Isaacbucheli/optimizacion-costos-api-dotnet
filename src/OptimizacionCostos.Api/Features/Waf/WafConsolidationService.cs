@@ -35,6 +35,9 @@ public sealed class WafConsolidationService(ILogger<WafConsolidationService> log
 
             foreach (var primary in kept)
             {
+                // Tipos ARM conocidos y disjuntos = recomendaciones distintas de Defender: el par
+                // ni se puntúa (no hay merge determinista NI llamada a IA posible).
+                if (!TypesCompatible(candidate, primary)) continue;
                 var ratio = WafText.SequenceRatio(candTitle, WafText.NormalizeText(primary.ReviewScopeEs));
                 var overlap = WafText.ResourceOverlap(candResources, WafText.ResourceSet(primary.ResourcesText));
                 var jaccard = WafText.Jaccard(candTokens, WafText.TitleTokens(primary.ReviewScopeEs));
@@ -124,6 +127,13 @@ public sealed class WafConsolidationService(ILogger<WafConsolidationService> log
 
     private static bool IsManual(WafCandidate c) =>
         (c.AdvisorCategory ?? "").Trim().ToLowerInvariant().StartsWith("matriz historica");
+
+    /// <summary>Compatible si algún lado no tiene tipos conocidos o si comparten al menos uno.</summary>
+    private static bool TypesCompatible(WafCandidate a, WafCandidate b)
+    {
+        if (a.TypeIds is not { Count: > 0 } ta || b.TypeIds is not { Count: > 0 } tb) return true;
+        return ta.Intersect(tb, StringComparer.OrdinalIgnoreCase).Any();
+    }
 
     private static async Task Exec(SqlConnection conn, SqlTransaction tx, CancellationToken ct, string sql, params (string Name, object Value)[] ps)
     {

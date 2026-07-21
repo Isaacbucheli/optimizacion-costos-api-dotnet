@@ -49,4 +49,11 @@ public interface IAdvisorScoreService
     Task<(IReadOnlyList<AdvisorRow> Rows, WafIngestionMetrics Metrics)> GenerateAndListRecommendationsAsync(
         int credentialId, string subscriptionId, string subscriptionName,
         int timeoutSeconds = 600, CancellationToken ct = default);
+
+    /// <summary>
+    /// Tipos de assessment de Defender vigentes en la suscripción (delegación a la API client).
+    /// Null = cross-check no disponible (fail-open, no filtrar).
+    /// </summary>
+    Task<IReadOnlySet<string>?> FetchApplicableAssessmentTypesAsync(
+        int credentialId, string subscriptionId, CancellationToken ct = default);
 }
