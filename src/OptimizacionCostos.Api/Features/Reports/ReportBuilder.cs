@@ -327,14 +327,29 @@ public sealed class ReportBuilder(
         try
         {
             await using var conn = await factory.OpenAsync(ct);
+
+            // ¿Seguridad gestionada externamente (Gestión de Vulnerabilidades)? → excluir pilar 3 del informe.
+            bool excludeSecurity = false;
+            await using (var flag = conn.CreateCommand())
+            {
+                flag.CommandText = """
+                    IF COL_LENGTH('dbo.clients', 'security_managed_externally') IS NOT NULL
+                        SELECT security_managed_externally FROM dbo.clients WHERE client_id = @id;
+                    """;
+                flag.Parameters.Add(new SqlParameter("@id", clientId));
+                var v = await flag.ExecuteScalarAsync(ct);
+                excludeSecurity = v is bool b && b;
+            }
+            var secFilter = excludeSecurity ? " AND k.pillar_number <> 3" : "";
+
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
+            cmd.CommandText = $"""
                 SELECT TOP 10 r.matrix_code, k.pillar_number, k.review_scope_es,
                        k.benefit_es, k.client_action_es, k.bit_action_es,
                        r.business_impact
                 FROM dbo.waf_recommendation r
                 INNER JOIN dbo.waf_recommendation_canonical k ON k.canonical_id = r.canonical_id
-                WHERE r.client_id = @id AND r.is_active = 1 AND COALESCE(r.is_dismissed, 0) = 0
+                WHERE r.client_id = @id AND r.is_active = 1 AND COALESCE(r.is_dismissed, 0) = 0{secFilter}
                 ORDER BY r.impact_number DESC, r.matrix_code
                 """;
             cmd.Parameters.Add(new SqlParameter("@id", clientId));
