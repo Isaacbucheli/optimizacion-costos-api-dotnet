@@ -110,7 +110,7 @@ public sealed class AccessReviewGraphClient(IAzureCredentialFactory credentials,
             var items = await GetPagedAsync(http, token, withSia, eventualConsistency: false, ct);
             return new GraphUserSweep(items.Select(ParseUser).ToDictionary(u => u.Id), SignInActivityAvailable: true);
         }
-        catch (HttpRequestException)
+        catch (HttpRequestException ex) when (ex.StatusCode is System.Net.HttpStatusCode.Forbidden or System.Net.HttpStatusCode.BadRequest)
         {
             // Sin licencia Entra ID P1/P2 (o sin AuditLog.Read.All): reintento sin signInActivity.
             var items = await GetPagedAsync(http, token, $"{GraphBase}/users?$select={baseSelect}&$top=999",
@@ -200,6 +200,6 @@ public sealed class AccessReviewGraphClient(IAzureCredentialFactory credentials,
             }
             return "disabled";
         }
-        catch { return "unavailable"; }
+        catch (Exception ex) when (ex is not OperationCanceledException) { return "unavailable"; }
     }
 }

@@ -119,6 +119,28 @@ public class AccessReviewGraphClientTests
     }
 
     [Fact]
+    public async Task TransitiveMembers_pagina_y_envia_consistency_level()
+    {
+        var svc = Build(req =>
+        {
+            Assert.Equal("eventual", req.Headers.GetValues("ConsistencyLevel").Single());
+            var url = req.RequestUri!.ToString();
+            if (!url.Contains("skiptoken"))
+                return Json("""
+                    {"value":[{"@odata.type":"#microsoft.graph.user","id":"u1","displayName":"Ana","userPrincipalName":"ana@x.com","userType":"Member"}],
+                     "@odata.nextLink":"https://graph.microsoft.com/v1.0/groups/g1/transitiveMembers?$skiptoken=abc"}
+                    """);
+            return Json("""{"value":[{"@odata.type":"#microsoft.graph.servicePrincipal","id":"sp1","displayName":"App"}]}""");
+        });
+
+        var members = await svc.GetGroupTransitiveMembersAsync(1, "g1");
+
+        Assert.Equal(2, members.Count);
+        Assert.Equal("u1", members[0].Id);
+        Assert.Equal("#microsoft.graph.servicePrincipal", members[1].OdataType);
+    }
+
+    [Fact]
     public async Task GetByIds_trocea_en_lotes_de_1000_y_mapea_tipos()
     {
         var svc = Build(req => Json("""
