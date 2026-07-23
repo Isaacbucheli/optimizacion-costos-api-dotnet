@@ -21,13 +21,14 @@ public sealed class FakeGraph : IAccessReviewGraphClient
     public Dictionary<string, GraphDirectoryObject> Directory = [];
     public Dictionary<string, string> Mfa = [];
     public HashSet<int> FailCredentials = [];
+    public bool FailGlobalAdmins;
 
     private void Gate(int credentialId) { if (FailCredentials.Contains(credentialId)) throw new HttpRequestException("403 consent"); }
     public Task<GraphUserSweep> SweepUsersAsync(int c, CancellationToken ct = default) { Gate(c); return Task.FromResult(Sweep); }
     public Task<IReadOnlyList<GraphDirectoryObject>> GetGroupTransitiveMembersAsync(int c, string g, CancellationToken ct = default)
         { Gate(c); return Task.FromResult<IReadOnlyList<GraphDirectoryObject>>(GroupMembers.GetValueOrDefault(g, [])); }
     public Task<IReadOnlyList<GraphDirectoryObject>> GetGlobalAdminsAsync(int c, CancellationToken ct = default)
-        { Gate(c); return Task.FromResult<IReadOnlyList<GraphDirectoryObject>>(GlobalAdmins); }
+        { Gate(c); if (FailGlobalAdmins) throw new HttpRequestException("boom"); return Task.FromResult<IReadOnlyList<GraphDirectoryObject>>(GlobalAdmins); }
     public Task<IReadOnlyDictionary<string, GraphDirectoryObject>> GetByIdsAsync(int c, IReadOnlyCollection<string> ids, CancellationToken ct = default)
         { Gate(c); return Task.FromResult<IReadOnlyDictionary<string, GraphDirectoryObject>>(
             ids.Where(Directory.ContainsKey).ToDictionary(i => i, i => Directory[i])); }
@@ -184,5 +185,60 @@ public class AccessReviewSyncServiceTests
         var cs = Assert.Single(store.CredStatuses);
         Assert.Equal("error", cs.ArmStatus);
         Assert.Equal("partial", store.Finished!.Value.Status);
+    }
+
+    [Fact]
+    public async Task Graph_falla_despues_del_sweep_no_persiste_guests_ni_gas()
+    {
+        // El sweep tiene éxito (member + guest) pero la llamada posterior a Global Admins revienta:
+        // el estado debe quedar sin_consent y NO deben persistirse guests/GAs de ese sweep.
+        var arm = new FakeArm { BySub = { ["s1"] = [
+            new("/subscriptions/s1", "subscription", "u1", "User", "def-1", "Reader")] } };
+        var graph = new FakeGraph
+        {
+            Sweep = new(new Dictionary<string, GraphUser>
+            {
+                ["u1"] = User("u1"),
+                ["guest1"] = User("guest1", "ana_ext#EXT#@x.com", "Guest"),
+            }, true),
+            FailGlobalAdmins = true,
+        };
+        var store = new FakeStore();
+
+        await new TestableSyncService(arm, graph, store, [Cred1]).RunAsync(1, 10);
+
+        var cs = Assert.Single(store.CredStatuses);
+        Assert.Equal("sin_consent", cs.GraphStatus);
+        Assert.Empty(store.Guests);
+        Assert.Equal("partial", store.Finished!.Value.Status);
+    }
+
+    [Fact]
+    public async Task Dos_credenciales_mismo_tenant_deduplican_guests_y_gas()
+    {
+        // Dos credenciales (simulan el mismo tenant vía la misma instancia de FakeGraph) resuelven
+        // el mismo guest y el mismo Global Admin: no deben duplicarse en el resultado final.
+        var cred2 = new AccessCredentialUnit(2, "cred-secundaria", "app_secret", [("s2", "Sub Dos", "Enabled")]);
+        var arm = new FakeArm { BySub = {
+            ["s1"] = [new("/subscriptions/s1", "subscription", "guest1", "User", "def-1", "Reader")],
+            ["s2"] = [new("/subscriptions/s2", "subscription", "guest1", "User", "def-1", "Reader")],
+        } };
+        var graph = new FakeGraph
+        {
+            Sweep = new(new Dictionary<string, GraphUser>
+            {
+                ["guest1"] = User("guest1", "ana_ext#EXT#@x.com", "Guest"),
+                ["admin1"] = User("admin1"),
+            }, true),
+            GlobalAdmins = [new("admin1", "#microsoft.graph.user", "User admin1", null, "admin1@x.com", "Member")],
+        };
+        var store = new FakeStore();
+
+        await new TestableSyncService(arm, graph, store, [Cred1, cred2]).RunAsync(1, 10);
+
+        var guest = Assert.Single(store.Guests);
+        Assert.Equal("guest1", guest.ObjectId);
+        var ga = Assert.Single(store.Gas);
+        Assert.Equal("admin1", ga.ObjectId);
     }
 }

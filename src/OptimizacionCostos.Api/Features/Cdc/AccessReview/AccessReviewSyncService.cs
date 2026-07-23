@@ -179,7 +179,7 @@ public class AccessReviewSyncService(
             }
 
             // 2) Guests del tenant (solo credenciales con Graph ok / sin_licencia_p1).
-            if (sweep is not null)
+            if (sweep is not null && graphStatus is "ok" or "sin_licencia_p1")
             {
                 var rolesByPrincipal = assignments
                     .Where(x => x.UserType == "Guest" || sweep.ById.GetValueOrDefault(x.PrincipalObjectId)?.UserType == "Guest")
@@ -208,6 +208,11 @@ public class AccessReviewSyncService(
             credStatuses.Add(new AccessCredStatus(unit.CredentialId, unit.CredentialName, armStatus, graphStatus,
                 Join(armDetail, graphDetail)));
         }
+
+        // Dos credenciales pueden resolver al mismo tenant de Azure AD: los guests/GAs no deben duplicarse
+        // (las asignaciones sí son por-suscripción/por-credencial y no se deduplican).
+        guests = guests.GroupBy(g => g.ObjectId).Select(g => g.First()).ToList();
+        globalAdmins = globalAdmins.GroupBy(g => g.ObjectId).Select(g => g.First()).ToList();
 
         await store.SaveResultsAsync(runId, assignments, guests, globalAdmins, credStatuses, ct);
         await store.MarkFinishedAsync(runId, anyProblem ? "partial" : "ok", null, ct);
