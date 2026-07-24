@@ -5,9 +5,9 @@ namespace OptimizacionCostos.Api.Tests.Auth;
 public sealed class ModulesTests
 {
     [Fact]
-    public void Catalogo_tiene_11_modulos_con_claves_unicas()
+    public void Catalogo_tiene_12_modulos_con_claves_unicas()
     {
-        Assert.Equal(11, Modules.All.Count);
+        Assert.Equal(12, Modules.All.Count);
         Assert.Equal(Modules.All.Count, Modules.All.Select(m => m.Key).Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
 
@@ -17,7 +17,7 @@ public sealed class ModulesTests
         string[] esperadas =
         [
             "costos", "optimization", "service-catalog", "waf", "waf-ingestions",
-            "waf-cost", "report", "reservations", "alerts", "policies", "consultants",
+            "waf-cost", "report", "reservations", "alerts", "policies", "consultants", "access-review",
         ];
         Assert.Equal(esperadas, Modules.All.Select(m => m.Key).ToArray());
         Assert.All(esperadas, k => Assert.Contains(k, Modules.ValidKeys));

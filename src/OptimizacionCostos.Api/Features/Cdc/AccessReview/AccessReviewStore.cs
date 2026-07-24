@@ -1,0 +1,355 @@
+using Microsoft.Data.SqlClient;
+using OptimizacionCostos.Api.Data;
+
+namespace OptimizacionCostos.Api.Features.Cdc.AccessReview;
+
+public interface IAccessReviewStore
+{
+    Task<int> CreateRunAsync(int clientId, string? requestedBy, CancellationToken ct = default);
+    Task MarkRunningAsync(int runId, CancellationToken ct = default);
+    Task MarkFinishedAsync(int runId, string status, string? error, CancellationToken ct = default);
+    /// <summary>true si el cliente tiene una corrida queued|running.</summary>
+    Task<bool> IsRunActiveAsync(int clientId, CancellationToken ct = default);
+    Task<int> MarkOrphanedRunningAsFailedAsync(string error, CancellationToken ct = default);
+    Task SaveResultsAsync(int runId,
+        IReadOnlyList<AccessAssignmentRow> assignments, IReadOnlyList<AccessGuestRow> guests,
+        IReadOnlyList<AccessGlobalAdminRow> globalAdmins, IReadOnlyList<AccessCredStatus> credStatuses,
+        CancellationToken ct = default);
+    Task<AccessRunRef?> GetLatestRunAsync(int clientId, CancellationToken ct = default);
+    Task<IReadOnlyList<AccessRunRef>> ListRunsAsync(int clientId, int top = 20, CancellationToken ct = default);
+    Task<AccessReviewSnapshot?> GetSnapshotAsync(int runId, CancellationToken ct = default);
+}
+
+/// <summary>Persistencia de corridas de revisión de accesos. Tablas schema-lazy (patrón power_history_job).</summary>
+public sealed class SqlAccessReviewStore(ISqlConnectionFactory factory) : IAccessReviewStore
+{
+    private static bool _schemaEnsured;
+
+    private static async Task EnsureSchemaAsync(SqlConnection conn, CancellationToken ct)
+    {
+        if (_schemaEnsured) return;
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            IF OBJECT_ID('dbo.cdc_access_review_run') IS NULL
+            CREATE TABLE dbo.cdc_access_review_run (
+                run_id INT IDENTITY PRIMARY KEY,
+                client_id INT NOT NULL,
+                status NVARCHAR(20) NOT NULL,
+                started_at DATETIME2 NULL,
+                finished_at DATETIME2 NULL,
+                error NVARCHAR(2000) NULL,
+                requested_by NVARCHAR(200) NULL,
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME());
+            IF OBJECT_ID('dbo.cdc_access_review_cred_status') IS NULL
+            CREATE TABLE dbo.cdc_access_review_cred_status (
+                run_id INT NOT NULL,
+                credential_id INT NOT NULL,
+                credential_name NVARCHAR(200) NULL,
+                arm_status NVARCHAR(20) NOT NULL,
+                graph_status NVARCHAR(30) NOT NULL,
+                detail NVARCHAR(1000) NULL,
+                INDEX IX_cdc_arcs_run (run_id));
+            IF OBJECT_ID('dbo.cdc_access_assignment') IS NULL
+            CREATE TABLE dbo.cdc_access_assignment (
+                assignment_row_id INT IDENTITY PRIMARY KEY,
+                run_id INT NOT NULL,
+                subscription_id NVARCHAR(50) NOT NULL,
+                subscription_name NVARCHAR(200) NULL,
+                subscription_state NVARCHAR(30) NULL,
+                scope NVARCHAR(1000) NOT NULL,
+                scope_level NVARCHAR(20) NOT NULL,
+                role_name NVARCHAR(200) NOT NULL,
+                role_definition_id NVARCHAR(400) NOT NULL,
+                principal_object_id NVARCHAR(50) NOT NULL,
+                principal_type NVARCHAR(30) NOT NULL,
+                display_name NVARCHAR(300) NULL,
+                login NVARCHAR(300) NULL,
+                user_type NVARCHAR(10) NULL,
+                via_group_id NVARCHAR(50) NULL,
+                via_group_name NVARCHAR(300) NULL,
+                account_enabled BIT NULL,
+                last_sign_in DATETIME2 NULL,
+                mfa_status NVARCHAR(20) NULL,
+                INDEX IX_cdc_aa_run (run_id));
+            IF OBJECT_ID('dbo.cdc_access_guest') IS NULL
+            CREATE TABLE dbo.cdc_access_guest (
+                guest_row_id INT IDENTITY PRIMARY KEY,
+                run_id INT NOT NULL,
+                object_id NVARCHAR(50) NOT NULL,
+                display_name NVARCHAR(300) NULL,
+                email NVARCHAR(300) NULL,
+                external_domain NVARCHAR(200) NULL,
+                account_enabled BIT NOT NULL,
+                external_state NVARCHAR(30) NULL,
+                created_at_azure DATETIME2 NULL,
+                last_sign_in DATETIME2 NULL,
+                roles_in_subs NVARCHAR(MAX) NULL,
+                mfa_status NVARCHAR(20) NULL,
+                INDEX IX_cdc_ag_run (run_id));
+            IF OBJECT_ID('dbo.cdc_access_global_admin') IS NULL
+            CREATE TABLE dbo.cdc_access_global_admin (
+                ga_row_id INT IDENTITY PRIMARY KEY,
+                run_id INT NOT NULL,
+                object_id NVARCHAR(50) NOT NULL,
+                display_name NVARCHAR(300) NULL,
+                upn NVARCHAR(300) NULL,
+                user_type NVARCHAR(20) NULL,
+                account_enabled BIT NULL,
+                last_sign_in DATETIME2 NULL,
+                mfa_status NVARCHAR(20) NULL,
+                INDEX IX_cdc_aga_run (run_id));
+            """;
+        await cmd.ExecuteNonQueryAsync(ct);
+        _schemaEnsured = true;
+    }
+
+    private static object Db(object? v) => v ?? DBNull.Value;
+
+    public async Task<int> CreateRunAsync(int clientId, string? requestedBy, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO dbo.cdc_access_review_run (client_id, status, requested_by)
+            OUTPUT INSERTED.run_id VALUES (@cid, 'queued', @actor)
+            """;
+        cmd.Parameters.Add(new SqlParameter("@cid", clientId));
+        cmd.Parameters.Add(new SqlParameter("@actor", Db(requestedBy)));
+        return (int)(await cmd.ExecuteScalarAsync(ct))!;
+    }
+
+    public async Task MarkRunningAsync(int runId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE dbo.cdc_access_review_run SET status='running', started_at=SYSUTCDATETIME() WHERE run_id=@id";
+        cmd.Parameters.Add(new SqlParameter("@id", runId));
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task MarkFinishedAsync(int runId, string status, string? error, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE dbo.cdc_access_review_run SET status=@st, finished_at=SYSUTCDATETIME(), error=@err WHERE run_id=@id";
+        cmd.Parameters.Add(new SqlParameter("@st", status));
+        cmd.Parameters.Add(new SqlParameter("@err", Db(error is { Length: > 2000 } ? error[..2000] : error)));
+        cmd.Parameters.Add(new SqlParameter("@id", runId));
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<bool> IsRunActiveAsync(int clientId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(1) FROM dbo.cdc_access_review_run WHERE client_id=@cid AND status IN ('queued','running')";
+        cmd.Parameters.Add(new SqlParameter("@cid", clientId));
+        return (int)(await cmd.ExecuteScalarAsync(ct))! > 0;
+    }
+
+    public async Task<int> MarkOrphanedRunningAsFailedAsync(string error, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dbo.cdc_access_review_run SET status='error', finished_at=SYSUTCDATETIME(), error=@err
+            WHERE status IN ('queued','running')
+            """;
+        cmd.Parameters.Add(new SqlParameter("@err", error));
+        return await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task SaveResultsAsync(int runId,
+        IReadOnlyList<AccessAssignmentRow> assignments, IReadOnlyList<AccessGuestRow> guests,
+        IReadOnlyList<AccessGlobalAdminRow> globalAdmins, IReadOnlyList<AccessCredStatus> credStatuses,
+        CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+        await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct);
+
+        foreach (var a in assignments)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO dbo.cdc_access_assignment (run_id, subscription_id, subscription_name, subscription_state,
+                    scope, scope_level, role_name, role_definition_id, principal_object_id, principal_type,
+                    display_name, login, user_type, via_group_id, via_group_name, account_enabled, last_sign_in, mfa_status)
+                VALUES (@run, @sid, @sname, @sstate, @scope, @slevel, @role, @roledef, @pid, @ptype,
+                    @dname, @login, @utype, @vgid, @vgname, @enabled, @lsi, @mfa)
+                """;
+            cmd.Parameters.AddRange([
+                new("@run", runId), new("@sid", a.SubscriptionId), new("@sname", Db(a.SubscriptionName)),
+                new("@sstate", Db(a.SubscriptionState)), new("@scope", a.Scope), new("@slevel", a.ScopeLevel),
+                new("@role", a.RoleName), new("@roledef", a.RoleDefinitionId), new("@pid", a.PrincipalObjectId),
+                new("@ptype", a.PrincipalType), new("@dname", Db(a.DisplayName)), new("@login", Db(a.Login)),
+                new("@utype", Db(a.UserType)), new("@vgid", Db(a.ViaGroupId)), new("@vgname", Db(a.ViaGroupName)),
+                new("@enabled", Db(a.AccountEnabled)), new("@lsi", Db(a.LastSignIn?.UtcDateTime)), new("@mfa", Db(a.MfaStatus))]);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        foreach (var g in guests)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO dbo.cdc_access_guest (run_id, object_id, display_name, email, external_domain,
+                    account_enabled, external_state, created_at_azure, last_sign_in, roles_in_subs, mfa_status)
+                VALUES (@run, @oid, @dname, @mail, @dom, @enabled, @state, @created, @lsi, @roles, @mfa)
+                """;
+            cmd.Parameters.AddRange([
+                new("@run", runId), new("@oid", g.ObjectId), new("@dname", Db(g.DisplayName)),
+                new("@mail", Db(g.Email)), new("@dom", Db(g.ExternalDomain)), new("@enabled", g.AccountEnabled),
+                new("@state", Db(g.ExternalState)), new("@created", Db(g.CreatedAtAzure?.UtcDateTime)),
+                new("@lsi", Db(g.LastSignIn?.UtcDateTime)), new("@roles", Db(g.RolesInSubs)), new("@mfa", Db(g.MfaStatus))]);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        foreach (var ga in globalAdmins)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO dbo.cdc_access_global_admin (run_id, object_id, display_name, upn, user_type,
+                    account_enabled, last_sign_in, mfa_status)
+                VALUES (@run, @oid, @dname, @upn, @utype, @enabled, @lsi, @mfa)
+                """;
+            cmd.Parameters.AddRange([
+                new("@run", runId), new("@oid", ga.ObjectId), new("@dname", Db(ga.DisplayName)),
+                new("@upn", Db(ga.Upn)), new("@utype", Db(ga.UserType)), new("@enabled", Db(ga.AccountEnabled)),
+                new("@lsi", Db(ga.LastSignIn?.UtcDateTime)), new("@mfa", Db(ga.MfaStatus))]);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        foreach (var c in credStatuses)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
+            cmd.CommandText = """
+                INSERT INTO dbo.cdc_access_review_cred_status (run_id, credential_id, credential_name, arm_status, graph_status, detail)
+                VALUES (@run, @cid, @cname, @arm, @graph, @detail)
+                """;
+            cmd.Parameters.AddRange([
+                new("@run", runId), new("@cid", c.CredentialId), new("@cname", Db(c.CredentialName)),
+                new("@arm", c.ArmStatus), new("@graph", c.GraphStatus), new("@detail", Db(c.Detail))]);
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        await tx.CommitAsync(ct);
+    }
+
+    private static AccessRunRef ReadRun(SqlDataReader r) => new(
+        r.GetInt32(0), r.GetInt32(1), r.GetString(2),
+        r.IsDBNull(3) ? null : new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(3), DateTimeKind.Utc)),
+        r.IsDBNull(4) ? null : new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(4), DateTimeKind.Utc)),
+        r.IsDBNull(5) ? null : r.GetString(5),
+        r.IsDBNull(6) ? null : r.GetString(6));
+
+    private const string RunCols = "run_id, client_id, status, started_at, finished_at, error, requested_by";
+
+    public async Task<AccessRunRef?> GetLatestRunAsync(int clientId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT TOP 1 {RunCols} FROM dbo.cdc_access_review_run WHERE client_id=@cid ORDER BY run_id DESC";
+        cmd.Parameters.Add(new SqlParameter("@cid", clientId));
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        return await r.ReadAsync(ct) ? ReadRun(r) : null;
+    }
+
+    public async Task<IReadOnlyList<AccessRunRef>> ListRunsAsync(int clientId, int top = 20, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = $"SELECT TOP (@top) {RunCols} FROM dbo.cdc_access_review_run WHERE client_id=@cid ORDER BY run_id DESC";
+        cmd.Parameters.Add(new SqlParameter("@top", top));
+        cmd.Parameters.Add(new SqlParameter("@cid", clientId));
+        var list = new List<AccessRunRef>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct)) list.Add(ReadRun(r));
+        return list;
+    }
+
+    public async Task<AccessReviewSnapshot?> GetSnapshotAsync(int runId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+
+        AccessRunRef? run = null;
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = $"SELECT {RunCols} FROM dbo.cdc_access_review_run WHERE run_id=@id";
+            cmd.Parameters.Add(new SqlParameter("@id", runId));
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            if (await r.ReadAsync(ct)) run = ReadRun(r);
+        }
+        if (run is null) return null;
+
+        static DateTimeOffset? Dt(SqlDataReader r, int i) =>
+            r.IsDBNull(i) ? null : new DateTimeOffset(DateTime.SpecifyKind(r.GetDateTime(i), DateTimeKind.Utc));
+        static string? S(SqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetString(i);
+        static bool? B(SqlDataReader r, int i) => r.IsDBNull(i) ? null : r.GetBoolean(i);
+
+        var creds = new List<AccessCredStatus>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT credential_id, credential_name, arm_status, graph_status, detail FROM dbo.cdc_access_review_cred_status WHERE run_id=@id";
+            cmd.Parameters.Add(new SqlParameter("@id", runId));
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct))
+                creds.Add(new(r.GetInt32(0), S(r, 1), r.GetString(2), r.GetString(3), S(r, 4)));
+        }
+
+        var assignments = new List<AccessAssignmentRow>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT subscription_id, subscription_name, subscription_state, scope, scope_level, role_name,
+                       role_definition_id, principal_object_id, principal_type, display_name, login, user_type,
+                       via_group_id, via_group_name, account_enabled, last_sign_in, mfa_status
+                FROM dbo.cdc_access_assignment WHERE run_id=@id
+                ORDER BY subscription_name, display_name, role_name
+                """;
+            cmd.Parameters.Add(new SqlParameter("@id", runId));
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct))
+                assignments.Add(new(r.GetString(0), S(r, 1), S(r, 2), r.GetString(3), r.GetString(4), r.GetString(5),
+                    r.GetString(6), r.GetString(7), r.GetString(8), S(r, 9), S(r, 10), S(r, 11),
+                    S(r, 12), S(r, 13), B(r, 14), Dt(r, 15), S(r, 16)));
+        }
+
+        var guests = new List<AccessGuestRow>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT object_id, display_name, email, external_domain, account_enabled, external_state,
+                       created_at_azure, last_sign_in, roles_in_subs, mfa_status
+                FROM dbo.cdc_access_guest WHERE run_id=@id ORDER BY display_name
+                """;
+            cmd.Parameters.Add(new SqlParameter("@id", runId));
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct))
+                guests.Add(new(r.GetString(0), S(r, 1), S(r, 2), S(r, 3), r.GetBoolean(4), S(r, 5),
+                    Dt(r, 6), Dt(r, 7), S(r, 8), S(r, 9)));
+        }
+
+        var gas = new List<AccessGlobalAdminRow>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT object_id, display_name, upn, user_type, account_enabled, last_sign_in, mfa_status
+                FROM dbo.cdc_access_global_admin WHERE run_id=@id ORDER BY display_name
+                """;
+            cmd.Parameters.Add(new SqlParameter("@id", runId));
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct))
+                gas.Add(new(r.GetString(0), S(r, 1), S(r, 2), S(r, 3), B(r, 4), Dt(r, 5), S(r, 6)));
+        }
+
+        return new AccessReviewSnapshot(run, creds, assignments, guests, gas);
+    }
+}

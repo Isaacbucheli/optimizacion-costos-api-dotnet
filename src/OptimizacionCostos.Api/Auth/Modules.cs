@@ -23,6 +23,7 @@ public static class Modules
     public const string Alerts = "alerts";
     public const string Policies = "policies";
     public const string Consultants = "consultants";
+    public const string AccessReview = "access-review";
 
     public static readonly IReadOnlyList<ModuleInfo> All =
     [
@@ -37,6 +38,7 @@ public static class Modules
         new(Alerts, "Catálogo de alertas", "Gestión CDC"),
         new(Policies, "Catálogo de políticas", "Gestión CDC"),
         new(Consultants, "Asignación de consultores", "Gestión CDC"),
+        new(AccessReview, "Revisión de accesos", "Gestión CDC"),
     ];
 
     public static readonly HashSet<string> ValidKeys =

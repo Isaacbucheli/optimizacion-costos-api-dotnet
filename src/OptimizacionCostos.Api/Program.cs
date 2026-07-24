@@ -61,6 +61,21 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.IPowerHistoryServ
 builder.Services.AddSingleton<OptimizacionCostos.Api.Features.Cdc.IPowerHistoryJobQueue, OptimizacionCostos.Api.Features.Cdc.PowerHistoryJobQueue>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.IPowerHistoryJobStore, OptimizacionCostos.Api.Features.Cdc.SqlPowerHistoryJobStore>();
 builder.Services.AddHostedService<OptimizacionCostos.Api.Features.Cdc.PowerHistoryBackgroundService>();
+// Revisión de accesos (Gestión CDC): RBAC (ARM) + Entra ID (Graph) por cliente. Sync como job
+// en background (202 + polling), calcado de PowerHistory.
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.AccessReview.IAccessReviewStore,
+    OptimizacionCostos.Api.Features.Cdc.AccessReview.SqlAccessReviewStore>();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.AccessReview.IAccessReviewGraphClient,
+    OptimizacionCostos.Api.Features.Cdc.AccessReview.AccessReviewGraphClient>();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.AccessReview.IAccessReviewArmClient,
+    OptimizacionCostos.Api.Features.Cdc.AccessReview.AccessReviewArmClient>();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.AccessReview.IAccessReviewSyncService,
+    OptimizacionCostos.Api.Features.Cdc.AccessReview.AccessReviewSyncService>();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.AccessReview.IAccessReviewExcelExporter,
+    OptimizacionCostos.Api.Features.Cdc.AccessReview.AccessReviewExcelExporter>();
+builder.Services.AddSingleton<OptimizacionCostos.Api.Features.Cdc.AccessReview.IAccessReviewJobQueue,
+    OptimizacionCostos.Api.Features.Cdc.AccessReview.AccessReviewJobQueue>();
+builder.Services.AddHostedService<OptimizacionCostos.Api.Features.Cdc.AccessReview.AccessReviewBackgroundService>();
 // Optimización / barrido de tenant (B6): 7 checks KQL + estimación de ahorro + hallazgos/estado.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.ICostEstimation, OptimizacionCostos.Api.Features.Optimization.CostEstimation>();
 // Right-sizing (Fase 2.5, Grupo B): reusa IReportMetrics (Azure Monitor). Requiere Monitoring Reader.
