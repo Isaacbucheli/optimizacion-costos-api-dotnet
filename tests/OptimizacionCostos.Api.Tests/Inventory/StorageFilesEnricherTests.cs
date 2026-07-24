@@ -8,9 +8,12 @@ using Xunit;
 namespace OptimizacionCostos.Api.Tests.Inventory;
 
 /// <summary>
-/// StorageFilesEnricher (spec 2026-07-24): lista fileshares por ARM ($expand=stats),
-/// agrega por tier (estándar = GiB usados; premium = GiB de cuota), aplica el corte
-/// ESTRICTO de 10 TiB (10,240 GiB) y tolera fallos por cuenta con advertencia visible.
+/// StorageFilesEnricher (spec 2026-07-24, corregido tras E2E real): lista fileshares por ARM
+/// SIN $expand=stats (el LIST no lo acepta — 400 InvalidQueryParameterValue en Azure real),
+/// y luego pide el uso (shareUsageBytes) por-share con GET /shares/{name}?$expand=stats.
+/// Premium (kind FileStorage) se salta el GET por-share: factura por cuota, no por uso.
+/// Agrega por tier (estándar = GiB usados; premium = GiB de cuota), aplica el corte ESTRICTO
+/// de 10 TiB (10,240 GiB) y tolera fallos (de listado o de stats por share) con advertencia visible.
 /// HTTP mockeado con HttpMessageHandler falso; token con DelegatedTokenCredential.
 /// </summary>
 public sealed class StorageFilesEnricherTests
@@ -47,17 +50,17 @@ public sealed class StorageFilesEnricherTests
             ["skuName"] = "Standard_LRS",
         };
 
-    private static HttpResponseMessage SharesResponse(params (long UsageBytes, int QuotaGib, string? Tier)[] shares)
+    /// <summary>Respuesta REAL del LIST (sin $expand, sin shareUsageBytes): solo shareQuota + accessTier.</summary>
+    private static HttpResponseMessage ListSharesResponse(params (string Name, int QuotaGib, string? Tier)[] shares)
     {
         var value = new JsonArray();
-        foreach (var (usage, quota, tier) in shares)
+        foreach (var (name, quota, tier) in shares)
         {
             value.Add(new JsonObject
             {
-                ["name"] = $"share{value.Count}",
+                ["name"] = name,
                 ["properties"] = new JsonObject
                 {
-                    ["shareUsageBytes"] = usage,
                     ["shareQuota"] = quota,
                     ["accessTier"] = tier,
                 },
@@ -69,11 +72,46 @@ public sealed class StorageFilesEnricherTests
         };
     }
 
+    /// <summary>Respuesta REAL del GET por-share con $expand=stats: incluye shareUsageBytes.</summary>
+    private static HttpResponseMessage ShareStatsResponse(string name, long usageBytes, int quotaGib, string? tier)
+        => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(new JsonObject
+            {
+                ["name"] = name,
+                ["properties"] = new JsonObject
+                {
+                    ["shareQuota"] = quotaGib,
+                    ["accessTier"] = tier,
+                    ["shareUsageBytes"] = usageBytes,
+                },
+            }.ToJsonString()),
+        };
+
+    /// <summary>Enruta por URL como lo haría un fake de Azure real: LIST vs GET por-share ($expand=stats).</summary>
+    private static HttpResponseMessage RouteListAndStats(
+        HttpRequestMessage req,
+        (string Name, int QuotaGib, string? Tier)[] listShares,
+        Dictionary<string, long> usageByShare)
+    {
+        var url = req.RequestUri!.ToString();
+        if (url.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))
+        {
+            // GET /shares/{name}?...&$expand=stats
+            var name = listShares.Select(s => s.Name).First(n => url.Contains($"/shares/{n}"));
+            var share = listShares.First(s => s.Name == name);
+            return ShareStatsResponse(name, usageByShare[name], share.QuotaGib, share.Tier);
+        }
+        return ListSharesResponse(listShares);
+    }
+
     [Fact]
     public async Task CuentaGrandeEstandar_EntraConUsoPorTier()
     {
         // 12,000 GiB usados en hot (cuota 20,480) → supera 10,240 → entra por USO.
-        var handler = new FakeHandler(_ => SharesResponse(((long)(12000 * Gib), 20480, "Hot")));
+        (string, int, string?)[] listShares = [("share0", 20480, "Hot")];
+        var usage = new Dictionary<string, long> { ["share0"] = (long)(12000 * Gib) };
+        var handler = new FakeHandler(req => RouteListAndStats(req, listShares, usage));
         var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stgbig")], CancellationToken.None);
 
         var kept = Assert.Single(result.Kept);
@@ -88,8 +126,12 @@ public sealed class StorageFilesEnricherTests
     [Fact]
     public async Task CortePorUso_10240ExactoNoEntra_10241Entra()
     {
-        var exactly = new FakeHandler(_ => SharesResponse(((long)(10240 * Gib), 102400, "Hot")));
-        var over = new FakeHandler(_ => SharesResponse(((long)(10241 * Gib), 102400, "Hot")));
+        (string, int, string?)[] shareExactly = [("share0", 102400, "Hot")];
+        (string, int, string?)[] shareOver = [("share0", 102400, "Hot")];
+        var exactly = new FakeHandler(req => RouteListAndStats(req, shareExactly,
+            new Dictionary<string, long> { ["share0"] = (long)(10240 * Gib) }));
+        var over = new FakeHandler(req => RouteListAndStats(req, shareOver,
+            new Dictionary<string, long> { ["share0"] = (long)(10241 * Gib) }));
 
         var resultExactly = await NewEnricher(exactly).EnrichAsync(FakeCred, [AccountRow("a")], default);
         Assert.Empty(resultExactly.Kept);
@@ -102,7 +144,9 @@ public sealed class StorageFilesEnricherTests
     public async Task Premium_FacturaPorCuota_NoPorUso()
     {
         // Premium: 11,000 GiB de cuota con solo 100 GiB usados → entra igual (cuota manda).
-        var handler = new FakeHandler(_ => SharesResponse(((long)(100 * Gib), 11000, "Premium")));
+        // Y NO debe llamar al GET de stats (ver Premium_NoLlamaStatsPorShare para la aserción dedicada).
+        (string, int, string?)[] listShares = [("share0", 11000, "Premium")];
+        var handler = new FakeHandler(req => ListSharesResponse(listShares)); // si pidiera stats, esto no las tiene
         var result = await NewEnricher(handler)
             .EnrichAsync(FakeCred, [AccountRow("stgprem", kind: "FileStorage")], default);
 
@@ -114,7 +158,9 @@ public sealed class StorageFilesEnricherTests
     [Fact]
     public async Task EstandarSinTier_CaeATransactionOptimized()
     {
-        var handler = new FakeHandler(_ => SharesResponse(((long)(11000 * Gib), 20480, null)));
+        (string, int, string?)[] listShares = [("share0", 20480, null)];
+        var usage = new Dictionary<string, long> { ["share0"] = (long)(11000 * Gib) };
+        var handler = new FakeHandler(req => RouteListAndStats(req, listShares, usage));
         var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stg")], default);
         Assert.Contains("\"transaction_optimized\":", Assert.Single(result.Kept).Str("tierBreakdownJson"));
     }
@@ -122,7 +168,7 @@ public sealed class StorageFilesEnricherTests
     [Fact]
     public async Task SinShares_NoSeInventariaNiAdvierte()
     {
-        var handler = new FakeHandler(_ => SharesResponse());
+        var handler = new FakeHandler(_ => ListSharesResponse());
         var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stgblob")], default);
         Assert.Empty(result.Kept);
         Assert.Empty(result.Warnings);
@@ -131,10 +177,12 @@ public sealed class StorageFilesEnricherTests
     [Fact]
     public async Task FalloArmPorCuenta_OmiteConAdvertencia_YSigueConLasDemas()
     {
+        // Fallo en el LIST mismo (no en el stats por-share): pierde toda la cuenta, con advertencia.
         var handler = new FakeHandler(req =>
             req.RequestUri!.ToString().Contains("stgmala")
                 ? new HttpResponseMessage(HttpStatusCode.Forbidden)
-                : SharesResponse(((long)(12000 * Gib), 20480, "Hot")));
+                : RouteListAndStats(req, [("share0", 20480, "Hot")],
+                    new Dictionary<string, long> { ["share0"] = (long)(12000 * Gib) }));
 
         var result = await NewEnricher(handler)
             .EnrichAsync(FakeCred, [AccountRow("stgmala"), AccountRow("stgbuena")], default);
@@ -148,14 +196,20 @@ public sealed class StorageFilesEnricherTests
     public async Task Paginacion_SigueNextLink()
     {
         var page2Url = "https://management.azure.com/page2";
+        var usage = new Dictionary<string, long> { ["share0"] = (long)(6000 * Gib), ["share1"] = (long)(6000 * Gib) };
         var handler = new FakeHandler(req =>
         {
-            if (req.RequestUri!.ToString() == page2Url)
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))
             {
-                return SharesResponse(((long)(6000 * Gib), 10240, "Hot"));
+                var name = url.Contains("/shares/share0") ? "share0" : "share1";
+                return ShareStatsResponse(name, usage[name], 10240, "Hot");
             }
-            var first = SharesResponse(((long)(6000 * Gib), 10240, "Hot"));
-            var body = JsonNode.Parse(first.Content.ReadAsStringAsync().Result)!.AsObject();
+            if (url == page2Url)
+            {
+                return ListSharesResponse(("share1", 10240, "Hot"));
+            }
+            var body = JsonNode.Parse(ListSharesResponse(("share0", 10240, "Hot")).Content.ReadAsStringAsync().Result)!.AsObject();
             body["nextLink"] = page2Url;
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body.ToJsonString()) };
         });
@@ -167,14 +221,21 @@ public sealed class StorageFilesEnricherTests
     }
 
     [Fact]
-    public async Task UsaApiVersionYExpandStats()
+    public async Task UsaApiVersionYExpandStats_SoloEnListYNoEnList()
     {
-        var handler = new FakeHandler(_ => SharesResponse(((long)(11000 * Gib), 20480, "Hot")));
+        (string, int, string?)[] listShares = [("share0", 20480, "Hot")];
+        var usage = new Dictionary<string, long> { ["share0"] = (long)(11000 * Gib) };
+        var handler = new FakeHandler(req => RouteListAndStats(req, listShares, usage));
         await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stg")], default);
-        var url = Assert.Single(handler.Urls);
-        Assert.Contains("/fileServices/default/shares", url);
-        Assert.Contains("api-version=2023-05-01", url);
-        Assert.Contains("expand=stats", url, StringComparison.OrdinalIgnoreCase);
+
+        Assert.Equal(2, handler.Urls.Count); // 1 list + 1 stats
+        var listUrl = handler.Urls.Single(u => u.EndsWith("/fileServices/default/shares?api-version=2023-05-01"));
+        Assert.Contains("api-version=2023-05-01", listUrl);
+        Assert.DoesNotContain("expand=stats", listUrl, StringComparison.OrdinalIgnoreCase); // regresión: el LIST no acepta $expand=stats
+
+        var statsUrl = handler.Urls.Single(u => u.Contains("/shares/share0"));
+        Assert.Contains("api-version=2023-05-01", statsUrl);
+        Assert.Contains("expand=stats", statsUrl, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -182,17 +243,21 @@ public sealed class StorageFilesEnricherTests
     {
         // nextLink en bucle infinito: cada página trae 1 share y siempre apunta a otra página.
         // El tope MaxPages debe cortar el loop (si no, este test cuelga) y dejar advertencia visible.
-        var handler = new FakeHandler(_ =>
+        var handler = new FakeHandler(req =>
         {
-            var first = SharesResponse(((long)(100 * Gib), 200, "Hot"));
-            var body = JsonNode.Parse(first.Content.ReadAsStringAsync().Result)!.AsObject();
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))
+            {
+                return ShareStatsResponse("share0", (long)(100 * Gib), 200, "Hot");
+            }
+            var body = JsonNode.Parse(ListSharesResponse(("share0", 200, "Hot")).Content.ReadAsStringAsync().Result)!.AsObject();
             body["nextLink"] = "https://management.azure.com/always-next";
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body.ToJsonString()) };
         });
 
         var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stg")], default);
 
-        Assert.Equal(StorageFilesEnricher.MaxPages, handler.Urls.Count);
+        Assert.Equal(StorageFilesEnricher.MaxPages, handler.Urls.Count(u => !u.Contains("expand=stats", StringComparison.OrdinalIgnoreCase)));
         Assert.Contains(result.Warnings, w => w.Contains("truncado"));
     }
 
@@ -210,5 +275,77 @@ public sealed class StorageFilesEnricherTests
 
         await Assert.ThrowsAsync<OperationCanceledException>(
             () => NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("a")], cts.Token));
+    }
+
+    [Fact]
+    public async Task Estandar_LeeUsoConGetPorShare()
+    {
+        // 2 shares, el LIST no trae uso; el uso llega por GET por-share. billableGib = suma de ambos.
+        (string, int, string?)[] listShares = [("share0", 6000, "Hot"), ("share1", 6000, "Hot")];
+        var usage = new Dictionary<string, long>
+        {
+            ["share0"] = (long)(5500 * Gib),
+            ["share1"] = (long)(5500 * Gib),
+        };
+        var handler = new FakeHandler(req => RouteListAndStats(req, listShares, usage));
+        var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stg")], default);
+
+        var kept = Assert.Single(result.Kept);
+        Assert.Equal(11000.0, kept.Dbl("billableGib")!.Value, 1); // 5500 + 5500
+        Assert.Equal(1, handler.Urls.Count(u => !u.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))); // 1 list call
+        Assert.Equal(2, handler.Urls.Count(u => u.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))); // 2 stats calls
+    }
+
+    [Fact]
+    public async Task Premium_NoLlamaStatsPorShare()
+    {
+        // Premium sobre el corte por cuota: NO debe llamar al GET por-share (optimización + semántica).
+        (string, int, string?)[] listShares = [("share0", 20480, "Premium")];
+        var handler = new FakeHandler(req =>
+        {
+            if (req.RequestUri!.ToString().Contains("expand=stats", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("no debería llamarse a stats por-share para premium");
+            }
+            return ListSharesResponse(listShares);
+        });
+
+        var result = await NewEnricher(handler)
+            .EnrichAsync(FakeCred, [AccountRow("stgprem", kind: "FileStorage")], default);
+
+        var kept = Assert.Single(result.Kept);
+        Assert.DoesNotContain(handler.Urls, u => u.Contains("expand=stats", StringComparison.OrdinalIgnoreCase));
+        Assert.Equal(20480.0, kept.Dbl("billableGib")!.Value, 1); // por cuota, no por uso
+    }
+
+    [Fact]
+    public async Task FalloDeStatsEnUnShare_AdvierteYNoPierdeLaCuenta()
+    {
+        // 2 shares; el stats de share1 falla con 403. La cuenta se procesa igual con el uso
+        // disponible (share0), y queda advertencia visible de que el total puede estar incompleto.
+        (string, int, string?)[] listShares = [("share0", 6000, "Hot"), ("share1", 6000, "Hot")];
+        var handler = new FakeHandler(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("/shares/share1") && url.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.Forbidden);
+            }
+            if (url.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))
+            {
+                return ShareStatsResponse("share0", (long)(11000 * Gib), 6000, "Hot");
+            }
+            return ListSharesResponse(listShares);
+        });
+
+        var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stg")], default);
+
+        var kept = Assert.Single(result.Kept);
+        Assert.Equal(2, kept.Int("shareCount"));
+        Assert.Equal(11000.0, kept.Dbl("usedGib")!.Value, 1); // share1 cuenta como 0 por el fallo
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("stg", warning);
+        Assert.Contains("uso", warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("incompleto", warning);
     }
 }
