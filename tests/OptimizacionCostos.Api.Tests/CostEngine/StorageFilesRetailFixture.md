@@ -251,3 +251,20 @@ Todas las verificaciones de consistencia interna pasaron. **Queda pendiente el c
 5. **`transaction_optimized` no tiene Reservation disponible** — el plan no lo decía explícitamente pero tampoco lo contradice; se deja explícito para Task 4 (si el análisis intenta buscar RI de Standard, debe devolver "no aplica", no `null` silencioso que se confunda con "no encontrado").
 
 Todo lo demás del mapeo provisional (unidad `1 GB/Month` para hot/cool/transaction_optimized, patrón `{RED} Data Stored` y `Hot/Cool {RED} Data Stored`) **coincide exactamente** con lo capturado.
+
+---
+
+## 6. Cotejo 1:1 contra la página pública — CERRADO (controlador con navegador JS, 2026-07-24)
+
+Verificado en vivo en `https://azure.microsoft.com/en-us/pricing/details/storage/files/` (USD, vista mensual):
+
+- **East US 2 (LRS)** — PAYG: TxOpt **$0.0600**, Hot **$0.0255**, Cool **$0.0150** "per used GiB per month" → idénticos a §2. Reservas PAYG (HDD): Hot 10 TiB = **$214.09/mes** (1y) / $172.34/mes (3y); Cool 10 TiB = $125.92/mes (1y); Hot 100 TiB = $2,036.75/mes (1y). SSD provisioned v1: 10 TiB = $1,343.50/mes (1y) / $1,081.34/mes (3y).
+- **East US (LRS)** — PAYG: TxOpt **$0.0600**, Hot **$0.0287**, Cool **$0.0228** → idénticos a §2. Reserva Hot 10 TiB 1y = **$241.00/mes** → ×12 = **$2,892.00 = exactamente el retailPrice de la fila Reservation del API** (§4.1). Igualdad cerrada.
+
+### Conclusiones DEFINITIVAS que Tasks 2 y 4 deben usar
+
+1. **`retailPrice` de Reservation = TOTAL del término del bloque.** Normalización a GiB-mes: `retailPrice ÷ meses (12|36) ÷ (TiB_bloque × 1024)`. Ej.: 2892 ÷ 12 ÷ 10,240 = **$0.023535/GiB-mes** (eastus Hot LRS 1y).
+2. **El "GB" de los meters de Files equivale a GiB binario**: la página publica "per used GiB per month" con el MISMO número que el meter "1 GB/Month" del API. La calculadora multiplica GiB facturables × precio del meter, sin conversión decimal.
+3. **Bloques de reserva: 10 TiB y 100 TiB** ("increments of 10 TiB and 100 TiB", texto literal de la página). El "TB" del skuName del API (`Hot LRS - 10 TB`) significa TiB.
+4. La página confirma que el modelo PAYG solo ofrece reserva para **Hot y Cool** (TxOpt no aparece en su tabla de reservas) y que premium (SSD provisioned v1) tiene la suya — consistente con §5.
+5. La reserva de Files cubre "used storage"; metadata y transacciones quedan fuera (consistente con la exclusión de transacciones/metadata del plan).
