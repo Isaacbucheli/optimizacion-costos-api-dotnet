@@ -182,4 +182,20 @@ public sealed class StorageFilesCalculatorTests
         Assert.False(r.RiApplies);
         Assert.Contains("RI descartada", r.CalculationNotes);
     }
+
+    [Fact]
+    public void DesgloseConTiersEnCero_PriceNotFound_NuncaCeroSilencioso()
+    {
+        var prices = new FakePriceRepository
+        {
+            GetStorageFilesPricesFn = (_, _, _) => new StorageFilesPrices(0.0255, 0.0213, 0.017, "m"),
+        };
+        var row = Account(tiersJson: """{"hot":0.0,"cool":0.0}""");
+
+        var r = Assert.Single(NewCalc(prices).Calculate(Res.Rows(row), 99));
+        Assert.Equal("price_not_found", r.CalculationStatus);
+        Assert.Null(r.PaygMonthly);
+        Assert.Null(r.Ri1yMonthly);
+        Assert.False(r.RiApplies);
+    }
 }

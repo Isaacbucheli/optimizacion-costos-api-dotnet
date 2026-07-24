@@ -58,6 +58,7 @@ public sealed class StorageFilesCalculator(IPriceRepository prices, IPricingCons
             string? meterId = null;
             var missingTiers = new List<string>();
             var failed = false;
+            var pricedTiers = 0;
 
             foreach (var (tier, gib) in breakdown)
             {
@@ -83,6 +84,7 @@ public sealed class StorageFilesCalculator(IPriceRepository prices, IPricingCons
                     continue;
                 }
                 payg += gib * p.PricePerGbMonth.Value;
+                pricedTiers++;
                 meterId ??= p.PaygMeterId;
                 if (p.Ri1yPerGbMonth is not null) { ri1 += gib * p.Ri1yPerGbMonth.Value; } else { ri1Complete = false; }
                 if (p.Ri3yPerGbMonth is not null) { ri3 += gib * p.Ri3yPerGbMonth.Value; } else { ri3Complete = false; }
@@ -100,6 +102,14 @@ public sealed class StorageFilesCalculator(IPriceRepository prices, IPricingCons
                 result.CalculationNotes =
                     $"No price for Azure Files tiers: {string.Join(", ", missingTiers)} "
                     + $"(redundancia={redundancy}, region={region})";
+                results.Add(result);
+                continue;
+            }
+            if (pricedTiers == 0)
+            {
+                // Desglose sin capacidad positiva (inconsistencia con billable_gib): jamás emitir $0 "calculated".
+                result.CalculationStatus = "price_not_found";
+                result.CalculationNotes = "Storage account sin desglose de capacidad de Azure Files";
                 results.Add(result);
                 continue;
             }
