@@ -19,11 +19,14 @@ public static class CatalogSeed
                   skuName, diskSizeGB, incremental, timeCreated, properties
         """;
 
+    // OJO (bug cazado en E2E 2026-07-24): Resource Graph RECHAZA `extend` sobre una columna que ya
+    // existe en la tabla origen (ParserFailure 400). `kind` ya viene como string, así que no se
+    // redefine: se proyecta tal cual. Validado contra Resource Graph real antes de corregir.
     private const string StorageFilesKql = """
         Resources
         | where type =~ 'microsoft.storage/storageaccounts'
         | where kind in~ ('StorageV2','Storage','FileStorage')
-        | extend skuName = tostring(sku.name), kind = tostring(kind)
+        | extend skuName = tostring(sku.name)
         | project id, name, type, location, resourceGroup, subscriptionId,
                   kind, skuName, properties
         """;
