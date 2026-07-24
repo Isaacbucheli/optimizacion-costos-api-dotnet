@@ -88,4 +88,13 @@ public interface IRetailPriceClient
     /// misma API que el toolkit para right-sizing/limpieza. Net-new (Fase 2).
     /// </summary>
     IReadOnlyList<PriceRow> FetchSnapshotPrices(string region);
+
+    /// <summary>
+    /// Precios de Azure Files por región (serviceName "Storage", productos que contienen
+    /// "Files": "Files", "Files v2", "Premium Files", y también los de Reservation "Files
+    /// Reserved Capacity"/"Premium Files Reserved Capacity", que también contienen "Files").
+    /// Trae Consumption + Reservation; la selección/normalización la hace
+    /// SqlPriceRepository.StorageFiles. Net-new (spec 2026-07-24).
+    /// </summary>
+    IReadOnlyList<PriceRow> FetchStorageFilesPrices(string region);
 }

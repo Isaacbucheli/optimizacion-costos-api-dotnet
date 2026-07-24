@@ -66,6 +66,9 @@ public sealed class FakePriceRepository : IPriceRepository
     public Func<string, string?, double?> GetSnapshotPricePerGbFn { get; set; }
         = (_, _) => null;
 
+    public Func<string, string, string, StorageFilesPrices> GetStorageFilesPricesFn { get; set; }
+        = (_, _, _) => new StorageFilesPrices(null, null, null, null);
+
     // -------------------- IPriceRepository --------------------
 
     public VmPrices GetVmPrices(string armSkuName, string region, string osType)
@@ -107,4 +110,7 @@ public sealed class FakePriceRepository : IPriceRepository
 
     public double? GetSnapshotPricePerGb(string region, string? storageType)
         => GetSnapshotPricePerGbFn(region, storageType);
+
+    public StorageFilesPrices GetStorageFilesPrices(string region, string tier, string redundancy)
+        => GetStorageFilesPricesFn(region, tier, redundancy);
 }
