@@ -255,6 +255,17 @@ if (config.SuperAdminEmails.Length > 0)
     catch { /* la BD puede no responder en el arranque; se reintenta en el próximo login del superadmin */ }
 }
 
+// Seed idempotente del catálogo de servicios (snapshots + storage_files, spec 2026-07-24).
+// Best-effort: si la BD no responde en el arranque, se reintenta en el próximo arranque.
+try
+{
+    using var scope = app.Services.CreateScope();
+    await OptimizacionCostos.Api.Features.Catalog.CatalogSeed.EnsureAsync(
+        scope.ServiceProvider.GetRequiredService<OptimizacionCostos.Api.Features.Catalog.IServiceCatalogAdmin>(),
+        app.Logger);
+}
+catch { /* BD no disponible al arrancar; el seed es idempotente y reintenta al próximo arranque */ }
+
 app.Run();
 
 // Necesario para WebApplicationFactory<Program> en los tests.
