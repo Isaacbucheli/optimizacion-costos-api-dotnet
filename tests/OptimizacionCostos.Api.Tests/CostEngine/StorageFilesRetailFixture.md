@@ -4,7 +4,7 @@
 **Fuente:** `https://prices.azure.com/api/retail/prices?$filter=serviceName eq 'Storage' and armRegionName eq '<region>'&currencyCode=USD`, paginado siguiendo `NextPageLink` hasta agotar (2 páginas por región, ~1690 filas `serviceName=Storage` por región).
 **Regiones capturadas:** `eastus` (170 filas `productName like '*Files*'`) y `eastus2` (170 filas). Ambas idénticas en forma (mismos productos/meters/skuNames), solo difieren en `retailPrice` para los meters sensibles a región (Hot/Cool/GRS/GZRS Data Stored y sus Reservation). Los meters de `Standard` (transaction optimized) y `Files` (legacy) resultaron **idénticos en ambas regiones** (0.06 LRS, 0.10 GRS, 0.075 ZRS, 0.135 GZRS).
 
-> **Veredicto resumen:** el mapeo provisional del plan **difiere en 3 puntos** (productName de `transaction_optimized`, meterName y unidad de `premium`, y el universo real de redundancias). Ver "Mapeo corregido" abajo — **este fixture manda** sobre el mapeo provisional para las Tasks 2 y 4.
+> **Veredicto resumen:** el mapeo provisional del plan **difiere en 4 puntos** (más un 5º hallazgo: transaction_optimized no tiene Reservation) (productName de `transaction_optimized`, meterName y unidad de `premium`, y el universo real de redundancias). Ver "Mapeo corregido" abajo — **este fixture manda** sobre el mapeo provisional para las Tasks 2 y 4.
 
 ---
 
@@ -64,6 +64,10 @@ Mismo meterName y mismo precio que `Files v2`/Standard para LRS/GRS, pero **no t
 No existen filas Premium GRS/GZRS/RA-GRS/RA-GZRS Provisioned — Premium Files solo soporta LRS y ZRS (limitación real de Azure, no un hueco de captura).
 
 Meters auxiliares del mismo producto (no usados por el selector de storage, informativos): `Premium {RED} Burst Bandwidth` (1 GiB, $0.01 LRS / $0.0125 ZRS), `Premium {RED} Burst Transactions` (1M, $0.50 LRS / $0.625 ZRS), `Premium {RED} Snapshots` (1 GB/Month, $0.136 LRS / $0.17 ZRS — esto es snapshot de *file share* premium, NO de managed disk; no confundir con §5).
+
+### 1.6 Producto `Azure Files Provisioned v2` — fuera de alcance
+
+`Azure Files Provisioned v2` (SSD/HDD NFS provisioned v2): presente en la captura con TODOS sus meters en $0.00 (probable preview) — fuera del mapeo de este plan; los SKUs `StandardV2_*`/`PremiumV2_*` van a `manual_required` por decisión del spec.
 
 ---
 
@@ -189,22 +193,24 @@ Nota: aquí el `meterName` es literalmente `"Provisioned"` (sin prefijo de redun
 
 ### 4.1 Filas Reservation — forma real y semántica de `retailPrice`
 
+**Nota de corrección:** la primera versión de esta sección dividía por bloques decimales (10,000/100,000 GB) y subestimaba el descuento en ~2 puntos; los valores de abajo ya están normalizados en TiB binarios tras la verificación contra la página pública (§6). No usar la versión decimal en ningún test.
+
 Confirmado (§2): `productName` real es `Files Reserved Capacity` (Hot/Cool) y `Premium Files Reserved Capacity` (Premium); `skuName` codifica tier+redundancia+tamaño de bloque (`"Hot LRS - 10 TB"`, `"Premium ZRS - 100 TB"`, etc.); `reservationTerm` es `"1 Year"` o `"3 Years"` (strings reales, coincide con lo asumido); `unitOfMeasure` es literalmente `"1 GB/Month"` en TODAS las filas de reservation, sin importar el tamaño del bloque o el término — este campo es un remanente heredado del meter y **no debe leerse como "precio por GB al mes"**.
 
-**(a) ¿`retailPrice` es el TOTAL del término?** Sí, confirmado por aritmética — es el precio total por todo el bloque reservado (tamaño en `skuName`, en GB decimales: "10 TB" = 10 000 GB, "100 TB" = 100 000 GB) durante todo el término (12 o 36 meses). Derivación con datos reales (eastus):
+**(a) ¿`retailPrice` es el TOTAL del término?** Sí, confirmado por aritmética — es el precio total por todo el bloque reservado (tamaño en `skuName`, en TiB binarios: "10 TB" = 10 240 GiB, "100 TB" = 102 400 GiB — ver §6) durante todo el término (12 o 36 meses). Derivación con datos reales (eastus):
 
-| Meter | Bloque | Término | retailPrice | Cálculo /GB-mes | Consumption equivalente | Descuento |
+| Meter | Bloque | Término | retailPrice | Cálculo /GiB-mes | Consumption equivalente | Descuento |
 |---|---|---|---|---|---|---|
-| Hot LRS - 10 TB | 10 000 GB | 1 Year (12m) | 2892 | 2892 ÷ 10000 ÷ 12 = 0.02410 | Hot LRS Data Stored = 0.0287 | 16.03% |
-| Hot LRS - 10 TB | 10 000 GB | 3 Years (36m) | 6983 | 6983 ÷ 10000 ÷ 36 = 0.01940 | 0.0287 | 32.41% |
-| Cool LRS - 10 TB | 10 000 GB | 1 Year (12m) | 2297 | 2297 ÷ 10000 ÷ 12 = 0.01914 | Cool LRS Data Stored = 0.0228 | 16.05% |
-| Cool LRS - 10 TB | 10 000 GB | 3 Years (36m) | 5547 | 5547 ÷ 10000 ÷ 36 = 0.01541 | 0.0228 | 32.42% |
-| Hot GRS - 10 TB | 10 000 GB | 1 Year (12m) | 6368 | 6368 ÷ 10000 ÷ 12 = 0.05307 | Hot GRS Data Stored = 0.0632 | 16.03% |
-| Premium LRS - 10 TB | 10 000 GB | 1 Year (12m) | 16122 | 16122 ÷ 10000 ÷ 12 = 0.13435 | Premium LRS Provisioned = 0.16 | 16.03% |
-| Premium ZRS - 10 TB | 10 000 GB | 1 Year (12m) | 20152 | 20152 ÷ 10000 ÷ 12 = 0.16793 | Premium ZRS Provisioned = 0.20 | 16.03% |
-| Hot LRS - 100 TB | 100 000 GB | 1 Year (12m) | 27508 | 27508 ÷ 100000 ÷ 12 = 0.02292 | 0.0287 | 20.13% |
+| Hot LRS - 10 TB | 10 240 GiB (10 TiB) | 1 Year (12m) | 2892 | 2892 ÷ 12 ÷ 10240 = 0.023535 | Hot LRS Data Stored = 0.0287 | 18.0% |
+| Hot LRS - 10 TB | 10 240 GiB (10 TiB) | 3 Years (36m) | 6983 | 6983 ÷ 36 ÷ 10240 = 0.018943 | 0.0287 | 34.0% |
+| Cool LRS - 10 TB | 10 240 GiB (10 TiB) | 1 Year (12m) | 2297 | 2297 ÷ 12 ÷ 10240 = 0.018693 | Cool LRS Data Stored = 0.0228 | 18.0% |
+| Cool LRS - 10 TB | 10 240 GiB (10 TiB) | 3 Years (36m) | 5547 | 5547 ÷ 36 ÷ 10240 = 0.015047 | 0.0228 | 34.0% |
+| Hot GRS - 10 TB | 10 240 GiB (10 TiB) | 1 Year (12m) | 6368 | 6368 ÷ 12 ÷ 10240 = 0.051823 | Hot GRS Data Stored = 0.0632 | 18.0% |
+| Premium LRS - 10 TB | 10 240 GiB (10 TiB) | 1 Year (12m) | 16122 | 16122 ÷ 12 ÷ 10240 = 0.131201 | Premium LRS Provisioned = 0.16 | 18.0% |
+| Premium ZRS - 10 TB | 10 240 GiB (10 TiB) | 1 Year (12m) | 20152 | 20152 ÷ 12 ÷ 10240 = 0.163997 | Premium ZRS Provisioned = 0.20 | 18.0% |
+| Hot LRS - 100 TB | 102 400 GiB (100 TiB) | 1 Year (12m) | 27508 | 27508 ÷ 12 ÷ 102400 = 0.022386 | 0.0287 | 22.0% |
 
-Interpretando `retailPrice` como TOTAL-del-bloque-y-término (dividiendo entre GB del bloque y meses del término) se obtiene, de forma consistente en 8 combinaciones tier/redundancia/tamaño distintas, un precio por GB-mes **menor** que el equivalente Consumption y con un patrón de descuento estable (~16% a 1 año, ~32% a 3 años, con descuento algo mayor en el bloque de 100 TB vs 10 TB) — exactamente el comportamiento esperado de un RI de Azure. Si en cambio se interpretara `retailPrice` como precio por GB-mes directo (ignorando el tamaño del bloque), los números no tendrían sentido (ej. $2892/GB-mes vs $0.0287/GB-mes on-demand, 100 000× más caro) — eso descarta esa lectura. **Conclusión: `retailPrice` de las filas Reservation es el costo total del compromiso completo (bloque × término), NO un precio unitario.** Task 4 debe dividir por `(tamaño del bloque en GB) × (meses del término)` para obtener el costo mensual equivalente, y por el tamaño real provisionado del cliente para prorratear si no coincide exactamente con 10 TB/100 TB.
+Interpretando `retailPrice` como TOTAL-del-bloque-y-término (dividiendo entre GiB del bloque, en TiB binarios, y meses del término) se obtiene, de forma consistente en 8 combinaciones tier/redundancia/tamaño distintas, un precio por GiB-mes **menor** que el equivalente Consumption y con un patrón de descuento estable (~18% a 1 año, ~34% a 3 años, con descuento algo mayor en el bloque de 100 TB vs 10 TB) — exactamente el comportamiento esperado de un RI de Azure. Si en cambio se interpretara `retailPrice` como precio por GB-mes directo (ignorando el tamaño del bloque), los números no tendrían sentido (ej. $2892/GB-mes vs $0.0287/GB-mes on-demand, 100 000× más caro) — eso descarta esa lectura. **Conclusión: `retailPrice` de las filas Reservation es el costo total del compromiso completo (bloque × término), NO un precio unitario.** Tasks 2/4 deben normalizar con `retailPrice ÷ meses (12|36) ÷ (TiB del bloque × 1024)` — bloques de 10 TiB = 10,240 GiB y 100 TiB = 102,400 GiB (ver §6).
 
 No se pudo cotejar el resultado contra la página pública `azure.microsoft.com/pricing/details/storage/files/` (ver §4.4) — la validación se basó en consistencia interna (ordenamiento de precios + patrón de descuento estable entre 8 combinaciones independientes), que es la señal más fuerte disponible sin acceso a un navegador con JS.
 
@@ -238,6 +244,9 @@ Todas las verificaciones de consistencia interna pasaron. **Queda pendiente el c
 | `transaction_optimized` | **`Files v2`** (⚠ el plan decía `Files`) | `{RED} Data Stored` | `1 GB/Month` | — | **No** (no existe RI para este tier) |
 | `premium` | `Premium Files` | **`Premium {RED} Provisioned`** (⚠ el plan decía `{RED} Provisioned`, sin el prefijo) | **`1 GB/Month`** (⚠ el plan decía `1 GiB/Month`) | `Premium Files Reserved Capacity`, skuName `Premium {RED} - {10\|100} TB`, meterName literal `Provisioned` | Sí (LRS/ZRS solamente) |
 
+- La unidad `1 GB/Month` de TODOS los meters de Files equivale a **GiB binario** (§6.2): la calculadora multiplica GiB facturables × retail_price sin conversión decimal.
+- El sufijo del skuName de Reservation (`- 10 TB` / `- 100 TB`) significa **TiB**: 10,240 / 102,400 GiB (§6.3).
+
 `{RED}` real por tier (⚠ difiere del plan, que asumía el mismo set de 6 para los 4 tiers):
 - `hot`, `cool`, `transaction_optimized`: LRS, ZRS, GRS, GZRS — **no existen RA-GRS ni RA-GZRS como meter separado**. Una cuenta de storage RA-GRS/RA-GZRS se factura bajo el mismo meter `GRS`/`GZRS` (el acceso de lectura secundario no tiene meter propio en Files). Task 2 debe mapear `RA-GRS → GRS` y `RA-GZRS → GZRS` antes de construir el nombre del meter, no tratarlos como sufijos válidos de `{RED}`.
 - `premium`: solo LRS, ZRS (no soporta GRS/GZRS/RA-GRS/RA-GZRS — limitación real del servicio).
@@ -268,3 +277,9 @@ Verificado en vivo en `https://azure.microsoft.com/en-us/pricing/details/storage
 3. **Bloques de reserva: 10 TiB y 100 TiB** ("increments of 10 TiB and 100 TiB", texto literal de la página). El "TB" del skuName del API (`Hot LRS - 10 TB`) significa TiB.
 4. La página confirma que el modelo PAYG solo ofrece reserva para **Hot y Cool** (TxOpt no aparece en su tabla de reservas) y que premium (SSD provisioned v1) tiene la suya — consistente con §5.
 5. La reserva de Files cubre "used storage"; metadata y transacciones quedan fuera (consistente con la exclusión de transacciones/metadata del plan).
+
+---
+
+## 7. Cotejo público de snapshots — CERRADO (controlador con navegador JS, 2026-07-24)
+
+La página pública de Managed Disks (`https://azure.microsoft.com/en-us/pricing/details/managed-disks/`, región East US) publica: snapshots en Standard storage se cobran a **$0.05/GB por mes tanto en LRS como ZRS**, sobre el espacio ocupado por los deltas ('the storage occupied by the delta changes since the last snapshot'). Coincide exactamente con el meter del API (`Standard HDD Managed Disks` / `LRS Snapshots` = 0.05, §3) que ya usa `GetSnapshotPricePerGb` y `PriceSelection_SnapshotTests`. La página también confirma que Azure factura snapshots por espacio OCUPADO — consistente con la nota referencial ('techo por tamaño del disco de origen') que usará la calculadora de snapshots.
