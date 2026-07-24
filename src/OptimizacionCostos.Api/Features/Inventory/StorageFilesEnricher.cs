@@ -33,6 +33,10 @@ public sealed class StorageFilesEnricher(
     private const string ApiVersion = "2023-05-01"; // versión estable de fileServices/shares
     private const double BytesPerGib = 1024d * 1024 * 1024;
 
+    /// <summary>Tope de paginación ARM (patrón de ResourceGraphRunner.MaxPages / AzureReservationsClient.MaxPages):
+    /// un nextLink en bucle o malformado no debe colgar la cuenta indefinidamente.</summary>
+    internal const int MaxPages = 50;
+
     public async Task<StorageFilesEnrichment> EnrichAsync(
         TokenCredential credential, IReadOnlyList<JsonNode> rows, CancellationToken ct)
     {
@@ -64,7 +68,14 @@ public sealed class StorageFilesEnricher(
 
             try
             {
-                var shares = await ListSharesAsync(http, token.Token, id, ct);
+                var (shares, truncated) = await ListSharesAsync(http, token.Token, id, ct);
+                if (truncated)
+                {
+                    // Conteo potencialmente incompleto: podría poner la cuenta al lado equivocado
+                    // del corte de 10 TiB, así que debe llegar al usuario como advertencia visible
+                    // (no solo un log), y se sigue procesando lo que sí se pudo traer.
+                    warnings.Add($"{name}: listado de fileshares truncado en {MaxPages} páginas; el total puede estar incompleto");
+                }
                 if (shares.Count == 0)
                 {
                     continue; // cuenta sin fileshares → no se inventaría (esperado, mayoría blob)
@@ -82,6 +93,10 @@ public sealed class StorageFilesEnricher(
                 obj["billableGib"] = Math.Round(agg.BillableGib, 2);
                 obj["tierBreakdownJson"] = JsonSerializer.Serialize(agg.TierGib);
                 kept.Add(new RgRow(obj));
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                throw; // cancelación real del import: propagar, no degradar a advertencia por cuenta
             }
             catch (Exception ex)
             {
@@ -122,15 +137,19 @@ public sealed class StorageFilesEnricher(
         return new Aggregated(shares.Count, used, provisioned, billable, tiers);
     }
 
-    private static async Task<List<ShareInfo>> ListSharesAsync(
+    /// <summary>Lista los fileshares de una cuenta paginando por nextLink. <c>Truncated</c> es true
+    /// cuando quedó un nextLink pendiente al alcanzar <see cref="MaxPages"/> (conteo incompleto).</summary>
+    private static async Task<(List<ShareInfo> Shares, bool Truncated)> ListSharesAsync(
         HttpClient http, string bearerToken, string accountId, CancellationToken ct)
     {
         var shares = new List<ShareInfo>();
         var url = $"https://management.azure.com{accountId}/fileServices/default/shares"
             + $"?api-version={ApiVersion}&$expand=stats";
+        var page = 0;
 
-        while (!string.IsNullOrEmpty(url))
+        while (!string.IsNullOrEmpty(url) && page < MaxPages)
         {
+            page++;
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
             using var resp = await http.SendAsync(req, ct);
@@ -158,6 +177,7 @@ public sealed class StorageFilesEnricher(
             url = doc.RootElement.TryGetProperty("nextLink", out var nl) && nl.ValueKind == JsonValueKind.String
                 ? nl.GetString() : null;
         }
-        return shares;
+        // Si el loop salió por el tope de páginas (no porque se acabó el nextLink), url sigue con valor.
+        return (shares, !string.IsNullOrEmpty(url));
     }
 }

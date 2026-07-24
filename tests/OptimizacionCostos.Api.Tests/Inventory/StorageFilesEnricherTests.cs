@@ -91,7 +91,10 @@ public sealed class StorageFilesEnricherTests
         var exactly = new FakeHandler(_ => SharesResponse(((long)(10240 * Gib), 102400, "Hot")));
         var over = new FakeHandler(_ => SharesResponse(((long)(10241 * Gib), 102400, "Hot")));
 
-        Assert.Empty((await NewEnricher(exactly).EnrichAsync(FakeCred, [AccountRow("a")], default)).Kept);
+        var resultExactly = await NewEnricher(exactly).EnrichAsync(FakeCred, [AccountRow("a")], default);
+        Assert.Empty(resultExactly.Kept);
+        Assert.Empty(resultExactly.Warnings); // exclusión por debajo del corte debe ser silenciosa
+
         Assert.Single((await NewEnricher(over).EnrichAsync(FakeCred, [AccountRow("b")], default)).Kept);
     }
 
@@ -172,5 +175,40 @@ public sealed class StorageFilesEnricherTests
         Assert.Contains("/fileServices/default/shares", url);
         Assert.Contains("api-version=2023-05-01", url);
         Assert.Contains("expand=stats", url, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Paginacion_SeDetieneEnMaxPages_ConAdvertencia()
+    {
+        // nextLink en bucle infinito: cada página trae 1 share y siempre apunta a otra página.
+        // El tope MaxPages debe cortar el loop (si no, este test cuelga) y dejar advertencia visible.
+        var handler = new FakeHandler(_ =>
+        {
+            var first = SharesResponse(((long)(100 * Gib), 200, "Hot"));
+            var body = JsonNode.Parse(first.Content.ReadAsStringAsync().Result)!.AsObject();
+            body["nextLink"] = "https://management.azure.com/always-next";
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body.ToJsonString()) };
+        });
+
+        var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stg")], default);
+
+        Assert.Equal(StorageFilesEnricher.MaxPages, handler.Urls.Count);
+        Assert.Contains(result.Warnings, w => w.Contains("truncado"));
+    }
+
+    [Fact]
+    public async Task Cancelacion_SePropaga_NoSeDegradaAAdvertencia()
+    {
+        // El token se obtiene antes de cancelar (FakeCred lo ignora); la cancelación real ocurre
+        // recién en la llamada HTTP de fileshares, para no confundirla con un fallo de credencial.
+        using var cts = new CancellationTokenSource();
+        var handler = new FakeHandler(_ =>
+        {
+            cts.Cancel();
+            throw new OperationCanceledException(cts.Token);
+        });
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("a")], cts.Token));
     }
 }
