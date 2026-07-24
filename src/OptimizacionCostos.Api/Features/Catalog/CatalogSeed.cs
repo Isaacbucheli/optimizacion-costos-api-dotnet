@@ -28,7 +28,12 @@ public static class CatalogSeed
                   kind, skuName, properties
         """;
 
-    /// <summary>Las 2 filas nuevas. display_order 50/51: después de los 12 servicios existentes.</summary>
+    /// <summary>
+    /// Las 2 filas nuevas. display_order 90/91: DESPUÉS de todos los servicios existentes.
+    /// Verificado contra la BD real (2026-07-24): los 12 servicios sembrados usan 10..80
+    /// (public_ip = 80 es el máximo; mysql ya ocupa el 50 que asumía el plan), así que 50/51
+    /// habría intercalado los servicios nuevos en medio de la matriz.
+    /// </summary>
     public static readonly CatalogEntryWrite[] Entries =
     [
         new(
@@ -45,7 +50,7 @@ public static class CatalogSeed
             AhbApplicable: false,
             RequiresManualCost: false,
             ExcelSheetName: "Snapshots",
-            DisplayOrder: 50,
+            DisplayOrder: 90,
             IsActive: true,
             Notes: "Costeo referencial por tamaño del disco de origen (Azure factura por GB ocupado). Sembrado por CatalogSeed (spec 2026-07-24)."),
         new(
@@ -62,7 +67,7 @@ public static class CatalogSeed
             AhbApplicable: false,
             RequiresManualCost: false,
             ExcelSheetName: "Storage Files",
-            DisplayOrder: 51,
+            DisplayOrder: 91,
             IsActive: true,
             Notes: "Solo storage accounts con capacidad facturable de Azure Files > 10 TiB (10,240 GiB); corte aplicado en la importación (StorageFilesEnricher). Sembrado por CatalogSeed (spec 2026-07-24)."),
     ];
