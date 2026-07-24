@@ -211,6 +211,7 @@ public static class SheetWriter
             case ColKind.Percent:
             case ColKind.Number:
             case ColKind.Hours:
+            case ColKind.Decimal:
                 cell.SetValue(AsDouble(value));
                 ApplyNumberFormat(cell, kind);
                 break;
@@ -224,6 +225,7 @@ public static class SheetWriter
             ColKind.Money => ExcelStyles.Money,
             ColKind.Percent => ExcelStyles.Percent,
             ColKind.Number or ColKind.Hours => ExcelStyles.Int,
+            ColKind.Decimal => ExcelStyles.Decimal2,
             _ => cell.Style.NumberFormat.Format,
         };
     }

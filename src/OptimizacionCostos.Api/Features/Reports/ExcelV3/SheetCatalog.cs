@@ -225,10 +225,14 @@ public static class SheetCatalog
         columns.AddRange(Identity());
         columns.Add(new("Kind", ColKind.Text, r => Get(r, "kind")));
         columns.Add(new("SKU", ColKind.Text, r => Get(r, "files_sku") ?? Get(r, "sku_name")));
-        columns.Add(new("Shares", ColKind.Number, r => Get(r, "share_count")));
-        columns.Add(new("GiB usados", ColKind.Number, r => Get(r, "used_gib")));
-        columns.Add(new("GiB cuota", ColKind.Number, r => Get(r, "provisioned_gib")));
-        columns.Add(new("GiB facturables", ColKind.Number, r => Get(r, "billable_gib")));
+        columns.Add(new("Shares", ColKind.Number, r => Get(r, "share_count"))); // conteo entero, no capacidad
+        // Capacidades en GiB con 2 decimales: el corte de 10 TiB (umbral de inclusión de la hoja) se
+        // decide con decimales — ColKind.Number (formato entero) los redondearía visualmente al mismo
+        // valor que el umbral, sin que el consultor pueda distinguir por qué el recurso calificó
+        // (revisión Task 9, 2026-07-24).
+        columns.Add(new("GiB usados", ColKind.Decimal, r => Get(r, "used_gib")));
+        columns.Add(new("GiB cuota", ColKind.Decimal, r => Get(r, "provisioned_gib")));
+        columns.Add(new("GiB facturables", ColKind.Decimal, r => Get(r, "billable_gib")));
         columns.AddRange(BaseColumns());
         return new SheetSpec("Storage Files", columns);
     }

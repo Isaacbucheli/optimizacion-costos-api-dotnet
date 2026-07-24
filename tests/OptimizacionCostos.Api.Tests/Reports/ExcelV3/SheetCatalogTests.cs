@@ -101,4 +101,16 @@ public class SheetCatalogTests
         // El "Detalle de recursos" mezcla todos los servicios → conserva el bloque RI completo.
         Assert.Contains(SheetCatalog.ResourceDetailSheet().Columns, c => c.Header == "Elegible a RI");
     }
+
+    [Fact]
+    public void Storage_Files_GiB_con_decimales_y_Shares_como_entero()
+    {
+        // Revisión Task 9 (2026-07-24): el corte de 10 TiB que decide si el recurso entra a la hoja
+        // se resuelve con decimales — ColKind.Number (formato entero) lo mostraría idéntico al
+        // umbral. Las 3 capacidades van con ColKind.Decimal; "Shares" (conteo) sigue siendo entero.
+        var storageFiles = SheetCatalog.ServiceSheets().First(s => s.DataKey == "storage_files").Spec;
+        foreach (var header in new[] { "GiB usados", "GiB cuota", "GiB facturables" })
+            Assert.Equal(ColKind.Decimal, storageFiles.Columns.First(c => c.Header == header).Kind);
+        Assert.Equal(ColKind.Number, storageFiles.Columns.First(c => c.Header == "Shares").Kind);
+    }
 }

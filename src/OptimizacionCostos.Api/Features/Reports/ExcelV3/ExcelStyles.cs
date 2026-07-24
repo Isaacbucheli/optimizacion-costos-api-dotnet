@@ -16,6 +16,9 @@ public static class ExcelStyles
     public const string Percent = "0.0%";
     public const string Int = "#,##0";
 
+    /// <summary>Cantidad con 2 decimales (capacidades en GiB: el corte de 10 TiB se decide con decimales).</summary>
+    public const string Decimal2 = "#,##0.00";
+
     /// <summary>Estiliza una fila de encabezado de tabla en cualquier fila (sin freeze ni autofiltro —
     /// para hojas tipo documento como el Resumen Ejecutivo, donde la fila 1 es el título).</summary>
     public static void HeaderRow(IXLWorksheet ws, int row, int colCount)
