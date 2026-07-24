@@ -181,6 +181,7 @@ public sealed class CostExcelDataSourceV3(
         // El viejo exportador asegura el esquema de vm_power_usage (LEFT JOIN en la hoja de VMs).
         // Aquí se crea best-effort por si nunca se corrió el refresh de encendido/apagado.
         await EnsurePowerUsageSchemaAsync(conn, ct);
+        await EnsureNewDetailTablesAsync(conn, ct);
 
         var queries = new (string Key, string Sql)[]
         {
@@ -299,6 +300,26 @@ public sealed class CostExcelDataSourceV3(
                 WHERE cr.analysis_id = @id AND cr.service_key = 'public_ip'
                 ORDER BY r.resource_name
                 """),
+            ("snapshots", """
+                SELECT cr.*, r.resource_name, r.subscription_name, r.resource_group,
+                       r.location, r.sku_name, d.snapshot_sku, d.disk_size_gb,
+                       d.incremental, d.time_created
+                FROM dbo.cost_results cr
+                INNER JOIN dbo.azure_resources r ON r.resource_id = cr.resource_id
+                LEFT JOIN dbo.snapshot_details d ON d.resource_id = r.resource_id
+                WHERE cr.analysis_id = @id AND cr.service_key = 'snapshots'
+                ORDER BY d.disk_size_gb DESC, r.resource_name
+                """),
+            ("storage_files", """
+                SELECT cr.*, r.resource_name, r.subscription_name, r.resource_group,
+                       r.location, r.sku_name, d.kind, d.files_sku, d.share_count,
+                       d.used_gib, d.provisioned_gib, d.billable_gib
+                FROM dbo.cost_results cr
+                INNER JOIN dbo.azure_resources r ON r.resource_id = cr.resource_id
+                LEFT JOIN dbo.storage_files_details d ON d.resource_id = r.resource_id
+                WHERE cr.analysis_id = @id AND cr.service_key = 'storage_files'
+                ORDER BY d.billable_gib DESC, r.resource_name
+                """),
             ("analysis", """
                 SELECT ca.analysis_id, ca.analysis_name, ca.created_at, c.client_name
                 FROM dbo.cost_analysis ca
@@ -384,6 +405,46 @@ public sealed class CostExcelDataSourceV3(
                 uptime_pct    FLOAT        NULL,
                 CONSTRAINT PK_vm_power_usage PRIMARY KEY (resource_id, analysis_id)
             );
+            """;
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>Las hojas de snapshots/storage_files hacen LEFT JOIN a tablas detalle que crea el
+    /// import (Tasks 5/7 del plan 2026-07-24); si el análisis es previo a ese código, se crean acá
+    /// vacías para que el export no falle. Si ya existen, no toca nada.</summary>
+    private static async Task EnsureNewDetailTablesAsync(SqlConnection conn, CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            IF OBJECT_ID('dbo.snapshot_details', 'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.snapshot_details (
+                    snapshot_detail_id INT IDENTITY(1,1) PRIMARY KEY,
+                    resource_id INT NOT NULL,
+                    snapshot_sku NVARCHAR(100) NULL,
+                    disk_size_gb INT NULL,
+                    incremental BIT NULL,
+                    time_created DATETIME2 NULL,
+                    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                    CONSTRAINT FK_snapshot_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
+                );
+            END
+            IF OBJECT_ID('dbo.storage_files_details', 'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.storage_files_details (
+                    storage_files_detail_id INT IDENTITY(1,1) PRIMARY KEY,
+                    resource_id INT NOT NULL,
+                    kind NVARCHAR(50) NULL,
+                    files_sku NVARCHAR(100) NULL,
+                    share_count INT NULL,
+                    used_gib FLOAT NULL,
+                    provisioned_gib FLOAT NULL,
+                    billable_gib FLOAT NULL,
+                    tier_breakdown_json NVARCHAR(MAX) NULL,
+                    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                    CONSTRAINT FK_storage_files_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
+                );
+            END
             """;
         await cmd.ExecuteNonQueryAsync(ct);
     }

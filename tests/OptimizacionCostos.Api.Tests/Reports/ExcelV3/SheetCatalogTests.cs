@@ -5,7 +5,7 @@ public class SheetCatalogTests
     // Hojas cuyos recursos NO son elegibles a RI por naturaleza → sin bloque RI/ahorro/elegible
     // (discos de VMs apagadas, discos huérfanos/ASR, IP pública). Decisión del usuario 2026-07-07.
     private static readonly HashSet<string> NoRiKeys = new(StringComparer.OrdinalIgnoreCase)
-        { "disks_stopped_vms", "disks_orphan_asr", "public_ip" };
+        { "disks_stopped_vms", "disks_orphan_asr", "public_ip", "snapshots" };
 
     [Fact]
     public void Todas_las_hojas_de_servicio_llevan_PAYG_estado_y_totales()
@@ -64,6 +64,8 @@ public class SheetCatalogTests
         Assert.Equal(names.Count, names.Distinct().Count());
         Assert.Contains("Optimización VMs", names);
         Assert.Contains("IP Pública", names);
+        Assert.Contains("Snapshots", names);
+        Assert.Contains("Storage Files", names);
         Assert.DoesNotContain(names, n => n.Contains("Managed Instance") && n.Contains("PAYG")); // nada en inglés
     }
 

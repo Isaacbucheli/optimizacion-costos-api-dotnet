@@ -25,6 +25,7 @@ file static class CoveredServiceKeys
     public static readonly HashSet<string> Values = new(StringComparer.OrdinalIgnoreCase)
     {
         "vms", "sql_vm", "disks", "sql", "sql_managed_instance", "appservice", "mysql", "cosmos", "redis", "public_ip",
+        "snapshots", "storage_files",
     };
 }
 
