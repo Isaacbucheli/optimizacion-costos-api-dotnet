@@ -10,12 +10,13 @@ namespace OptimizacionCostos.Api.Features.Inventory;
 /// </summary>
 public static class InventoryInserter
 {
-    /// <summary>12 tablas de detalle conocidas (KNOWN_DETAIL_TABLES).</summary>
+    /// <summary>13 tablas de detalle conocidas (KNOWN_DETAIL_TABLES).</summary>
     public static readonly string[] KnownDetailTables =
     [
         "vm_details", "disk_details", "sql_db_details", "appservice_plan_details",
         "mysql_flex_details", "cosmos_details", "redis_details", "public_ip_details",
         "sql_vm_details", "sql_managed_instance_details", "elastic_pool_details", "snapshot_details",
+        "storage_files_details",
     ];
 
     /// <summary>inserter_key registrados (equivale a las claves de DETAIL_INSERTERS de Python).</summary>
@@ -23,6 +24,7 @@ public static class InventoryInserter
     [
         "vm", "disk", "sql_db", "appservice_plan", "mysql_flex", "cosmos",
         "redis", "public_ip", "sql_vm", "sql_managed_instance", "elastic_pool", "snapshot",
+        "storage_files",
     ];
 
     private static readonly HashSet<string> DtuPoolTiers = new(StringComparer.OrdinalIgnoreCase) { "basic", "standard", "premium" };
@@ -68,6 +70,22 @@ public static class InventoryInserter
                     time_created DATETIME2 NULL,
                     created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
                     CONSTRAINT FK_snapshot_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
+                );
+            END
+            IF OBJECT_ID('dbo.storage_files_details', 'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.storage_files_details (
+                    storage_files_detail_id INT IDENTITY(1,1) PRIMARY KEY,
+                    resource_id INT NOT NULL,
+                    kind NVARCHAR(50) NULL,
+                    files_sku NVARCHAR(100) NULL,
+                    share_count INT NULL,
+                    used_gib FLOAT NULL,
+                    provisioned_gib FLOAT NULL,
+                    billable_gib FLOAT NULL,
+                    tier_breakdown_json NVARCHAR(MAX) NULL,
+                    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                    CONSTRAINT FK_storage_files_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
                 );
             END
             """;
@@ -125,6 +143,7 @@ public static class InventoryInserter
             "vm" => Vm, "disk" => Disk, "sql_db" => SqlDb, "appservice_plan" => AppServicePlan,
             "mysql_flex" => MySqlFlex, "cosmos" => Cosmos, "redis" => Redis, "public_ip" => PublicIp,
             "sql_vm" => SqlVm, "sql_managed_instance" => SqlMi, "elastic_pool" => ElasticPool, "snapshot" => Snapshot,
+            "storage_files" => StorageFiles,
             _ => null,
         };
         if (inserter is null)
@@ -350,6 +369,22 @@ public static class InventoryInserter
             new SqlParameter("@rid", rid), new SqlParameter("@sku", Nz(r.Str("skuName"))),
             new SqlParameter("@size", Nz(r.Int("diskSizeGB"))), new SqlParameter("@inc", Bit(r.BoolN("incremental"))),
             new SqlParameter("@tc", timeCreated),
+        ]);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task StorageFiles(SqlConnection c, SqlTransaction t, int rid, RgRow r, CancellationToken ct)
+    {
+        await using var cmd = New(c, t, """
+            INSERT INTO dbo.storage_files_details (resource_id, kind, files_sku, share_count,
+                used_gib, provisioned_gib, billable_gib, tier_breakdown_json)
+            VALUES (@rid, @kind, @sku, @cnt, @used, @prov, @bill, @tiers)
+            """);
+        cmd.Parameters.AddRange([
+            new SqlParameter("@rid", rid), new SqlParameter("@kind", Nz(r.Str("kind"))),
+            new SqlParameter("@sku", Nz(r.Str("skuName"))), new SqlParameter("@cnt", Nz(r.Int("shareCount"))),
+            new SqlParameter("@used", Nz(r.Dbl("usedGib"))), new SqlParameter("@prov", Nz(r.Dbl("provisionedGib"))),
+            new SqlParameter("@bill", Nz(r.Dbl("billableGib"))), new SqlParameter("@tiers", Nz(r.Str("tierBreakdownJson"))),
         ]);
         await cmd.ExecuteNonQueryAsync(ct);
     }
