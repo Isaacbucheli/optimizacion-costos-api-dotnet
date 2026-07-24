@@ -209,7 +209,12 @@ public static class SheetCatalog
         columns.AddRange(Identity());
         columns.Add(new("SKU", ColKind.Text, r => Get(r, "snapshot_sku") ?? Get(r, "sku_name")));
         columns.Add(new("GB disco origen", ColKind.Number, r => Get(r, "disk_size_gb")));
-        columns.Add(new("Incremental", ColKind.Text, r => AsBool(Get(r, "incremental")) ? "Sí" : "No"));
+        // NULL/DBNull (dato desconocido) rinde "-": no afirmar "No" cuando en realidad no se sabe.
+        columns.Add(new("Incremental", ColKind.Text, r =>
+        {
+            var raw = Get(r, "incremental");
+            return raw is null or DBNull ? "-" : (AsBool(raw) ? "Sí" : "No");
+        }));
         columns.Add(new("Creado", ColKind.Text, r => Get(r, "time_created") is DateTime dt
             ? dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : null));
         columns.AddRange(BaseColumns(includeRi: false)); // snapshots no son reservables: sin bloque RI/ahorro

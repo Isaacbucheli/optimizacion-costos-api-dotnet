@@ -113,4 +113,22 @@ public class SheetCatalogTests
             Assert.Equal(ColKind.Decimal, storageFiles.Columns.First(c => c.Header == header).Kind);
         Assert.Equal(ColKind.Number, storageFiles.Columns.First(c => c.Header == "Shares").Kind);
     }
+
+    [Fact]
+    public void Snapshots_Incremental_no_afirma_No_cuando_es_desconocido()
+    {
+        // Revisión task-11 (2026-07-24): NULL/DBNull es "dato desconocido", no "false" — antes
+        // rendía "No" igual que false, lo cual afirma algo que no se sabe.
+        var snapshots = SheetCatalog.ServiceSheets().First(s => s.DataKey == "snapshots").Spec;
+        var col = snapshots.Columns.First(c => c.Header == "Incremental");
+        Assert.Equal(ColKind.Text, col.Kind);
+
+        string? V(object? incremental) => col.Extract(
+            new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["incremental"] = incremental })?.ToString();
+
+        Assert.Equal("Sí", V(true));
+        Assert.Equal("No", V(false));
+        Assert.Equal("-", V(null));
+        Assert.Equal("-", V(DBNull.Value));
+    }
 }

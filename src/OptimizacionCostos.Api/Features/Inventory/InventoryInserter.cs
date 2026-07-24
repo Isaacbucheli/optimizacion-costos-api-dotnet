@@ -29,6 +29,44 @@ public static class InventoryInserter
 
     private static readonly HashSet<string> DtuPoolTiers = new(StringComparer.OrdinalIgnoreCase) { "basic", "standard", "premium" };
 
+    /// <summary>
+    /// DDL compartida de snapshot_details y storage_files_details (las dos tablas de detalle más
+    /// nuevas). Único punto de verdad: lo ejecuta tanto <see cref="EnsureSchemaAsync"/> (import) como
+    /// el guard best-effort de CostExcelDataSourceV3.EnsureNewDetailTablesAsync (export de un análisis
+    /// anterior a estas tablas), para que ambos caminos creen exactamente la misma forma de tabla.
+    /// </summary>
+    public const string NewDetailTablesDdl = """
+        IF OBJECT_ID('dbo.snapshot_details', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.snapshot_details (
+                snapshot_detail_id INT IDENTITY(1,1) PRIMARY KEY,
+                resource_id INT NOT NULL,
+                snapshot_sku NVARCHAR(100) NULL,
+                disk_size_gb INT NULL,
+                incremental BIT NULL,
+                time_created DATETIME2 NULL,
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                CONSTRAINT FK_snapshot_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
+            );
+        END
+        IF OBJECT_ID('dbo.storage_files_details', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.storage_files_details (
+                storage_files_detail_id INT IDENTITY(1,1) PRIMARY KEY,
+                resource_id INT NOT NULL,
+                kind NVARCHAR(50) NULL,
+                files_sku NVARCHAR(100) NULL,
+                share_count INT NULL,
+                used_gib FLOAT NULL,
+                provisioned_gib FLOAT NULL,
+                billable_gib FLOAT NULL,
+                tier_breakdown_json NVARCHAR(MAX) NULL,
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                CONSTRAINT FK_storage_files_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
+            );
+        END
+        """;
+
     // Port de ensure_inventory_schema (crea sql_managed_instance_details + elastic_pool_details).
     public static async Task EnsureSchemaAsync(SqlConnection conn, SqlTransaction tx, CancellationToken ct)
     {
@@ -59,37 +97,13 @@ public static class InventoryInserter
                     CONSTRAINT FK_elastic_pool_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
                 );
             END
-            IF OBJECT_ID('dbo.snapshot_details', 'U') IS NULL
-            BEGIN
-                CREATE TABLE dbo.snapshot_details (
-                    snapshot_detail_id INT IDENTITY(1,1) PRIMARY KEY,
-                    resource_id INT NOT NULL,
-                    snapshot_sku NVARCHAR(100) NULL,
-                    disk_size_gb INT NULL,
-                    incremental BIT NULL,
-                    time_created DATETIME2 NULL,
-                    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-                    CONSTRAINT FK_snapshot_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
-                );
-            END
-            IF OBJECT_ID('dbo.storage_files_details', 'U') IS NULL
-            BEGIN
-                CREATE TABLE dbo.storage_files_details (
-                    storage_files_detail_id INT IDENTITY(1,1) PRIMARY KEY,
-                    resource_id INT NOT NULL,
-                    kind NVARCHAR(50) NULL,
-                    files_sku NVARCHAR(100) NULL,
-                    share_count INT NULL,
-                    used_gib FLOAT NULL,
-                    provisioned_gib FLOAT NULL,
-                    billable_gib FLOAT NULL,
-                    tier_breakdown_json NVARCHAR(MAX) NULL,
-                    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-                    CONSTRAINT FK_storage_files_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
-                );
-            END
             """;
         await cmd.ExecuteNonQueryAsync(ct);
+
+        await using var cmdNew = conn.CreateCommand();
+        cmdNew.Transaction = tx;
+        cmdNew.CommandText = NewDetailTablesDdl;
+        await cmdNew.ExecuteNonQueryAsync(ct);
     }
 
     // Port de insert_azure_resource → devuelve el resource_id insertado.

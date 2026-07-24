@@ -411,41 +411,14 @@ public sealed class CostExcelDataSourceV3(
 
     /// <summary>Las hojas de snapshots/storage_files hacen LEFT JOIN a tablas detalle que crea el
     /// import (Tasks 5/7 del plan 2026-07-24); si el análisis es previo a ese código, se crean acá
-    /// vacías para que el export no falle. Si ya existen, no toca nada.</summary>
+    /// vacías para que el export no falle. Si ya existen, no toca nada. DDL compartida con
+    /// InventoryInserter.EnsureSchemaAsync vía
+    /// <see cref="OptimizacionCostos.Api.Features.Inventory.InventoryInserter.NewDetailTablesDdl"/>
+    /// (única fuente de verdad, ver task-11 revisión 2026-07-24).</summary>
     private static async Task EnsureNewDetailTablesAsync(SqlConnection conn, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            IF OBJECT_ID('dbo.snapshot_details', 'U') IS NULL
-            BEGIN
-                CREATE TABLE dbo.snapshot_details (
-                    snapshot_detail_id INT IDENTITY(1,1) PRIMARY KEY,
-                    resource_id INT NOT NULL,
-                    snapshot_sku NVARCHAR(100) NULL,
-                    disk_size_gb INT NULL,
-                    incremental BIT NULL,
-                    time_created DATETIME2 NULL,
-                    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-                    CONSTRAINT FK_snapshot_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
-                );
-            END
-            IF OBJECT_ID('dbo.storage_files_details', 'U') IS NULL
-            BEGIN
-                CREATE TABLE dbo.storage_files_details (
-                    storage_files_detail_id INT IDENTITY(1,1) PRIMARY KEY,
-                    resource_id INT NOT NULL,
-                    kind NVARCHAR(50) NULL,
-                    files_sku NVARCHAR(100) NULL,
-                    share_count INT NULL,
-                    used_gib FLOAT NULL,
-                    provisioned_gib FLOAT NULL,
-                    billable_gib FLOAT NULL,
-                    tier_breakdown_json NVARCHAR(MAX) NULL,
-                    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
-                    CONSTRAINT FK_storage_files_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
-                );
-            END
-            """;
+        cmd.CommandText = OptimizacionCostos.Api.Features.Inventory.InventoryInserter.NewDetailTablesDdl;
         await cmd.ExecuteNonQueryAsync(ct);
     }
 

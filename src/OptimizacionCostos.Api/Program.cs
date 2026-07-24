@@ -264,7 +264,13 @@ try
         scope.ServiceProvider.GetRequiredService<OptimizacionCostos.Api.Features.Catalog.IServiceCatalogAdmin>(),
         app.Logger);
 }
-catch { /* BD no disponible al arrancar; el seed es idempotente y reintenta al próximo arranque */ }
+catch (Exception ex)
+{
+    // BD no disponible al arrancar (u otro fallo puntual); el seed es idempotente y se reintenta
+    // en el próximo arranque, pero si nunca corre el catálogo queda sin las filas nuevas sin
+    // dejar rastro. Se registra para poder diagnosticarlo.
+    app.Logger.LogWarning(ex, "CatalogSeed.EnsureAsync falló al arrancar; se reintentará en el próximo arranque.");
+}
 
 app.Run();
 
