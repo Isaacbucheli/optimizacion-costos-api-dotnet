@@ -119,12 +119,38 @@ public class AccessReviewGraphClientTests
     }
 
     [Fact]
+    public async Task GlobalAdmins_por_members_no_pide_select_de_props_de_usuario()
+    {
+        // Regresión (bug cazado en E2E Banco Solidario): 'members' es colección de directoryObject;
+        // pedir $select de props de 'user' (userType/accountEnabled/UPN) sin cast da HTTP 400.
+        var svc = Build(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("/directoryRoles?"))
+                return Json("""{"value":[{"id":"role-ga"}]}""");
+            if (url.Contains("/directoryRoles/role-ga/members"))
+            {
+                Assert.DoesNotContain("$select", url);
+                return Json("""{"value":[{"@odata.type":"#microsoft.graph.user","id":"u1","displayName":"Admin Uno","userPrincipalName":"a1@x.com","userType":"Member"}]}""");
+            }
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+
+        var gas = await svc.GetGlobalAdminsAsync(1);
+
+        Assert.Single(gas);
+        Assert.Equal("u1", gas[0].Id);
+        Assert.Equal("a1@x.com", gas[0].Upn);
+    }
+
+    [Fact]
     public async Task TransitiveMembers_pagina_y_envia_consistency_level()
     {
         var svc = Build(req =>
         {
             Assert.Equal("eventual", req.Headers.GetValues("ConsistencyLevel").Single());
             var url = req.RequestUri!.ToString();
+            Assert.DoesNotContain("$select", url); // regresión: sin $select de props de user (evita HTTP 400)
             if (!url.Contains("skiptoken"))
                 return Json("""
                     {"value":[{"@odata.type":"#microsoft.graph.user","id":"u1","displayName":"Ana","userPrincipalName":"ana@x.com","userType":"Member"}],

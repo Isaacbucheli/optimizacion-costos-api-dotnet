@@ -127,7 +127,11 @@ public sealed class AccessReviewGraphClient(IAzureCredentialFactory credentials,
         int credentialId, string groupId, CancellationToken ct = default)
     {
         var (http, token) = await ClientAsync(credentialId, ct);
-        var url = $"{GraphBase}/groups/{groupId}/transitiveMembers?$select=id,displayName,userPrincipalName,userType,accountEnabled&$top=999";
+        // Sin $select: 'members'/'transitiveMembers' son colecciones de directoryObject; seleccionar
+        // propiedades de 'user' (userPrincipalName, userType, accountEnabled) sin el cast
+        // /microsoft.graph.user da HTTP 400. Sin $select, Graph anota @odata.type por ítem y devuelve
+        // id/displayName/userPrincipalName por default; userType/accountEnabled se resuelven del barrido.
+        var url = $"{GraphBase}/groups/{groupId}/transitiveMembers?$top=999";
         var items = await GetPagedAsync(http, token, url, eventualConsistency: true, ct);
         return items.Select(ParseDirObject).ToList();
     }
@@ -142,8 +146,12 @@ public sealed class AccessReviewGraphClient(IAzureCredentialFactory credentials,
 
         if (roleId is not null)
         {
+            // Sin parámetros de query: 'directoryRoles/{id}/members' NO soporta $top (da HTTP 400) y
+            // seleccionar props de 'user' sin el cast /microsoft.graph.user también da 400. Sin query,
+            // Graph anota @odata.type por ítem y devuelve id/displayName/UPN por default (la lista de GAs
+            // es chica, no requiere paginar); userType/accountEnabled del GA se toman del barrido.
             var members = await GetPagedAsync(http, token,
-                $"{GraphBase}/directoryRoles/{roleId}/members?$select=id,displayName,userPrincipalName,userType,accountEnabled&$top=999",
+                $"{GraphBase}/directoryRoles/{roleId}/members",
                 false, ct);
             return members.Select(ParseDirObject).ToList();
         }
