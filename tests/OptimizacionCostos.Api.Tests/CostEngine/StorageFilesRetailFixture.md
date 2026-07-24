@@ -43,7 +43,7 @@ No existe `Cool RA-GRS Data Stored` ni `Cool RA-GZRS Data Stored`.
 | Standard GRS | GRS Data Stored | 1 GB/Month | 0.10 | 0.10 |
 | Standard GZRS | GZRS Data Stored | 1 GB/Month | 0.135 | 0.135 |
 
-**Nota clave:** el meterName NO lleva el prefijo "Standard" (a diferencia de Hot/Cool que sí llevan su prefijo de tier). Es literalmente `"{RED} Data Stored"`, igual que asumía el mapeo provisional — lo que cambia es el **productName** (ver §6).
+**Nota clave:** el meterName NO lleva el prefijo "Standard" (a diferencia de Hot/Cool que sí llevan su prefijo de tier). Es literalmente `"{RED} Data Stored"`, igual que asumía el mapeo provisional — lo que cambia es el **productName** (ver §5).
 
 ### 1.4 Producto legacy `Files` (v1, GPv1 storage account) — NO USAR
 
@@ -229,7 +229,7 @@ Ver §3 completo. Confirmado sin cambios para lo que el código ya soporta (Stan
 **Verificación alternativa realizada (consistencia interna, según lo indicado si la página pública no es alcanzable):**
 1. `hot < transaction_optimized` (mismo GB, misma redundancia): eastus LRS 0.0287 < 0.06 ✓; eastus2 LRS 0.0255 < 0.06 ✓.
 2. `cool < hot`: eastus LRS 0.0228 < 0.0287 ✓; eastus2 LRS 0.0150 < 0.0255 ✓.
-3. `reservation per-GB-mes derivado < consumption per-GB-mes equivalente`: verificado en 8 combinaciones independientes en §4.1, todas cumplen con margen de descuento coherente (16%/32%).
+3. `reservation per-GB-mes derivado < consumption per-GB-mes equivalente`: verificado en 8 combinaciones independientes en §4.1, todas cumplen con margen de descuento coherente (18%/34%; 22% en bloques de 100 TiB).
 
 Todas las verificaciones de consistencia interna pasaron. **Queda pendiente el cotejo 1:1 contra la calculadora pública** (requiere un entorno con navegador/JS o acceso al portal de Azure) — recomendado antes de exponer estos precios a un cliente final, pero no bloquea Tasks 2/4 dado que los valores vienen directo de la Retail Prices API (la misma fuente que usa el resto de la plataforma para todos los demás servicios).
 
@@ -255,7 +255,7 @@ Todas las verificaciones de consistencia interna pasaron. **Queda pendiente el c
 
 1. **`transaction_optimized`: productName `Files` → `Files v2`.** El producto `Files` (v1) sí existe y tiene el mismo meterName/precio para LRS/GRS, pero no tiene filas ZRS/GZRS — usarlo rompería esas dos redundancias. `Files v2` con skuName `Standard {RED}` cubre las 4 redundancias con el mismo meterName sin prefijo `{RED} Data Stored` (esto último sí coincidía con el plan).
 2. **`premium`: meterName `{RED} Provisioned` → `Premium {RED} Provisioned`.** El meter real lleva el prefijo `Premium`.
-3. **`premium`: unidad `1 GiB/Month` → `1 GB/Month`.** La API reporta GB (decimal), no GiB, para este meter — igual que todos los demás meters de Files.
+3. **`premium`: unidad `1 GiB/Month` → `1 GB/Month`.** La API rotula la unidad como `GB`, pero el valor equivale a GiB binario (§6.2), igual que todos los demás meters de Files.
 4. **Universo de `{RED}`: quitar RA-GRS/RA-GZRS como sufijos de meter propios; mapearlos a GRS/GZRS antes del lookup.** Ningún tier de Files tiene meter `RA-GRS`/`RA-GZRS` real.
 5. **`transaction_optimized` no tiene Reservation disponible** — el plan no lo decía explícitamente pero tampoco lo contradice; se deja explícito para Task 4 (si el análisis intenta buscar RI de Standard, debe devolver "no aplica", no `null` silencioso que se confunda con "no encontrado").
 
