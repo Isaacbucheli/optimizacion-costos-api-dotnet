@@ -1,3 +1,4 @@
+using System.Net;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Data;
 
@@ -122,8 +123,19 @@ public class AccessReviewSyncService(
                 }
                 catch (Exception ex)
                 {
-                    graphStatus = "sin_consent";
-                    graphDetail = $"{ex.GetType().Name}: {Trunc(ex.Message, 300)}. Revisar admin consent de Graph.";
+                    // Solo 401/403 son consent/permisos de Graph. Cualquier otra falla (404, 5xx, red,
+                    // secreto inválido) se reporta como "error": etiquetarla sin_consent despista el
+                    // diagnóstico (caso real: 404 de un grupo borrado leído como falta de consent).
+                    if ((ex as HttpRequestException)?.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+                    {
+                        graphStatus = "sin_consent";
+                        graphDetail = $"{ex.GetType().Name}: {Trunc(ex.Message, 300)}. Revisar admin consent de Graph.";
+                    }
+                    else
+                    {
+                        graphStatus = "error";
+                        graphDetail = $"{ex.GetType().Name}: {Trunc(ex.Message, 300)}";
+                    }
                     anyProblem = true;
                     logger.LogWarning(ex, "Graph fallo cred {Cred}", unit.CredentialId);
                 }

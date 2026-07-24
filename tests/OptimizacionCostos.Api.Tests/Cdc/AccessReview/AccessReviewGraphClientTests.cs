@@ -167,6 +167,20 @@ public class AccessReviewGraphClientTests
     }
 
     [Fact]
+    public async Task TransitiveMembers_grupo_borrado_404_devuelve_vacio()
+    {
+        // Regresión (caso BANCO DELTA): asignación RBAC huérfana a un grupo ya borrado de Entra ID
+        // ("Identity not found" en el portal) → /groups/{id}/transitiveMembers da 404. Debe tratarse
+        // como grupo sin miembros, no tumbar la fase Graph completa de la corrida.
+        var svc = Build(_ => new HttpResponseMessage(HttpStatusCode.NotFound)
+            { Content = new StringContent("""{"error":{"code":"Request_ResourceNotFound"}}""") });
+
+        var members = await svc.GetGroupTransitiveMembersAsync(1, "g-borrado");
+
+        Assert.Empty(members);
+    }
+
+    [Fact]
     public async Task GetByIds_trocea_en_lotes_de_1000_y_mapea_tipos()
     {
         var svc = Build(req => Json("""

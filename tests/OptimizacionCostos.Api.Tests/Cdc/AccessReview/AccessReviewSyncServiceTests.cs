@@ -1,3 +1,4 @@
+using System.Net;
 using OptimizacionCostos.Api.Features.Cdc.AccessReview;
 
 namespace OptimizacionCostos.Api.Tests.Cdc.AccessReview;
@@ -21,14 +22,14 @@ public sealed class FakeGraph : IAccessReviewGraphClient
     public Dictionary<string, GraphDirectoryObject> Directory = [];
     public Dictionary<string, string> Mfa = [];
     public HashSet<int> FailCredentials = [];
-    public bool FailGlobalAdmins;
+    public Exception? GlobalAdminsError;
 
-    private void Gate(int credentialId) { if (FailCredentials.Contains(credentialId)) throw new HttpRequestException("403 consent"); }
+    private void Gate(int credentialId) { if (FailCredentials.Contains(credentialId)) throw new HttpRequestException("403 consent", null, HttpStatusCode.Forbidden); }
     public Task<GraphUserSweep> SweepUsersAsync(int c, CancellationToken ct = default) { Gate(c); return Task.FromResult(Sweep); }
     public Task<IReadOnlyList<GraphDirectoryObject>> GetGroupTransitiveMembersAsync(int c, string g, CancellationToken ct = default)
         { Gate(c); return Task.FromResult<IReadOnlyList<GraphDirectoryObject>>(GroupMembers.GetValueOrDefault(g, [])); }
     public Task<IReadOnlyList<GraphDirectoryObject>> GetGlobalAdminsAsync(int c, CancellationToken ct = default)
-        { Gate(c); if (FailGlobalAdmins) throw new HttpRequestException("boom"); return Task.FromResult<IReadOnlyList<GraphDirectoryObject>>(GlobalAdmins); }
+        { Gate(c); if (GlobalAdminsError is not null) throw GlobalAdminsError; return Task.FromResult<IReadOnlyList<GraphDirectoryObject>>(GlobalAdmins); }
     public Task<IReadOnlyDictionary<string, GraphDirectoryObject>> GetByIdsAsync(int c, IReadOnlyCollection<string> ids, CancellationToken ct = default)
         { Gate(c); return Task.FromResult<IReadOnlyDictionary<string, GraphDirectoryObject>>(
             ids.Where(Directory.ContainsKey).ToDictionary(i => i, i => Directory[i])); }
@@ -201,7 +202,7 @@ public class AccessReviewSyncServiceTests
                 ["u1"] = User("u1"),
                 ["guest1"] = User("guest1", "ana_ext#EXT#@x.com", "Guest"),
             }, true),
-            FailGlobalAdmins = true,
+            GlobalAdminsError = new HttpRequestException("403", null, HttpStatusCode.Forbidden),
         };
         var store = new FakeStore();
 
@@ -210,6 +211,29 @@ public class AccessReviewSyncServiceTests
         var cs = Assert.Single(store.CredStatuses);
         Assert.Equal("sin_consent", cs.GraphStatus);
         Assert.Empty(store.Guests);
+        Assert.Equal("partial", store.Finished!.Value.Status);
+    }
+
+    [Fact]
+    public async Task Graph_404_no_es_consent_se_reporta_como_error()
+    {
+        // Regresión (caso BANCO DELTA): un 404 de Graph (p.ej. recurso inexistente) quedaba
+        // etiquetado sin_consent con el mensaje "Revisar admin consent", con los permisos bien
+        // otorgados. Solo 401/403 son consent; el resto es "error" con detalle honesto.
+        var arm = new FakeArm { BySub = { ["s1"] = [
+            new("/subscriptions/s1", "subscription", "u1", "User", "def-1", "Reader")] } };
+        var graph = new FakeGraph
+        {
+            Sweep = new(new Dictionary<string, GraphUser> { ["u1"] = User("u1") }, true),
+            GlobalAdminsError = new HttpRequestException("404 Not Found", null, HttpStatusCode.NotFound),
+        };
+        var store = new FakeStore();
+
+        await new TestableSyncService(arm, graph, store, [Cred1]).RunAsync(1, 10);
+
+        var cs = Assert.Single(store.CredStatuses);
+        Assert.Equal("error", cs.GraphStatus);
+        Assert.DoesNotContain("consent", cs.Detail, StringComparison.OrdinalIgnoreCase);
         Assert.Equal("partial", store.Finished!.Value.Status);
     }
 
