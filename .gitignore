@@ -15,3 +15,6 @@ appsettings.*.local.json
 
 # NuGet
 *.nupkg
+
+# Artefactos locales de build/test
+*.log

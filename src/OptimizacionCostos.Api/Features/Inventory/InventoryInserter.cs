@@ -10,19 +10,19 @@ namespace OptimizacionCostos.Api.Features.Inventory;
 /// </summary>
 public static class InventoryInserter
 {
-    /// <summary>11 tablas de detalle conocidas (KNOWN_DETAIL_TABLES).</summary>
+    /// <summary>12 tablas de detalle conocidas (KNOWN_DETAIL_TABLES).</summary>
     public static readonly string[] KnownDetailTables =
     [
         "vm_details", "disk_details", "sql_db_details", "appservice_plan_details",
         "mysql_flex_details", "cosmos_details", "redis_details", "public_ip_details",
-        "sql_vm_details", "sql_managed_instance_details", "elastic_pool_details",
+        "sql_vm_details", "sql_managed_instance_details", "elastic_pool_details", "snapshot_details",
     ];
 
     /// <summary>inserter_key registrados (equivale a las claves de DETAIL_INSERTERS de Python).</summary>
     public static readonly string[] InserterKeys =
     [
         "vm", "disk", "sql_db", "appservice_plan", "mysql_flex", "cosmos",
-        "redis", "public_ip", "sql_vm", "sql_managed_instance", "elastic_pool",
+        "redis", "public_ip", "sql_vm", "sql_managed_instance", "elastic_pool", "snapshot",
     ];
 
     private static readonly HashSet<string> DtuPoolTiers = new(StringComparer.OrdinalIgnoreCase) { "basic", "standard", "premium" };
@@ -55,6 +55,19 @@ public static class InventoryInserter
                     per_db_min FLOAT NULL, per_db_max FLOAT NULL, zone_redundant BIT NULL, license_type NVARCHAR(100) NULL,
                     created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
                     CONSTRAINT FK_elastic_pool_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
+                );
+            END
+            IF OBJECT_ID('dbo.snapshot_details', 'U') IS NULL
+            BEGIN
+                CREATE TABLE dbo.snapshot_details (
+                    snapshot_detail_id INT IDENTITY(1,1) PRIMARY KEY,
+                    resource_id INT NOT NULL,
+                    snapshot_sku NVARCHAR(100) NULL,
+                    disk_size_gb INT NULL,
+                    incremental BIT NULL,
+                    time_created DATETIME2 NULL,
+                    created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                    CONSTRAINT FK_snapshot_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
                 );
             END
             """;
@@ -111,7 +124,7 @@ public static class InventoryInserter
         {
             "vm" => Vm, "disk" => Disk, "sql_db" => SqlDb, "appservice_plan" => AppServicePlan,
             "mysql_flex" => MySqlFlex, "cosmos" => Cosmos, "redis" => Redis, "public_ip" => PublicIp,
-            "sql_vm" => SqlVm, "sql_managed_instance" => SqlMi, "elastic_pool" => ElasticPool,
+            "sql_vm" => SqlVm, "sql_managed_instance" => SqlMi, "elastic_pool" => ElasticPool, "snapshot" => Snapshot,
             _ => null,
         };
         if (inserter is null)
@@ -319,6 +332,24 @@ public static class InventoryInserter
             new SqlParameter("@cm", computeModel), new SqlParameter("@min", Nz(r.Dbl("perDbMin"))),
             new SqlParameter("@max", Nz(r.Dbl("perDbMax"))), new SqlParameter("@zr", Bit(r.BoolN("zoneRedundant"))),
             new SqlParameter("@lic", Nz(r.Str("licenseType"))),
+        ]);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task Snapshot(SqlConnection c, SqlTransaction t, int rid, RgRow r, CancellationToken ct)
+    {
+        object timeCreated = DateTime.TryParse(
+            r.Str("timeCreated"), System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+            out var tc) ? tc : DBNull.Value;
+        await using var cmd = New(c, t, """
+            INSERT INTO dbo.snapshot_details (resource_id, snapshot_sku, disk_size_gb, incremental, time_created)
+            VALUES (@rid, @sku, @size, @inc, @tc)
+            """);
+        cmd.Parameters.AddRange([
+            new SqlParameter("@rid", rid), new SqlParameter("@sku", Nz(r.Str("skuName"))),
+            new SqlParameter("@size", Nz(r.Int("diskSizeGB"))), new SqlParameter("@inc", Bit(r.BoolN("incremental"))),
+            new SqlParameter("@tc", timeCreated),
         ]);
         await cmd.ExecuteNonQueryAsync(ct);
     }
