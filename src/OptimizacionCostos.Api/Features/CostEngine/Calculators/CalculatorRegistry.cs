@@ -32,6 +32,7 @@ public static class CalculatorRegistry
             ["redis_cache"] = (prices, constants) => new RedisCacheCalculator(prices, constants),
             ["public_ip"] = (prices, constants) => new PublicIpCalculator(prices, constants),
             ["sql_vm_metadata"] = (prices, constants) => new SqlVmMetadataCalculator(prices, constants),
+            ["snapshot"] = (prices, constants) => new SnapshotCalculator(prices, constants),
         };
 
     /// <summary>
