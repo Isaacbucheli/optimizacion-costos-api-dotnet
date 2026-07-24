@@ -33,6 +33,7 @@ public static class CalculatorRegistry
             ["public_ip"] = (prices, constants) => new PublicIpCalculator(prices, constants),
             ["sql_vm_metadata"] = (prices, constants) => new SqlVmMetadataCalculator(prices, constants),
             ["snapshot"] = (prices, constants) => new SnapshotCalculator(prices, constants),
+            ["storage_files"] = (prices, constants) => new StorageFilesCalculator(prices, constants),
         };
 
     /// <summary>
