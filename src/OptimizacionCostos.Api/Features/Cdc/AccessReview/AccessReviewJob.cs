@@ -43,20 +43,27 @@ public sealed class AccessReviewBackgroundService(
             try { job = await queue.DequeueAsync(stoppingToken); }
             catch (OperationCanceledException) { break; }
 
-            using var scope = scopes.CreateScope();
-            var store = scope.ServiceProvider.GetRequiredService<IAccessReviewStore>();
-            var sync = scope.ServiceProvider.GetRequiredService<IAccessReviewSyncService>();
             try
             {
-                await store.MarkRunningAsync(job.RunId, stoppingToken);
-                await sync.RunAsync(job.RunId, job.ClientId, stoppingToken);
-                logger.LogInformation("Access review run {Run} (cliente {Client}) completada", job.RunId, job.ClientId);
+                using var scope = scopes.CreateScope();
+                var store = scope.ServiceProvider.GetRequiredService<IAccessReviewStore>();
+                var sync = scope.ServiceProvider.GetRequiredService<IAccessReviewSyncService>();
+                try
+                {
+                    await store.MarkRunningAsync(job.RunId, stoppingToken);
+                    await sync.RunAsync(job.RunId, job.ClientId, stoppingToken);
+                    logger.LogInformation("Access review run {Run} (cliente {Client}) completada", job.RunId, job.ClientId);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogError(ex, "Access review run {Run} falló", job.RunId);
+                    try { await store.MarkFinishedAsync(job.RunId, "error", ex.Message, stoppingToken); }
+                    catch (Exception mex) { logger.LogError(mex, "Access review: no se pudo marcar error del run {Run}", job.RunId); }
+                }
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "Access review run {Run} falló", job.RunId);
-                try { await store.MarkFinishedAsync(job.RunId, "error", ex.Message, stoppingToken); }
-                catch (Exception mex) { logger.LogError(mex, "Access review: no se pudo marcar error del run {Run}", job.RunId); }
+                logger.LogError(ex, "Fallo no controlado procesando access review run {Run}", job.RunId);
             }
         }
     }
