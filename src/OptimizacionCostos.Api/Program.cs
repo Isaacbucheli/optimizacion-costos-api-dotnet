@@ -50,6 +50,8 @@ builder.Services.AddScoped<IClientSubscriptionStore, SqlClientSubscriptionStore>
 builder.Services.AddScoped<ISubscriptionSyncService, SubscriptionSyncService>();
 // Import de inventario / Resource Graph (B4): usa catálogo + B1 (RG + credenciales) + B3 (sync).
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Inventory.IInventoryImportService, OptimizacionCostos.Api.Features.Inventory.InventoryImportService>();
+// Enriquecimiento ARM del servicio storage_files (fileshares, corte de 10 TiB).
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Inventory.IStorageFilesEnricher, OptimizacionCostos.Api.Features.Inventory.StorageFilesEnricher>();
 // CRUD admin del catálogo de servicios (B4): gestión + sugerencia IA desde discovery.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Catalog.IServiceCatalogAdmin, OptimizacionCostos.Api.Features.Catalog.SqlServiceCatalogAdmin>();
 // Gestión CDC (B5): reservas (ARM/Capacity/Consumption), cobertura RI, power history (Activity Log).

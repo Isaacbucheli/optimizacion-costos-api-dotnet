@@ -43,7 +43,8 @@ public sealed class InventoryImportService(
     IChatCompletionClient chat,
     AppConfig config,
     ILogger<InventoryImportService> logger,
-    IFinOpsRefData? refData = null) : IInventoryImportService
+    IFinOpsRefData? refData = null,
+    IStorageFilesEnricher? storageFilesEnricher = null) : IInventoryImportService
 {
     private const string DiscoveryKql =
         "Resources | summarize resource_count=count(), sample_names=make_set(name, 5) by resource_type=tolower(type) | order by resource_count desc";
@@ -84,10 +85,36 @@ public sealed class InventoryImportService(
             foreach (var svc in services)
             {
                 var s = summary.TryGetValue(svc.ServiceKey, out var existing) ? existing
-                    : summary[svc.ServiceKey] = new Dictionary<string, object?> { ["imported"] = 0, ["insert_errors"] = 0, ["errors"] = new List<object>() };
+                    : summary[svc.ServiceKey] = new Dictionary<string, object?>
+                    { ["imported"] = 0, ["insert_errors"] = 0, ["errors"] = new List<object>(), ["warnings"] = new List<object>() };
                 try
                 {
                     var rows = await rg.RunQueryAsync(cred, subIds, svc.KqlQuery ?? "", ct);
+
+                    if (string.Equals(svc.ServiceKey, "storage_files", StringComparison.Ordinal))
+                    {
+                        if (storageFilesEnricher is null)
+                        {
+                            // Sin enricher no se puede garantizar el corte de 10 TiB: no se inserta nada.
+                            ((List<object>)s["errors"]!).Add(new
+                            {
+                                credential_id = credentialId,
+                                error = "StorageFilesEnricher no disponible; storage accounts omitidos",
+                            });
+                            continue;
+                        }
+                        var enrichment = await storageFilesEnricher.EnrichAsync(cred, rows, ct);
+                        foreach (var w in enrichment.Warnings)
+                        {
+                            ((List<object>)s["warnings"]!).Add(new { credential_id = credentialId, warning = w });
+                        }
+                        foreach (var row in enrichment.Kept)
+                        {
+                            collected.Add((svc, row));
+                        }
+                        continue;
+                    }
+
                     foreach (var node in rows)
                         collected.Add((svc, new RgRow(node)));
                 }
