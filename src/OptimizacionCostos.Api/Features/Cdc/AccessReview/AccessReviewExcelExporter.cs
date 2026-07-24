@@ -53,11 +53,8 @@ public sealed class AccessReviewExcelExporter : IAccessReviewExcelExporter
         {
             var s = wb.AddWorksheet(name);
             for (var c = 0; c < headers.Length; c++)
-            {
                 s.Cell(1, c + 1).Value = headers[c];
-                s.Cell(1, c + 1).Style.Font.SetBold().Fill.SetBackgroundColor(XLColor.FromHtml("#1A1A2E"))
-                    .Font.SetFontColor(XLColor.White);
-            }
+            ExcelStyles.HeaderRow(s, 1, headers.Length);
             for (var r = 0; r < rows.Count; r++)
             {
                 var vals = cells(rows[r]);

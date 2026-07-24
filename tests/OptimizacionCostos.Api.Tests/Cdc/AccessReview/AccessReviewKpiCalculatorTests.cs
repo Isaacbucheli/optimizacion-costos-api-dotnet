@@ -46,4 +46,76 @@ public class AccessReviewKpiCalculatorTests
         Assert.Equal(1, k.ServicePrincipalsUnicos);
         Assert.Equal(6, k.TotalAsignaciones);
     }
+
+    [Fact]
+    public void Guests_con_rbac_no_cuentan_como_internos_sin_mfa()
+    {
+        // Sin el guard "UserType != Guest" en AccessReviewKpiCalculator, u2 también se contaría
+        // (mfa disabled) y el resultado sería 2.
+        var snapshot = new AccessReviewSnapshot(Run, [],
+            [
+                Row("u1", mfa: "disabled"),                                  // interno sin MFA: cuenta
+                Row("u2", userType: "Guest", mfa: "disabled"),               // guest con RBAC: NO debe contar
+            ],
+            [], []);
+
+        var k = AccessReviewKpiCalculator.Compute(snapshot, 90, Now);
+
+        Assert.Equal(1, k.InternosSinMfaConRbac);
+    }
+
+    [Fact]
+    public void Solo_cuentas_tipo_User_cuentan_para_deshabilitadas_e_inactivas()
+    {
+        // Sin el filtro PrincipalType == "User" previo al cálculo, el grupo y el service principal
+        // (ambos deshabilitados + inactivos) también se contarían y el resultado sería 3 en cada KPI.
+        var snapshot = new AccessReviewSnapshot(Run, [],
+            [
+                Row("u1", enabled: false, lastSignIn: Now.AddDays(-200)),                                     // user: cuenta
+                Row("grp1", ptype: "Group", userType: null, enabled: false, lastSignIn: Now.AddDays(-200)),   // grupo: NO debe contar
+                Row("sp1", ptype: "ServicePrincipal", userType: null, enabled: false, lastSignIn: Now.AddDays(-200)), // SP: NO debe contar
+            ],
+            [], []);
+
+        var k = AccessReviewKpiCalculator.Compute(snapshot, 90, Now);
+
+        Assert.Equal(1, k.CuentasDeshabilitadasConRbac);
+        Assert.Equal(1, k.CuentasInactivasConRbac);
+    }
+
+    [Fact]
+    public void Guests_inactivos_sin_permisos_no_cuentan_en_con_permisos()
+    {
+        // Prueba que RolesInSubs realmente discrimina: dos guests inactivos, solo uno con permisos.
+        var snapshot = new AccessReviewSnapshot(Run, [], [],
+            [
+                Guest("g1", Now.AddDays(-120), "Reader (Sub Uno)"), // inactivo con permisos
+                Guest("g2", Now.AddDays(-120), null),               // inactivo SIN permisos
+            ],
+            []);
+
+        var k = AccessReviewKpiCalculator.Compute(snapshot, 90, Now);
+
+        Assert.Equal(2, k.GuestsInactivos);
+        Assert.Equal(1, k.GuestsInactivosConPermisos);
+    }
+
+    [Fact]
+    public void Service_principals_se_cuentan_distintos_no_por_fila()
+    {
+        // Fila duplicada del mismo principal (p.ej. asignado en dos scopes): debe colapsar a 1 distinto,
+        // mientras que TotalAsignaciones sigue contando cada fila.
+        var snapshot = new AccessReviewSnapshot(Run, [],
+            [
+                Row("sp1", ptype: "ServicePrincipal", userType: null, enabled: null, mfa: null),
+                Row("sp1", ptype: "ServicePrincipal", userType: null, enabled: null, mfa: null), // duplicado: mismo principal
+                Row("sp2", ptype: "ServicePrincipal", userType: null, enabled: null, mfa: null),
+            ],
+            [], []);
+
+        var k = AccessReviewKpiCalculator.Compute(snapshot, 90, Now);
+
+        Assert.Equal(2, k.ServicePrincipalsUnicos);
+        Assert.Equal(3, k.TotalAsignaciones);
+    }
 }
