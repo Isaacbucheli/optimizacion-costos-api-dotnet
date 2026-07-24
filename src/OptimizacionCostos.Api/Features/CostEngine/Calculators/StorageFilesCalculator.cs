@@ -9,7 +9,9 @@ namespace OptimizacionCostos.Api.Features.CostEngine.Calculators;
 /// (corte aplicado en la importación por StorageFilesEnricher).
 ///
 /// Costo = Σ por tier (tier_breakdown_json, GiB facturables) × precio/GiB-mes del tier
-/// con la redundancia del SKU. Estándar factura GiB usados; premium GiB de cuota (el
+/// con la redundancia del SKU. Estándar factura GiB usados MÁS el diferencial de snapshots
+/// del share (ya sumado por StorageFilesEnricher: Azure factura pay-as-you-go sobre
+/// "Data Stored", que incluye el diferencial de snapshots); premium GiB de cuota (el
 /// desglose ya viene con ese criterio). RI 1y/3y lineal por GiB, SOLO si todos los tiers
 /// con capacidad tienen reserva publicada. No incluye transacciones/metadata (nota).
 /// SKUs provisioned v2 → manual_required (modelo de facturación distinto, sin inventar números).
@@ -131,7 +133,9 @@ public sealed class StorageFilesCalculator(IPriceRepository prices, IPricingCons
             var billableNote = billableGib.Value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
             var note =
                 $"Azure Files: {billableNote} GiB facturables en {shareCount} shares "
-                + "(estándar por GiB usados, premium por cuota). No incluye transacciones ni metadata. "
+                + "(estándar por GiB usados + diferencial de snapshots del share, premium por cuota). "
+                + "Incluye el uso diferencial de snapshots (respaldos/versiones). "
+                + "No incluye transacciones ni metadata. "
                 + "La reserva se adquiere en bloques de 10/100 TiB.";
             result.CalculationNotes = string.IsNullOrEmpty(result.CalculationNotes)
                 ? note

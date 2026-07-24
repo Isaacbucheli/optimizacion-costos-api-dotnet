@@ -105,6 +105,66 @@ public sealed class StorageFilesEnricherTests
         return ListSharesResponse(listShares);
     }
 
+    /// <summary>Respuesta REAL verificada de Azure Monitor para la métrica FileShareSnapshotSize
+    /// (namespace Microsoft.Storage/storageAccounts/fileServices): NO se desglosa por-fileshare
+    /// pese a declarar esa dimensión — la serie siempre viene con metadatavalue "&lt;All&gt;"
+    /// (agregado de la cuenta completa). Verificado contra una cuenta real con 31 snapshots
+    /// diarios de Azure Backup.</summary>
+    private static HttpResponseMessage SnapshotMetricResponse(double averageBytes)
+        => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(new JsonObject
+            {
+                ["cost"] = 100,
+                ["timespan"] = "2026-07-21T21:37:28Z/2026-07-24T21:37:28Z",
+                ["interval"] = "P1D",
+                ["value"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["id"] = ".../metrics/FileShareSnapshotSize",
+                        ["type"] = "Microsoft.Insights/metrics",
+                        ["name"] = new JsonObject { ["value"] = "FileShareSnapshotSize", ["localizedValue"] = "File Share Snapshot Size" },
+                        ["displayDescription"] = "The amount of storage used by the snapshots in storage account's File service in bytes.",
+                        ["unit"] = "Bytes",
+                        ["timeseries"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["metadatavalues"] = new JsonArray
+                                {
+                                    new JsonObject { ["name"] = new JsonObject { ["value"] = "fileshare", ["localizedValue"] = "fileshare" }, ["value"] = "<All>" },
+                                },
+                                ["data"] = new JsonArray
+                                {
+                                    new JsonObject { ["timeStamp"] = "2026-07-22T21:37:00Z", ["average"] = averageBytes },
+                                    new JsonObject { ["timeStamp"] = "2026-07-23T21:37:00Z", ["average"] = averageBytes },
+                                },
+                            },
+                        },
+                        ["errorCode"] = "Success",
+                    },
+                },
+                ["namespace"] = "Microsoft.Storage/storageAccounts/fileServices",
+                ["resourceregion"] = "eastus2",
+            }.ToJsonString()),
+        };
+
+    /// <summary>Body REAL verificado de un 400 FeatureNotSupportedForAccount (E2E: cuenta
+    /// Storage/Premium_LRS de solo page-blob usada por Azure Site Recovery, ej. stgazbdasrobprem).</summary>
+    private static HttpResponseMessage FeatureNotSupportedResponse()
+        => new(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(new JsonObject
+            {
+                ["error"] = new JsonObject
+                {
+                    ["code"] = "FeatureNotSupportedForAccount",
+                    ["message"] = "File is not supported for the account.",
+                },
+            }.ToJsonString()),
+        };
+
     [Fact]
     public async Task CuentaGrandeEstandar_EntraConUsoPorTier()
     {
@@ -228,7 +288,7 @@ public sealed class StorageFilesEnricherTests
         var handler = new FakeHandler(req => RouteListAndStats(req, listShares, usage));
         await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stg")], default);
 
-        Assert.Equal(2, handler.Urls.Count); // 1 list + 1 stats
+        Assert.Equal(3, handler.Urls.Count); // 1 list + 1 stats + 1 métrica de snapshots
         var listUrl = handler.Urls.Single(u => u.EndsWith("/fileServices/default/shares?api-version=2023-05-01"));
         Assert.Contains("api-version=2023-05-01", listUrl);
         Assert.DoesNotContain("expand=stats", listUrl, StringComparison.OrdinalIgnoreCase); // regresión: el LIST no acepta $expand=stats
@@ -236,6 +296,10 @@ public sealed class StorageFilesEnricherTests
         var statsUrl = handler.Urls.Single(u => u.Contains("/shares/share0"));
         Assert.Contains("api-version=2023-05-01", statsUrl);
         Assert.Contains("expand=stats", statsUrl, StringComparison.OrdinalIgnoreCase);
+
+        var metricsUrl = handler.Urls.Single(u => u.Contains("Insights/metrics", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("metricnames=FileShareSnapshotSize", metricsUrl);
+        Assert.Contains("api-version=2018-01-01", metricsUrl);
     }
 
     [Fact]
@@ -257,7 +321,9 @@ public sealed class StorageFilesEnricherTests
 
         var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stg")], default);
 
-        Assert.Equal(StorageFilesEnricher.MaxPages, handler.Urls.Count(u => !u.Contains("expand=stats", StringComparison.OrdinalIgnoreCase)));
+        Assert.Equal(StorageFilesEnricher.MaxPages, handler.Urls.Count(u =>
+            !u.Contains("expand=stats", StringComparison.OrdinalIgnoreCase)
+            && !u.Contains("Insights/metrics", StringComparison.OrdinalIgnoreCase)));
         Assert.Contains(result.Warnings, w => w.Contains("truncado"));
     }
 
@@ -292,20 +358,29 @@ public sealed class StorageFilesEnricherTests
 
         var kept = Assert.Single(result.Kept);
         Assert.Equal(11000.0, kept.Dbl("billableGib")!.Value, 1); // 5500 + 5500
-        Assert.Equal(1, handler.Urls.Count(u => !u.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))); // 1 list call
+        Assert.Equal(1, handler.Urls.Count(u =>
+            !u.Contains("expand=stats", StringComparison.OrdinalIgnoreCase)
+            && !u.Contains("Insights/metrics", StringComparison.OrdinalIgnoreCase))); // 1 list call
         Assert.Equal(2, handler.Urls.Count(u => u.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))); // 2 stats calls
+        Assert.Equal(1, handler.Urls.Count(u => u.Contains("Insights/metrics", StringComparison.OrdinalIgnoreCase))); // 1 métrica de snapshots (cuenta completa, no por-share)
     }
 
     [Fact]
     public async Task Premium_NoLlamaStatsPorShare()
     {
-        // Premium sobre el corte por cuota: NO debe llamar al GET por-share (optimización + semántica).
+        // Premium sobre el corte por cuota: NO debe llamar al GET por-share NI a la métrica de
+        // snapshots (optimización + semántica: factura por cuota, el diferencial no aporta nada).
         (string, int, string?)[] listShares = [("share0", 20480, "Premium")];
         var handler = new FakeHandler(req =>
         {
-            if (req.RequestUri!.ToString().Contains("expand=stats", StringComparison.OrdinalIgnoreCase))
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))
             {
                 throw new InvalidOperationException("no debería llamarse a stats por-share para premium");
+            }
+            if (url.Contains("Insights/metrics", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException("no debería consultarse el diferencial de snapshots para premium");
             }
             return ListSharesResponse(listShares);
         });
@@ -315,6 +390,7 @@ public sealed class StorageFilesEnricherTests
 
         var kept = Assert.Single(result.Kept);
         Assert.DoesNotContain(handler.Urls, u => u.Contains("expand=stats", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(handler.Urls, u => u.Contains("Insights/metrics", StringComparison.OrdinalIgnoreCase));
         Assert.Equal(20480.0, kept.Dbl("billableGib")!.Value, 1); // por cuota, no por uso
     }
 
@@ -347,5 +423,97 @@ public sealed class StorageFilesEnricherTests
         Assert.Contains("stg", warning);
         Assert.Contains("uso", warning, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("incompleto", warning);
+    }
+
+    [Fact]
+    public async Task SnapshotsSumanAlFacturable_CuentaEntraAunqueVivoSoloNoAlcance()
+    {
+        // 9,000 GiB en vivo (por debajo del corte de 10,240) + 2,500 GiB de diferencial de
+        // snapshots (métrica FileShareSnapshotSize, verificada empíricamente) = 11,500 GiB
+        // facturables → SUPERA el corte → la cuenta ENTRA (antes se habría descartado en silencio).
+        (string, int, string?)[] listShares = [("share0", 20480, "Hot")];
+        var usage = new Dictionary<string, long> { ["share0"] = (long)(9000 * Gib) };
+        var snapshotBytes = 2500 * Gib;
+        var handler = new FakeHandler(req =>
+            req.RequestUri!.ToString().Contains("Insights/metrics", StringComparison.OrdinalIgnoreCase)
+                ? SnapshotMetricResponse(snapshotBytes)
+                : RouteListAndStats(req, listShares, usage));
+
+        var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stgconsnap")], default);
+
+        var kept = Assert.Single(result.Kept);
+        Assert.Empty(result.Warnings);
+        Assert.Equal(9000.0, kept.Dbl("usedGib")!.Value, 1); // usedGib es SOLO el uso en vivo
+        Assert.Equal(11500.0, kept.Dbl("billableGib")!.Value, 1); // vivo + diferencial de snapshots
+        var tierJson = JsonNode.Parse(kept.Str("tierBreakdownJson")!)!;
+        Assert.Equal(11500.0, tierJson["hot"]!.GetValue<double>(), 1); // único tier: se lleva el diferencial completo
+    }
+
+    [Fact]
+    public async Task FeatureNotSupportedForAccount_OmiteEnSilencio_SinAdvertenciaNiExcepcion()
+    {
+        // E2E real: stgazbdasrobprem (Storage/Premium_LRS, solo page-blob, usada por Azure Site
+        // Recovery) responde 400 FeatureNotSupportedForAccount al LIST de fileshares. Antes esto
+        // generaba una advertencia de "cuenta omitida" (falsa alarma); ahora se omite en silencio,
+        // igual que una cuenta con 0 shares.
+        var handler = new FakeHandler(_ => FeatureNotSupportedResponse());
+        var result = await NewEnricher(handler)
+            .EnrichAsync(FakeCred, [AccountRow("stgazbdasrobprem", kind: "Storage")], default);
+
+        Assert.Empty(result.Kept);
+        Assert.Empty(result.Warnings); // sin ruido: no es una falla real de la importación
+    }
+
+    [Fact]
+    public async Task Otro400EnList_SigueAdvirtiendoComoAntes_NoLoConfundeConFeatureNotSupported()
+    {
+        // Regresión (guarda que change 2 no silencie fallas reales): un 400 con un código DISTINTO
+        // a FeatureNotSupportedForAccount debe seguir tratándose como falla real → advertencia visible.
+        var handler = new FakeHandler(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent(new JsonObject
+            {
+                ["error"] = new JsonObject
+                {
+                    ["code"] = "InvalidQueryParameterValue",
+                    ["message"] = "Value for one of the query parameters specified in the request URI is invalid.",
+                },
+            }.ToJsonString()),
+        });
+
+        var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stgotro400")], default);
+
+        Assert.Empty(result.Kept);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("stgotro400", warning);
+    }
+
+    [Fact]
+    public async Task DesgloseDeTiers_SumaExactoAlFacturable_SinDerivaDeRedondeo()
+    {
+        // Regresión de Change 3: antes se redondeaba DENTRO del loop por-share
+        // (tiers[tier] = Math.Round(acumulado + shareBillable, 2)), lo que compone error de
+        // redondeo share a share y puede hacer que el desglose por tier NO reconcilie con
+        // billable_gib (aparecen lado a lado en el Excel). 3 shares con GiB fraccionario en el
+        // MISMO tier: sumar sin redondear y redondear una sola vez al final debe reconciliar EXACTO.
+        (string, int, string?)[] listShares =
+        [
+            ("share0", 4000, "Hot"),
+            ("share1", 4000, "Hot"),
+            ("share2", 4000, "Hot"),
+        ];
+        var usage = new Dictionary<string, long>
+        {
+            ["share0"] = (long)(3500.333 * Gib),
+            ["share1"] = (long)(3500.334 * Gib),
+            ["share2"] = (long)(3500.335 * Gib),
+        };
+        var handler = new FakeHandler(req => RouteListAndStats(req, listShares, usage));
+        var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stgtiers")], default);
+
+        var kept = Assert.Single(result.Kept);
+        var tierJson = JsonNode.Parse(kept.Str("tierBreakdownJson")!)!;
+        var hotValue = tierJson["hot"]!.GetValue<double>();
+        Assert.Equal(kept.Dbl("billableGib")!.Value, hotValue); // debe reconciliar EXACTO (un solo tier)
     }
 }

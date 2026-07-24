@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -19,12 +20,20 @@ public sealed record StorageFilesEnrichment(IReadOnlyList<RgRow> Kept, IReadOnly
 ///      trae shareUsageBytes. Las cuentas PREMIUM (kind FileStorage) se saltan este GET por
 ///      completo: facturan por cuota provisionada, no por uso, así que el uso no aporta nada
 ///      al cálculo (optimización correcta, no solo de performance).
-/// Calcula la capacidad FACTURABLE por tier — estándar = GiB usados (shareUsageBytes); premium
-/// = GiB de cuota (shareQuota), fiel a cómo factura Azure. Solo se conservan las cuentas cuya
-/// capacidad facturable SUPERA MinBillableGib (corte estricto: 10,240 GiB no entra).
-/// Fallo por cuenta (LIST) → se omite CON advertencia. Fallo de stats en UN share → esa cuenta
-/// se sigue procesando (el resto de shares sí cuentan) pero queda advertencia visible de que
-/// el total puede estar incompleto (nunca cero silencioso).
+/// Calcula la capacidad FACTURABLE por tier — estándar = GiB usados (shareUsageBytes) MÁS el
+/// diferencial de snapshots del share (Azure factura pay-as-you-go sobre "Data Stored", que
+/// incluye el uso diferencial de los snapshots — ver <see cref="GetSnapshotDifferentialGibAsync"/>);
+/// premium = GiB de cuota (shareQuota), fiel a cómo factura Azure. Solo se conservan las cuentas
+/// cuya capacidad facturable SUPERA MinBillableGib (corte estricto: 10,240 GiB no entra) — el
+/// diferencial de snapshots puede ser justo lo que empuja a una cuenta sobre el corte (E2E real:
+/// cuentas de 10+ TiB casi siempre están protegidas por Azure Backup, que crea snapshots diarios).
+/// Fallo por cuenta (LIST) → se omite CON advertencia, EXCEPTO cuando ARM responde 400
+/// FeatureNotSupportedForAccount (cuenta sin servicio de Files, p.ej. Storage/Premium_LRS de solo
+/// page-blob usada por Azure Site Recovery): eso se trata como "0 shares" y se omite EN SILENCIO,
+/// para no diluir el canal de advertencias con falsas alarmas. Fallo de stats en UN share, o fallo
+/// al leer el diferencial de snapshots de la cuenta → esa cuenta se sigue procesando (el resto sí
+/// cuenta) pero queda advertencia visible de que el total puede estar incompleto (nunca cero
+/// silencioso).
 /// </summary>
 public interface IStorageFilesEnricher
 {
@@ -41,7 +50,18 @@ public sealed class StorageFilesEnricher(
 
     private const string ArmScope = "https://management.azure.com/.default";
     private const string ApiVersion = "2023-05-01"; // versión estable de fileServices/shares
+    private const string MetricsApiVersion = "2018-01-01"; // igual que ReportMetrics (Azure Monitor)
     private const double BytesPerGib = 1024d * 1024 * 1024;
+
+    /// <summary>Código de error ARM cuando la cuenta no soporta el servicio de Files (verificado
+    /// empíricamente: HTTP 400 con este código exacto en cuentas Storage/Premium_LRS de solo
+    /// page-blob, ej. discos usados por Azure Site Recovery).</summary>
+    private const string FeatureNotSupportedErrorCode = "FeatureNotSupportedForAccount";
+
+    /// <summary>Ventana de búsqueda hacia atrás para el punto más reciente de la métrica
+    /// FileShareSnapshotSize (Azure Monitor): la métrica de capacidad se emite ~1 vez al día con
+    /// cierto rezago, así que se piden varios días para asegurar al menos un punto de dato.</summary>
+    internal const int SnapshotMetricLookbackDays = 3;
 
     /// <summary>Tope de paginación ARM (patrón de ResourceGraphRunner.MaxPages / AzureReservationsClient.MaxPages):
     /// un nextLink en bucle o malformado no debe colgar la cuenta indefinidamente.</summary>
@@ -98,7 +118,31 @@ public sealed class StorageFilesEnricher(
                     // el corte de 10 TiB, así que se advierte en vez de fallar silenciosamente.
                     warnings.Add($"{name}: no se pudo leer el uso de {failedStats} de {listed.Count} shares; el total puede estar incompleto");
                 }
-                var agg = Aggregate(shares, isPremium);
+
+                // Premium NO llama a esto: factura por cuota, el diferencial de snapshots no
+                // aporta nada a esa cuenta (misma optimización que FetchShareUsageAsync).
+                var snapshotGib = 0d;
+                if (!isPremium)
+                {
+                    try
+                    {
+                        snapshotGib = await GetSnapshotDifferentialGibAsync(http, token.Token, id, ct);
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw; // cancelación real: propagar, no degradar a advertencia
+                    }
+                    catch (Exception ex)
+                    {
+                        // Igual que failedStats: un diferencial de snapshots incompleto puede
+                        // cambiar de lado el corte de 10 TiB, así que se advierte (nunca cero
+                        // silencioso) y la cuenta se sigue procesando con lo que sí se pudo traer.
+                        logger.LogWarning(ex, "Uso de snapshots no consultado account={Name} type={Type}", name, ex.GetType().Name);
+                        warnings.Add($"{name}: no se pudo leer el uso de snapshots de los fileshares; el total puede estar incompleto");
+                    }
+                }
+
+                var agg = Aggregate(shares, isPremium, snapshotGib);
                 if (agg.BillableGib <= MinBillableGib)
                 {
                     continue; // corte estricto del spec
@@ -114,6 +158,13 @@ public sealed class StorageFilesEnricher(
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
                 throw; // cancelación real del import: propagar, no degradar a advertencia por cuenta
+            }
+            catch (FileServiceNotSupportedException)
+            {
+                // Cuenta sin servicio de Files (ej. Storage/Premium_LRS de solo page-blob para
+                // Azure Site Recovery): igual que 0 shares, se omite EN SILENCIO. No es una falla
+                // real del import, así que no debe diluir el canal de advertencias.
+                continue;
             }
             catch (Exception ex)
             {
@@ -134,8 +185,14 @@ public sealed class StorageFilesEnricher(
         int ShareCount, double UsedGib, double ProvisionedGib, double BillableGib,
         IReadOnlyDictionary<string, double> TierGib);
 
-    /// <summary>Agregado puro por cuenta (testeable sin HTTP): facturable por tier.</summary>
-    internal static Aggregated Aggregate(IReadOnlyList<ShareInfo> shares, bool isPremium)
+    /// <summary>Agregado puro por cuenta (testeable sin HTTP): facturable por tier.
+    /// <paramref name="snapshotGib"/> es el diferencial de snapshots YA en GiB (cuenta completa,
+    /// no hay desglose por-share/por-tier disponible en ninguna API de Azure verificada — ver
+    /// <see cref="GetSnapshotDifferentialGibAsync"/>): con un solo tier presente se le suma
+    /// completo (exacto); con varios tiers se reparte proporcional al GiB en vivo de cada uno
+    /// (estimación razonable, documentada en la nota del calculador — no hay forma de obtener el
+    /// dato exacto por tier). Premium ignora <paramref name="snapshotGib"/> (factura por cuota).</summary>
+    internal static Aggregated Aggregate(IReadOnlyList<ShareInfo> shares, bool isPremium, double snapshotGib = 0)
     {
         double used = 0, provisioned = 0, billable = 0;
         var tiers = new Dictionary<string, double>(StringComparer.Ordinal);
@@ -152,9 +209,44 @@ public sealed class StorageFilesEnricher(
                 "cool" => "cool",
                 _ => "transaction_optimized", // default de shares estándar (incluye GPv1)
             };
-            tiers[tier] = Math.Round(tiers.GetValueOrDefault(tier) + shareBillable, 2);
+            // Sin redondear dentro del loop (Change 3): el desglose por tier debe sumar EXACTO
+            // a billable_gib (se ven lado a lado en el Excel); redondear por-share aquí introduce
+            // deriva de centavos. Se redondea una sola vez al final.
+            tiers[tier] = tiers.GetValueOrDefault(tier) + shareBillable;
         }
-        return new Aggregated(shares.Count, used, provisioned, billable, tiers);
+
+        if (!isPremium && snapshotGib > 0 && tiers.Count > 0)
+        {
+            billable += snapshotGib;
+            if (tiers.Count == 1)
+            {
+                var onlyTier = tiers.Keys.First();
+                tiers[onlyTier] += snapshotGib;
+            }
+            else
+            {
+                var totalLive = tiers.Values.Sum();
+                if (totalLive > 0)
+                {
+                    foreach (var key in tiers.Keys.ToList())
+                    {
+                        tiers[key] += snapshotGib * (tiers[key] / totalLive);
+                    }
+                }
+                else
+                {
+                    // Todos los shares en 0 GiB en vivo (caso extremo): reparte por partes iguales.
+                    var each = snapshotGib / tiers.Count;
+                    foreach (var key in tiers.Keys.ToList())
+                    {
+                        tiers[key] += each;
+                    }
+                }
+            }
+        }
+
+        var roundedTiers = tiers.ToDictionary(kv => kv.Key, kv => Math.Round(kv.Value, 2), StringComparer.Ordinal);
+        return new Aggregated(shares.Count, used, provisioned, billable, roundedTiers);
     }
 
     /// <summary>Fase 1: lista los fileshares de una cuenta paginando por nextLink. SIN
@@ -175,6 +267,19 @@ public sealed class StorageFilesEnricher(
             using var req = new HttpRequestMessage(HttpMethod.Get, url);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
             using var resp = await http.SendAsync(req, ct);
+            if (resp.StatusCode == HttpStatusCode.BadRequest)
+            {
+                // Hay que leer el body ANTES de EnsureSuccessStatusCode para distinguir "cuenta sin
+                // servicio de Files" (verificado empíricamente: Storage/Premium_LRS de solo
+                // page-blob, ej. discos de Azure Site Recovery) de cualquier otro 400 real, que
+                // debe seguir lanzando y advirtiendo como hasta ahora.
+                var errorBody = await resp.Content.ReadAsStringAsync(ct);
+                if (IsFeatureNotSupportedForAccount(errorBody))
+                {
+                    throw new FileServiceNotSupportedException(
+                        "La cuenta no soporta el servicio de Files (FeatureNotSupportedForAccount)");
+                }
+            }
             resp.EnsureSuccessStatusCode();
 
             var json = await resp.Content.ReadAsStringAsync(ct);
@@ -266,4 +371,100 @@ public sealed class StorageFilesEnricher(
         }
         return 0L;
     }
+
+    /// <summary>
+    /// Diferencial de snapshots FACTURABLE de la cuenta completa (todos sus fileshares juntos),
+    /// vía la métrica de Azure Monitor <c>FileShareSnapshotSize</c> del namespace
+    /// <c>Microsoft.Storage/storageAccounts/fileServices</c> — la ÚNICA fuente verificada que
+    /// devuelve el diferencial REAL facturado (no el tamaño lógico completo del share).
+    ///
+    /// Por qué NO se usa <c>GET .../shares?$expand=snapshots</c> + <c>GET .../shares/{name}?
+    /// $expand=stats</c> con header <c>x-ms-snapshot</c> (que sí existe y sí devuelve
+    /// <c>shareUsageBytes</c> por snapshot): verificado empíricamente contra una cuenta real con
+    /// 31 snapshots diarios (Azure Backup) que <c>FileShareSnapshotSize</c> reportaba 0 bytes
+    /// (el contenido del share no cambió en el período), pero CADA snapshot vía ese GET devolvía
+    /// el tamaño lógico COMPLETO del share (209,691,648 bytes, idéntico en los 31). Sumar eso por
+    /// snapshot habría sobreestimado el diferencial facturable en ~31× — Azure solo cobra el
+    /// delta único de cada snapshot, no el tamaño total en cada punto en el tiempo (ver
+    /// "Understand Azure Files billing": snapshots pay-as-you-go son "always differential").
+    ///
+    /// Limitación conocida (documentada también en la nota del calculador): esta métrica NO
+    /// soporta desglose por-fileshare/por-tier pese a declarar la dimensión "FileShare" en
+    /// metricDefinitions — se verificó que tanto <c>$filter=FileShare eq '*'</c> como un nombre
+    /// de share exacto devuelven series vacías; solo el agregado <c>&lt;All&gt;</c> de la cuenta
+    /// funciona. <see cref="Aggregate"/> reparte ese agregado entre los tiers ya calculados.
+    /// </summary>
+    private static async Task<double> GetSnapshotDifferentialGibAsync(
+        HttpClient http, string bearerToken, string accountId, CancellationToken ct)
+    {
+        var end = DateTimeOffset.UtcNow;
+        var start = end.AddDays(-SnapshotMetricLookbackDays);
+        var timespan = $"{start:yyyy-MM-ddTHH:mm:ssZ}/{end:yyyy-MM-ddTHH:mm:ssZ}";
+        var url = $"https://management.azure.com{accountId}/fileServices/default/providers/microsoft.insights/metrics"
+            + $"?api-version={MetricsApiVersion}&metricnames=FileShareSnapshotSize&aggregation=Average"
+            + $"&timespan={Uri.EscapeDataString(timespan)}&interval=P1D";
+
+        using var req = new HttpRequestMessage(HttpMethod.Get, url);
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", bearerToken);
+        using var resp = await http.SendAsync(req, ct);
+        resp.EnsureSuccessStatusCode();
+
+        var json = await resp.Content.ReadAsStringAsync(ct);
+        using var doc = JsonDocument.Parse(json);
+        if (!doc.RootElement.TryGetProperty("value", out var metrics) || metrics.ValueKind != JsonValueKind.Array)
+        {
+            return 0d;
+        }
+
+        double? lastAverage = null;
+        foreach (var metric in metrics.EnumerateArray())
+        {
+            if (!metric.TryGetProperty("timeseries", out var series) || series.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+            foreach (var ts in series.EnumerateArray())
+            {
+                if (!ts.TryGetProperty("data", out var points) || points.ValueKind != JsonValueKind.Array)
+                {
+                    continue;
+                }
+                // Los puntos vienen en orden cronológico ascendente (verificado empíricamente);
+                // nos quedamos con el ÚLTIMO valor no nulo, es decir el más reciente disponible.
+                foreach (var point in points.EnumerateArray())
+                {
+                    if (point.TryGetProperty("average", out var avg) && avg.ValueKind == JsonValueKind.Number)
+                    {
+                        lastAverage = avg.GetDouble();
+                    }
+                }
+            }
+        }
+        return (lastAverage ?? 0d) / BytesPerGib;
+    }
+
+    /// <summary>Body real verificado: <c>{"error":{"code":"FeatureNotSupportedForAccount",...}}</c>.
+    /// Cualquier otro código (o body no parseable) devuelve false, para que el llamador siga
+    /// lanzando la excepción HTTP estándar (y por lo tanto la advertencia de siempre).</summary>
+    private static bool IsFeatureNotSupportedForAccount(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.TryGetProperty("error", out var error)
+                && error.TryGetProperty("code", out var code)
+                && code.ValueKind == JsonValueKind.String
+                && code.GetString() == FeatureNotSupportedErrorCode;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Señal interna: la cuenta no tiene servicio de Files habilitado (400
+    /// FeatureNotSupportedForAccount). Se distingue de una falla real para que
+    /// <see cref="EnrichAsync"/> la trate como "0 shares" (omitir en silencio) en vez de
+    /// advertencia.</summary>
+    private sealed class FileServiceNotSupportedException(string message) : Exception(message);
 }
