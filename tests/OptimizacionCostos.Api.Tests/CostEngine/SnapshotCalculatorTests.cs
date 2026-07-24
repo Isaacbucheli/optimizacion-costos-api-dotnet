@@ -103,4 +103,53 @@ public sealed class SnapshotCalculatorTests
         Assert.Equal("price_not_found", r.CalculationStatus);
         Assert.Contains("InvalidOperationException", r.CalculationNotes);
     }
+
+    // -------------------- Change 3: memoización por invocación --------------------
+
+    [Fact]
+    public void MismaRegionYSku_ConsultaElRepositorioUnaSolaVez()
+    {
+        // Un cliente real ya tiene 184 snapshots; miles son plausibles y el endpoint es
+        // sincrónico. GetSnapshotPricePerGb hace un round-trip a SQL por llamada — con muchos
+        // snapshots compartiendo (región, sku) esto se vuelve costoso sin memoizar.
+        var calls = 0;
+        var prices = new FakePriceRepository
+        {
+            GetSnapshotPricePerGbFn = (_, _) => { calls++; return 0.05; },
+        };
+        var resources = Res.Rows(
+            Res.Row(("resource_id", 1), ("snapshot_sku", "Standard_LRS"),
+                ("disk_size_gb", 128), ("incremental", false), ("location", "eastus")),
+            Res.Row(("resource_id", 2), ("snapshot_sku", "Standard_LRS"),
+                ("disk_size_gb", 64), ("incremental", false), ("location", "eastus")),
+            Res.Row(("resource_id", 3), ("snapshot_sku", "Standard_LRS"),
+                ("disk_size_gb", 256), ("incremental", true), ("location", "East US")));
+
+        var results = NewCalc(prices).Calculate(resources, 99);
+
+        Assert.Equal(1, calls);
+        Assert.Equal(3, results.Count);
+        Assert.All(results, r => Assert.Equal("calculated", r.CalculationStatus));
+    }
+
+    [Fact]
+    public void RegionesODiscosDistintos_ConsultaElRepositorioUnaVezPorCombinacion()
+    {
+        var calls = new List<(string Region, string? Sku)>();
+        var prices = new FakePriceRepository
+        {
+            GetSnapshotPricePerGbFn = (region, sku) => { calls.Add((region, sku)); return 0.05; },
+        };
+        var resources = Res.Rows(
+            Res.Row(("resource_id", 1), ("snapshot_sku", "Standard_LRS"),
+                ("disk_size_gb", 128), ("incremental", false), ("location", "eastus")),
+            Res.Row(("resource_id", 2), ("snapshot_sku", "Premium_LRS"),
+                ("disk_size_gb", 64), ("incremental", false), ("location", "eastus")),
+            Res.Row(("resource_id", 3), ("snapshot_sku", "Standard_LRS"),
+                ("disk_size_gb", 256), ("incremental", false), ("location", "westus")));
+
+        NewCalc(prices).Calculate(resources, 99);
+
+        Assert.Equal(3, calls.Count);
+    }
 }

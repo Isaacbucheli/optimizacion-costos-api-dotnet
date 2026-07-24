@@ -57,11 +57,15 @@ public sealed partial class SqlPriceRepository
         var payg = SelectFilesConsumption(cached, spec);
         if (payg is null)
         {
-            // Fallback IA auditado (como el resto de get_*): solo candidatos de almacenamiento.
+            // Fallback IA auditado (como el resto de get_*): solo candidatos de almacenamiento,
+            // y NUNCA con retail_price $0 (ver IsPositivePrice) — un producto real puede traer
+            // TODOS sus meters en $0.00 (ej. "Azure Files Provisioned v2" en la misma consulta
+            // de región) y de otro modo pasaría los demás filtros.
             var pool = cached.Where(c => c.IsConsumption
                 && c.ProductNameLower.Contains("files")
                 && IsStoredCapacityUnit(c)
-                && !IsExcludedFilesMeter(c)).ToList();
+                && !IsExcludedFilesMeter(c)
+                && IsPositivePrice(c)).ToList();
             payg = AssistSelect("storage_files", "data_stored",
                 new Dictionary<string, object?>
                 {
@@ -79,7 +83,8 @@ public sealed partial class SqlPriceRepository
             ri1 = SelectFilesReservationPerGbMonth(cached, spec, "1 Year");
             ri3 = SelectFilesReservationPerGbMonth(cached, spec, "3 Years");
         }
-        return new StorageFilesPrices(payg?.RetailPrice, ri1, ri3, payg?.MeterId);
+        return new StorageFilesPrices(
+            payg?.RetailPrice, ri1, ri3, payg?.MeterId, payg?.AiMatchStrategy, payg?.AiMatchConfidence);
     }
 
     /// <summary>tier interno → producto/meter del Retail API (fixture Task 1, §5 "Mapeo corregido").</summary>
@@ -114,7 +119,8 @@ public sealed partial class SqlPriceRepository
                 : (c.ProductName ?? "").Contains(spec.Product, StringComparison.Ordinal))
             && string.Equals(c.MeterName, spec.PaygMeter, StringComparison.Ordinal)
             && IsStoredCapacityUnit(c)
-            && !IsExcludedFilesMeter(c)).ToList();
+            && !IsExcludedFilesMeter(c)
+            && IsPositivePrice(c)).ToList();
 
     /// <summary>
     /// Reserva normalizada a GiB/mes para el término dado. El productName de Reservation es
@@ -134,6 +140,7 @@ public sealed partial class SqlPriceRepository
         var rows = cached.Where(c => c.IsReservation(term)
                 && string.Equals(c.ProductName, spec.ReservationProduct, StringComparison.Ordinal)
                 && !IsExcludedFilesMeter(c)
+                && IsPositivePrice(c)
                 && ContainsTierAndRedundancy(c, spec))
             .OrderBy(c => ParseReservedBlockGib(c.SkuName) ?? double.MaxValue);
         foreach (var row in rows)
@@ -209,4 +216,12 @@ public sealed partial class SqlPriceRepository
 
     private static bool IsExcludedFilesMeter(PriceRow c)
         => FilesExcludedMeterTokens.Any(t => (c.MeterName ?? "").Contains(t, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Nunca aceptar un precio $0.00: la Retail API puede traer un producto REAL con todos sus
+    /// meters en cero (ej. "Azure Files Provisioned v2" en la misma consulta de región), y ese
+    /// meter pasa el resto de filtros (producto/meter/unidad) sin ser el meter que se busca. Un
+    /// retail_price ausente Y uno de $0.00 se tratan igual: "no encontrado", nunca "$0 calculado".
+    /// </summary>
+    private static bool IsPositivePrice(PriceRow c) => c.RetailPrice is > 0;
 }

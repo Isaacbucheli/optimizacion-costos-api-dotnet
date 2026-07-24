@@ -26,6 +26,19 @@ public sealed class PriceSelection_StorageFilesTests
     private static SqlPriceRepository BuildRepo(FakePriceCache cache) =>
         new SqlPriceRepository(cache, new FakeRetailPriceClient(), new FakePricingConstants());
 
+    /// <summary>Doble mínimo de <see cref="IPriceAssistant"/>: devuelve un resultado fijo, sin red.</summary>
+    private sealed class StubAssistant(PriceRow? result) : IPriceAssistant
+    {
+        public bool IsEnabled => true;
+
+        public PriceRow? SelectCandidate(
+            string serviceKey,
+            string component,
+            IReadOnlyDictionary<string, object?> context,
+            IReadOnlyList<PriceRow> candidates)
+            => result;
+    }
+
     private static FakePriceCache CacheWith(IReadOnlyList<PriceRow> rows) => new()
     {
         IsCacheFreshForFn = (_, _, _, _) => true,
@@ -230,6 +243,97 @@ public sealed class PriceSelection_StorageFilesTests
     {
         var repo = BuildRepo(CacheWith(System.Array.Empty<PriceRow>()));
         Assert.Null(repo.GetStorageFilesPrices("eastus", "hot", "LRS").PricePerGbMonth);
+    }
+
+    // -------------------- Change 2: nunca aceptar un precio $0.00 --------------------
+
+    [Fact]
+    public void PrecioCeroEnConsumption_NuncaSeSelecciona_QuedaNull()
+    {
+        // Caso real (documentado en la fixture): un producto REAL puede traer TODOS sus meters
+        // en $0.00 (ej. "Azure Files Provisioned v2" en la misma consulta de región) y esa fila
+        // pasaría el resto de filtros (producto/meter exacto/unidad) si no se exige precio > 0.
+        // Combinado con que el calculador solo trataba null (no 0) como "faltante", esto
+        // producía payg_monthly = 0 con estado "calculated": un $0 silencioso prohibido.
+        var rows = PriceRowFactory.Many(new (string, object?)[]
+        {
+            ("service_name", "Storage"), ("product_name", "Files v2"),
+            ("meter_name", "Hot LRS Data Stored"), ("meter_id", "meter-hot-lrs-zero"),
+            ("price_type", "Consumption"), ("unit_of_measure", "1 GB/Month"), ("retail_price", 0.0),
+        });
+        var repo = BuildRepo(CacheWith(rows));
+
+        var p = repo.GetStorageFilesPrices("eastus", "hot", "LRS");
+        Assert.Null(p.PricePerGbMonth);
+        Assert.Null(p.PaygMeterId);
+    }
+
+    [Fact]
+    public void PrecioCeroEnReservation_NuncaSeSelecciona_QuedaNull()
+    {
+        var rows = PriceRowFactory.Many(new (string, object?)[]
+        {
+            ("service_name", "Storage"), ("product_name", "Files Reserved Capacity"),
+            ("sku_name", "Hot LRS - 10 TB"), ("meter_name", "Hot LRS - 10 TB Data Stored"),
+            ("price_type", "Reservation"), ("reservation_term", "1 Year"),
+            ("unit_of_measure", "1 GB/Month"), ("retail_price", 0.0),
+        });
+        var repo = BuildRepo(CacheWith(rows));
+
+        Assert.Null(repo.GetStorageFilesPrices("eastus", "hot", "LRS").Ri1yPerGbMonth);
+    }
+
+    [Fact]
+    public void PrecioCeroEnCandidatosDeAsistente_SeExcluyeDelPool()
+    {
+        // El pool que se ofrece al asistente IA (fallback cuando el determinista no encuentra
+        // nada) tampoco debe incluir filas $0 — de lo contrario la IA podría "elegir" un precio
+        // gratis real, exactamente el escenario que Change 2 prohíbe.
+        var rows = PriceRowFactory.Many(
+            // Ningún meter exacto de "cool" (fuerza el fallback de IA); el único candidato del
+            // pool "files"+almacenamiento es este producto real con retail_price 0.
+            new (string, object?)[]
+            {
+                ("service_name", "Storage"), ("product_name", "Azure Files Provisioned v2"),
+                ("meter_name", "Cool LRS Provisioned"), ("meter_id", "meter-provisioned-v2-zero"),
+                ("price_type", "Consumption"), ("unit_of_measure", "1 GB/Month"), ("retail_price", 0.0),
+            });
+        // Sin asistente inyectado (null): AssistSelect siempre devuelve null, así que esto
+        // confirma que ni siquiera se necesita IA para probar la exclusión — el precio $0 nunca
+        // gana ni por el camino determinista ni queda disponible para el fallback.
+        var repo = BuildRepo(CacheWith(rows));
+
+        Assert.Null(repo.GetStorageFilesPrices("eastus", "cool", "LRS").PricePerGbMonth);
+    }
+
+    [Fact]
+    public void SeleccionIaAsistida_PropagaMatchStrategyYConfidence()
+    {
+        // El meter no coincide con el esperado por FilesMeterFor ("Cool LRS Data Stored"), así
+        // que el determinista no encuentra nada y cae al fallback de IA (Change 2b): el
+        // candidato elegido por el asistente propaga su AiMatchStrategy/AiMatchConfidence a
+        // StorageFilesPrices, para que el calculador los anote en calculation_notes y
+        // CostLabels.PriceOrigin reporte "IA asistida" en vez de "Exacto".
+        var aiPicked = PriceRowFactory.Of(
+            ("service_name", "Storage"), ("product_name", "Files v2"),
+            ("meter_name", "Cool LRS Storage (alt meter)"), ("meter_id", "meter-cool-ai"),
+            ("price_type", "Consumption"), ("unit_of_measure", "1 GB/Month"), ("retail_price", 0.02))
+            with { AiMatchStrategy = "assist_match:data_stored", AiMatchConfidence = 0.85 };
+
+        var cache = new FakePriceCache
+        {
+            IsCacheFreshForFn = (_, _, _, _) => true,
+            IsFetchQueryFreshFn = _ => true,
+            QueryCachedFn = (_, _, _, _) => new[] { aiPicked },
+        };
+        var repo = new SqlPriceRepository(
+            cache, new FakeRetailPriceClient(), new FakePricingConstants(), new StubAssistant(aiPicked));
+
+        var p = repo.GetStorageFilesPrices("eastus", "cool", "LRS");
+
+        Assert.Equal(0.02, p.PricePerGbMonth);
+        Assert.Equal("assist_match:data_stored", p.MatchStrategy);
+        Assert.Equal(0.85, p.MatchConfidence);
     }
 
     [Theory]

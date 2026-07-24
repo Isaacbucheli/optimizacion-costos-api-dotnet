@@ -19,6 +19,10 @@ public sealed class SnapshotCalculator(IPriceRepository prices, IPricingConstant
     {
         var results = new List<CostResult>();
         var hours = _constants.HoursPerMonth();
+        // Memoización por invocación: GetSnapshotPricePerGb hace un round-trip a SQL por llamada
+        // (fresh-check + query de cache "Storage" completa); muchos snapshots comparten
+        // (región, sku) — un cliente real ya tiene 184, miles son plausibles.
+        var priceCache = new Dictionary<(string Region, string? Sku), double?>();
 
         foreach (var r in resources)
         {
@@ -26,7 +30,7 @@ public sealed class SnapshotCalculator(IPriceRepository prices, IPricingConstant
 
             var sku = r.GetString("snapshot_sku") ?? r.GetString("sku_name");
             var sizeGb = r.GetInt("disk_size_gb");
-            var region = NormalizeRegion(r.GetString("location"));
+            var region = PriceSelectors.NormalizeRegion(r.GetString("location"));
             var incremental = r.GetBool("incremental");
 
             if (sizeGb is null or 0 || string.IsNullOrEmpty(region))
@@ -38,16 +42,25 @@ public sealed class SnapshotCalculator(IPriceRepository prices, IPricingConstant
             }
 
             double? perGb;
-            try
+            var key = (region, sku);
+            if (priceCache.TryGetValue(key, out var cachedPerGb))
             {
-                perGb = _prices.GetSnapshotPricePerGb(region, sku);
+                perGb = cachedPerGb;
             }
-            catch (Exception ex)
+            else
             {
-                result.CalculationStatus = "price_not_found";
-                result.CalculationNotes = $"Price lookup error: {ex.GetType().Name}";
-                results.Add(result);
-                continue;
+                try
+                {
+                    perGb = _prices.GetSnapshotPricePerGb(region, sku);
+                }
+                catch (Exception ex)
+                {
+                    result.CalculationStatus = "price_not_found";
+                    result.CalculationNotes = $"Price lookup error: {ex.GetType().Name}";
+                    results.Add(result);
+                    continue;
+                }
+                priceCache[key] = perGb;
             }
 
             if (perGb is null)
@@ -72,7 +85,4 @@ public sealed class SnapshotCalculator(IPriceRepository prices, IPricingConstant
 
         return results;
     }
-
-    private static string NormalizeRegion(string? location)
-        => string.IsNullOrEmpty(location) ? "" : location.ToLowerInvariant().Replace(" ", "");
 }
