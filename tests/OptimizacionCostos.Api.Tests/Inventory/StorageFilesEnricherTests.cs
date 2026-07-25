@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Text.Json.Nodes;
 using Azure.Core;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -160,7 +160,7 @@ public sealed class StorageFilesEnricherTests
         };
 
     /// <summary>Body REAL verificado de un 400 FeatureNotSupportedForAccount (E2E: cuenta
-    /// Storage/Premium_LRS de solo page-blob usada por Azure Site Recovery, ej. stgazbdasrobprem).</summary>
+    /// Storage/Premium_LRS de solo page-blob usada por Azure Site Recovery).</summary>
     private static HttpResponseMessage FeatureNotSupportedResponse()
         => new(HttpStatusCode.BadRequest)
         {
@@ -658,13 +658,13 @@ public sealed class StorageFilesEnricherTests
     [Fact]
     public async Task FeatureNotSupportedForAccount_OmiteEnSilencio_SinAdvertenciaNiExcepcion()
     {
-        // E2E real: stgazbdasrobprem (Storage/Premium_LRS, solo page-blob, usada por Azure Site
+        // Caso real observado en E2E: cuenta Storage/Premium_LRS, solo page-blob, usada por Azure Site
         // Recovery) responde 400 FeatureNotSupportedForAccount al LIST de fileshares. Antes esto
         // generaba una advertencia de "cuenta omitida" (falsa alarma); ahora se omite en silencio,
         // igual que una cuenta con 0 shares.
         var handler = new FakeHandler(_ => FeatureNotSupportedResponse());
         var result = await NewEnricher(handler)
-            .EnrichAsync(FakeCred, [AccountRow("stgazbdasrobprem", kind: "Storage")], default);
+            .EnrichAsync(FakeCred, [AccountRow("stgasronly", kind: "Storage")], default);
 
         Assert.Empty(result.Kept);
         Assert.Empty(result.Warnings); // sin ruido: no es una falla real de la importación
