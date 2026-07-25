@@ -132,8 +132,17 @@ public sealed class AccessReviewGraphClient(IAzureCredentialFactory credentials,
         // /microsoft.graph.user da HTTP 400. Sin $select, Graph anota @odata.type por ítem y devuelve
         // id/displayName/userPrincipalName por default; userType/accountEnabled se resuelven del barrido.
         var url = $"{GraphBase}/groups/{groupId}/transitiveMembers?$top=999";
-        var items = await GetPagedAsync(http, token, url, eventualConsistency: true, ct);
-        return items.Select(ParseDirObject).ToList();
+        try
+        {
+            var items = await GetPagedAsync(http, token, url, eventualConsistency: true, ct);
+            return items.Select(ParseDirObject).ToList();
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+        {
+            // Asignación RBAC huérfana: el grupo ya no existe en Entra ID (el portal la muestra como
+            // "Identity not found"). Cero miembros que expandir; no debe tumbar la fase Graph.
+            return [];
+        }
     }
 
     public async Task<IReadOnlyList<GraphDirectoryObject>> GetGlobalAdminsAsync(int credentialId, CancellationToken ct = default)
