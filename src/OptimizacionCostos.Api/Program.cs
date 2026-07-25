@@ -50,6 +50,8 @@ builder.Services.AddScoped<IClientSubscriptionStore, SqlClientSubscriptionStore>
 builder.Services.AddScoped<ISubscriptionSyncService, SubscriptionSyncService>();
 // Import de inventario / Resource Graph (B4): usa catálogo + B1 (RG + credenciales) + B3 (sync).
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Inventory.IInventoryImportService, OptimizacionCostos.Api.Features.Inventory.InventoryImportService>();
+// Enriquecimiento ARM del servicio storage_files (fileshares, corte de 10 TiB).
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Inventory.IStorageFilesEnricher, OptimizacionCostos.Api.Features.Inventory.StorageFilesEnricher>();
 // CRUD admin del catálogo de servicios (B4): gestión + sugerencia IA desde discovery.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Catalog.IServiceCatalogAdmin, OptimizacionCostos.Api.Features.Catalog.SqlServiceCatalogAdmin>();
 // Gestión CDC (B5): reservas (ARM/Capacity/Consumption), cobertura RI, power history (Activity Log).
@@ -251,6 +253,23 @@ if (config.SuperAdminEmails.Length > 0)
             .EnsureSuperAdminsAsync(config.SuperAdminEmails);
     }
     catch { /* la BD puede no responder en el arranque; se reintenta en el próximo login del superadmin */ }
+}
+
+// Seed idempotente del catálogo de servicios (snapshots + storage_files, spec 2026-07-24).
+// Best-effort: si la BD no responde en el arranque, se reintenta en el próximo arranque.
+try
+{
+    using var scope = app.Services.CreateScope();
+    await OptimizacionCostos.Api.Features.Catalog.CatalogSeed.EnsureAsync(
+        scope.ServiceProvider.GetRequiredService<OptimizacionCostos.Api.Features.Catalog.IServiceCatalogAdmin>(),
+        app.Logger);
+}
+catch (Exception ex)
+{
+    // BD no disponible al arrancar (u otro fallo puntual); el seed es idempotente y se reintenta
+    // en el próximo arranque, pero si nunca corre el catálogo queda sin las filas nuevas sin
+    // dejar rastro. Se registra para poder diagnosticarlo.
+    app.Logger.LogWarning(ex, "CatalogSeed.EnsureAsync falló al arrancar; se reintentará en el próximo arranque.");
 }
 
 app.Run();

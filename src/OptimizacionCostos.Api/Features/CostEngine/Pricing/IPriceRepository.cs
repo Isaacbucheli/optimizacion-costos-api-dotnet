@@ -94,4 +94,19 @@ public interface IPriceRepository
     /// "Standard_ZRS"...). Null si no hay meter. Net-new (Fase 2); no altera precios existentes.
     /// </summary>
     double? GetSnapshotPricePerGb(string region, string? storageType);
+
+    /// <summary>
+    /// Precios de Azure Files (almacenamiento) por GiB/mes. <paramref name="tier"/> =
+    /// "hot" | "cool" | "transaction_optimized" | "premium"; <paramref name="redundancy"/> =
+    /// token REAL del meter — únicamente "LRS", "ZRS", "GRS", "GZRS" (no existen meters propios
+    /// "RA-GRS"/"RA-GZRS" en Azure Files: el LLAMADOR debe mapearlos a "GRS"/"GZRS" antes de
+    /// invocar este método; "premium" solo soporta "LRS"/"ZRS"). Incluye reservas 1y/3y ya
+    /// normalizadas a GiB/mes (el retail_price de las filas Reservation es el TOTAL del término
+    /// para el bloque codificado en el skuName, ej. "Hot LRS - 10 TB" = 10.240 GiB — no un precio
+    /// unitario). "transaction_optimized" no tiene capacidad reservada disponible en Azure Files
+    /// (Reserved Capacity solo cubre Hot/Cool/Premium): Ri1yPerGbMonth/Ri3yPerGbMonth siempre
+    /// null para ese tier. Net-new (spec 2026-07-24, storage_files; fixture
+    /// tests/.../StorageFilesRetailFixture.md).
+    /// </summary>
+    StorageFilesPrices GetStorageFilesPrices(string region, string tier, string redundancy);
 }

@@ -71,4 +71,28 @@ public sealed class PriceSelection_SnapshotTests
         var repo = BuildRepo(cache);
         Assert.Null(repo.GetSnapshotPricePerGb("eastus", "Standard_LRS"));
     }
+
+    // -------------------- FIX 3: nunca aceptar un retail_price $0.00 --------------------
+
+    private static readonly (string, object?)[][] CachedConMeterEnCero =
+    {
+        new (string, object?)[]
+        {
+            // Mismo shape que "Azure Files Provisioned v2" (StorageFilesRetailFixture.md §1.6):
+            // un producto real con su único meter en $0.00 en la MISMA consulta de región que
+            // trae los snapshots — sin la guarda de precio positivo, este meter pasaría el resto
+            // de filtros (producto/meter/unidad) si alguna vez coincidiera por nombre.
+            ("service_name", "Storage"), ("product_name", "Standard HDD Managed Disks"),
+            ("meter_name", "LRS Snapshots"), ("price_type", "Consumption"),
+            ("unit_of_measure", "1 GB/Month"), ("retail_price", 0.0),
+        },
+    };
+
+    [Fact]
+    public void MeterConRetailPriceCero_DevuelveNull_NuncaCeroSilencioso()
+    {
+        var cache = CacheWith(PriceRowFactory.Many(CachedConMeterEnCero));
+        var repo = BuildRepo(cache);
+        Assert.Null(repo.GetSnapshotPricePerGb("eastus", "Standard_LRS"));
+    }
 }

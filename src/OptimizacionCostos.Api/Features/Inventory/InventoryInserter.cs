@@ -10,22 +10,62 @@ namespace OptimizacionCostos.Api.Features.Inventory;
 /// </summary>
 public static class InventoryInserter
 {
-    /// <summary>11 tablas de detalle conocidas (KNOWN_DETAIL_TABLES).</summary>
+    /// <summary>13 tablas de detalle conocidas (KNOWN_DETAIL_TABLES).</summary>
     public static readonly string[] KnownDetailTables =
     [
         "vm_details", "disk_details", "sql_db_details", "appservice_plan_details",
         "mysql_flex_details", "cosmos_details", "redis_details", "public_ip_details",
-        "sql_vm_details", "sql_managed_instance_details", "elastic_pool_details",
+        "sql_vm_details", "sql_managed_instance_details", "elastic_pool_details", "snapshot_details",
+        "storage_files_details",
     ];
 
     /// <summary>inserter_key registrados (equivale a las claves de DETAIL_INSERTERS de Python).</summary>
     public static readonly string[] InserterKeys =
     [
         "vm", "disk", "sql_db", "appservice_plan", "mysql_flex", "cosmos",
-        "redis", "public_ip", "sql_vm", "sql_managed_instance", "elastic_pool",
+        "redis", "public_ip", "sql_vm", "sql_managed_instance", "elastic_pool", "snapshot",
+        "storage_files",
     ];
 
     private static readonly HashSet<string> DtuPoolTiers = new(StringComparer.OrdinalIgnoreCase) { "basic", "standard", "premium" };
+
+    /// <summary>
+    /// DDL compartida de snapshot_details y storage_files_details (las dos tablas de detalle más
+    /// nuevas). Único punto de verdad: lo ejecuta tanto <see cref="EnsureSchemaAsync"/> (import) como
+    /// el guard best-effort de CostExcelDataSourceV3.EnsureNewDetailTablesAsync (export de un análisis
+    /// anterior a estas tablas), para que ambos caminos creen exactamente la misma forma de tabla.
+    /// </summary>
+    public const string NewDetailTablesDdl = """
+        IF OBJECT_ID('dbo.snapshot_details', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.snapshot_details (
+                snapshot_detail_id INT IDENTITY(1,1) PRIMARY KEY,
+                resource_id INT NOT NULL,
+                snapshot_sku NVARCHAR(100) NULL,
+                disk_size_gb INT NULL,
+                incremental BIT NULL,
+                time_created DATETIME2 NULL,
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                CONSTRAINT FK_snapshot_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
+            );
+        END
+        IF OBJECT_ID('dbo.storage_files_details', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.storage_files_details (
+                storage_files_detail_id INT IDENTITY(1,1) PRIMARY KEY,
+                resource_id INT NOT NULL,
+                kind NVARCHAR(50) NULL,
+                files_sku NVARCHAR(100) NULL,
+                share_count INT NULL,
+                used_gib FLOAT NULL,
+                provisioned_gib FLOAT NULL,
+                billable_gib FLOAT NULL,
+                tier_breakdown_json NVARCHAR(MAX) NULL,
+                created_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+                CONSTRAINT FK_storage_files_details_resources FOREIGN KEY (resource_id) REFERENCES dbo.azure_resources(resource_id)
+            );
+        END
+        """;
 
     // Port de ensure_inventory_schema (crea sql_managed_instance_details + elastic_pool_details).
     public static async Task EnsureSchemaAsync(SqlConnection conn, SqlTransaction tx, CancellationToken ct)
@@ -59,6 +99,11 @@ public static class InventoryInserter
             END
             """;
         await cmd.ExecuteNonQueryAsync(ct);
+
+        await using var cmdNew = conn.CreateCommand();
+        cmdNew.Transaction = tx;
+        cmdNew.CommandText = NewDetailTablesDdl;
+        await cmdNew.ExecuteNonQueryAsync(ct);
     }
 
     // Port de insert_azure_resource → devuelve el resource_id insertado.
@@ -111,7 +156,8 @@ public static class InventoryInserter
         {
             "vm" => Vm, "disk" => Disk, "sql_db" => SqlDb, "appservice_plan" => AppServicePlan,
             "mysql_flex" => MySqlFlex, "cosmos" => Cosmos, "redis" => Redis, "public_ip" => PublicIp,
-            "sql_vm" => SqlVm, "sql_managed_instance" => SqlMi, "elastic_pool" => ElasticPool,
+            "sql_vm" => SqlVm, "sql_managed_instance" => SqlMi, "elastic_pool" => ElasticPool, "snapshot" => Snapshot,
+            "storage_files" => StorageFiles,
             _ => null,
         };
         if (inserter is null)
@@ -319,6 +365,40 @@ public static class InventoryInserter
             new SqlParameter("@cm", computeModel), new SqlParameter("@min", Nz(r.Dbl("perDbMin"))),
             new SqlParameter("@max", Nz(r.Dbl("perDbMax"))), new SqlParameter("@zr", Bit(r.BoolN("zoneRedundant"))),
             new SqlParameter("@lic", Nz(r.Str("licenseType"))),
+        ]);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task Snapshot(SqlConnection c, SqlTransaction t, int rid, RgRow r, CancellationToken ct)
+    {
+        object timeCreated = DateTime.TryParse(
+            r.Str("timeCreated"), System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal,
+            out var tc) ? tc : DBNull.Value;
+        await using var cmd = New(c, t, """
+            INSERT INTO dbo.snapshot_details (resource_id, snapshot_sku, disk_size_gb, incremental, time_created)
+            VALUES (@rid, @sku, @size, @inc, @tc)
+            """);
+        cmd.Parameters.AddRange([
+            new SqlParameter("@rid", rid), new SqlParameter("@sku", Nz(r.Str("skuName"))),
+            new SqlParameter("@size", Nz(r.Int("diskSizeGB"))), new SqlParameter("@inc", Bit(r.BoolN("incremental"))),
+            new SqlParameter("@tc", timeCreated),
+        ]);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    private static async Task StorageFiles(SqlConnection c, SqlTransaction t, int rid, RgRow r, CancellationToken ct)
+    {
+        await using var cmd = New(c, t, """
+            INSERT INTO dbo.storage_files_details (resource_id, kind, files_sku, share_count,
+                used_gib, provisioned_gib, billable_gib, tier_breakdown_json)
+            VALUES (@rid, @kind, @sku, @cnt, @used, @prov, @bill, @tiers)
+            """);
+        cmd.Parameters.AddRange([
+            new SqlParameter("@rid", rid), new SqlParameter("@kind", Nz(r.Str("kind"))),
+            new SqlParameter("@sku", Nz(r.Str("skuName"))), new SqlParameter("@cnt", Nz(r.Int("shareCount"))),
+            new SqlParameter("@used", Nz(r.Dbl("usedGib"))), new SqlParameter("@prov", Nz(r.Dbl("provisionedGib"))),
+            new SqlParameter("@bill", Nz(r.Dbl("billableGib"))), new SqlParameter("@tiers", Nz(r.Str("tierBreakdownJson"))),
         ]);
         await cmd.ExecuteNonQueryAsync(ct);
     }

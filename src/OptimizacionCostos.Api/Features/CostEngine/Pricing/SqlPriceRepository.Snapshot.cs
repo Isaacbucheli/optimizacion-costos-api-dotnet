@@ -19,7 +19,13 @@ public sealed partial class SqlPriceRepository
             c.PriceType == "Consumption"
             && string.Equals(c.ProductName, product, StringComparison.Ordinal)
             && string.Equals(c.MeterName, meter, StringComparison.Ordinal)
-            && (c.UnitOfMeasure ?? string.Empty).StartsWith("1 GB/Month", StringComparison.OrdinalIgnoreCase));
+            && (c.UnitOfMeasure ?? string.Empty).StartsWith("1 GB/Month", StringComparison.OrdinalIgnoreCase)
+            // Nunca aceptar un precio $0.00: el snapshot comparte QueryCached("Storage", region)
+            // con productos reales que traen TODOS sus meters en $0.00 (ej. "Azure Files
+            // Provisioned v2", ver StorageFilesRetailFixture.md §1.6 e IsPositivePrice en
+            // SqlPriceRepository.StorageFiles.cs). Un retail_price ausente y uno de $0.00 se
+            // tratan igual: "no encontrado", nunca "$0 calculado".
+            && IsPositivePrice(c));
         return item?.RetailPrice;
     }
 

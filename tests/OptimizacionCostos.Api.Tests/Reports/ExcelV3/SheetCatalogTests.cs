@@ -5,7 +5,7 @@ public class SheetCatalogTests
     // Hojas cuyos recursos NO son elegibles a RI por naturaleza → sin bloque RI/ahorro/elegible
     // (discos de VMs apagadas, discos huérfanos/ASR, IP pública). Decisión del usuario 2026-07-07.
     private static readonly HashSet<string> NoRiKeys = new(StringComparer.OrdinalIgnoreCase)
-        { "disks_stopped_vms", "disks_orphan_asr", "public_ip" };
+        { "disks_stopped_vms", "disks_orphan_asr", "public_ip", "snapshots" };
 
     [Fact]
     public void Todas_las_hojas_de_servicio_llevan_PAYG_estado_y_totales()
@@ -64,6 +64,8 @@ public class SheetCatalogTests
         Assert.Equal(names.Count, names.Distinct().Count());
         Assert.Contains("Optimización VMs", names);
         Assert.Contains("IP Pública", names);
+        Assert.Contains("Snapshots", names);
+        Assert.Contains("Storage Files", names);
         Assert.DoesNotContain(names, n => n.Contains("Managed Instance") && n.Contains("PAYG")); // nada en inglés
     }
 
@@ -98,5 +100,35 @@ public class SheetCatalogTests
             Assert.Contains(spec.Columns, c => c.Header == "Elegible a RI" && c.Kind == ColKind.Eligibility);
         // El "Detalle de recursos" mezcla todos los servicios → conserva el bloque RI completo.
         Assert.Contains(SheetCatalog.ResourceDetailSheet().Columns, c => c.Header == "Elegible a RI");
+    }
+
+    [Fact]
+    public void Storage_Files_GiB_con_decimales_y_Shares_como_entero()
+    {
+        // Revisión Task 9 (2026-07-24): el corte de 10 TiB que decide si el recurso entra a la hoja
+        // se resuelve con decimales — ColKind.Number (formato entero) lo mostraría idéntico al
+        // umbral. Las 3 capacidades van con ColKind.Decimal; "Shares" (conteo) sigue siendo entero.
+        var storageFiles = SheetCatalog.ServiceSheets().First(s => s.DataKey == "storage_files").Spec;
+        foreach (var header in new[] { "GiB usados", "GiB cuota", "GiB facturables" })
+            Assert.Equal(ColKind.Decimal, storageFiles.Columns.First(c => c.Header == header).Kind);
+        Assert.Equal(ColKind.Number, storageFiles.Columns.First(c => c.Header == "Shares").Kind);
+    }
+
+    [Fact]
+    public void Snapshots_Incremental_no_afirma_No_cuando_es_desconocido()
+    {
+        // Revisión task-11 (2026-07-24): NULL/DBNull es "dato desconocido", no "false" — antes
+        // rendía "No" igual que false, lo cual afirma algo que no se sabe.
+        var snapshots = SheetCatalog.ServiceSheets().First(s => s.DataKey == "snapshots").Spec;
+        var col = snapshots.Columns.First(c => c.Header == "Incremental");
+        Assert.Equal(ColKind.Text, col.Kind);
+
+        string? V(object? incremental) => col.Extract(
+            new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase) { ["incremental"] = incremental })?.ToString();
+
+        Assert.Equal("Sí", V(true));
+        Assert.Equal("No", V(false));
+        Assert.Equal("-", V(null));
+        Assert.Equal("-", V(DBNull.Value));
     }
 }

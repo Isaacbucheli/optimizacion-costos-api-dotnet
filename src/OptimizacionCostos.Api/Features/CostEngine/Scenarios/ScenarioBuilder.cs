@@ -17,6 +17,8 @@ public static class ScenarioBuilder
             ["cosmos"] = "Cosmos DB",
             ["redis"] = "Redis Cache",
             ["public_ip"] = "IPs Públicas",
+            ["snapshots"] = "Snapshots de discos",
+            ["storage_files"] = "Storage (Azure Files)",
         };
 
     /// <summary>Costo efectivo de un recurso bajo un escenario.</summary>

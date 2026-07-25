@@ -34,6 +34,8 @@ public static class SheetCatalog
         ("cosmos", CosmosDbSheet()),
         ("redis", RedisSheet()),
         ("public_ip", PublicIpSheet()),
+        ("snapshots", SnapshotsSheet()),
+        ("storage_files", StorageFilesSheet()),
     ];
 
     /// <summary>Hoja genérica (identificación + columnas base, sin específicas) para servicios del
@@ -197,6 +199,47 @@ public static class SheetCatalog
         columns.Add(new("Asociada a", ColKind.Text, r => Get(r, "associated_to")));
         columns.AddRange(BaseColumns(includeRi: false)); // IP pública no es elegible a RI: sin bloque RI/ahorro
         return new SheetSpec("IP Pública", columns);
+    }
+
+    /// <summary>Snapshots de discos (plan 2026-07-24): costo referencial por tamaño del disco de
+    /// origen. Sin bloque RI (no reservables, misma decisión que discos/IP pública).</summary>
+    private static SheetSpec SnapshotsSheet()
+    {
+        var columns = new List<ColumnSpec>();
+        columns.AddRange(Identity());
+        columns.Add(new("SKU", ColKind.Text, r => Get(r, "snapshot_sku") ?? Get(r, "sku_name")));
+        columns.Add(new("GB disco origen", ColKind.Number, r => Get(r, "disk_size_gb")));
+        // NULL/DBNull (dato desconocido) rinde "-": no afirmar "No" cuando en realidad no se sabe.
+        columns.Add(new("Incremental", ColKind.Text, r =>
+        {
+            var raw = Get(r, "incremental");
+            return raw is null or DBNull ? "-" : (AsBool(raw) ? "Sí" : "No");
+        }));
+        columns.Add(new("Creado", ColKind.Text, r => Get(r, "time_created") is DateTime dt
+            ? dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) : null));
+        columns.AddRange(BaseColumns(includeRi: false)); // snapshots no son reservables: sin bloque RI/ahorro
+        return new SheetSpec("Snapshots", columns);
+    }
+
+    /// <summary>Storage accounts con Azure Files > 10 TiB facturables (plan 2026-07-24): capacidad
+    /// fiel a facturación (estándar por GiB usados, premium por cuota). Con bloque RI (capacidad
+    /// reservada 1y/3y).</summary>
+    private static SheetSpec StorageFilesSheet()
+    {
+        var columns = new List<ColumnSpec>();
+        columns.AddRange(Identity());
+        columns.Add(new("Kind", ColKind.Text, r => Get(r, "kind")));
+        columns.Add(new("SKU", ColKind.Text, r => Get(r, "files_sku") ?? Get(r, "sku_name")));
+        columns.Add(new("Shares", ColKind.Number, r => Get(r, "share_count"))); // conteo entero, no capacidad
+        // Capacidades en GiB con 2 decimales: el corte de 10 TiB (umbral de inclusión de la hoja) se
+        // decide con decimales — ColKind.Number (formato entero) los redondearía visualmente al mismo
+        // valor que el umbral, sin que el consultor pueda distinguir por qué el recurso calificó
+        // (revisión Task 9, 2026-07-24).
+        columns.Add(new("GiB usados", ColKind.Decimal, r => Get(r, "used_gib")));
+        columns.Add(new("GiB cuota", ColKind.Decimal, r => Get(r, "provisioned_gib")));
+        columns.Add(new("GiB facturables", ColKind.Decimal, r => Get(r, "billable_gib")));
+        columns.AddRange(BaseColumns());
+        return new SheetSpec("Storage Files", columns);
     }
 
     // =================================================================================

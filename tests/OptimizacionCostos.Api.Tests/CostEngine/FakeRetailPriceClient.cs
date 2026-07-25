@@ -41,6 +41,7 @@ public sealed class FakeRetailPriceClient : IRetailPriceClient
     public Func<string, IReadOnlyList<PriceRow>> FetchAzureManagedRedisPricesFn { get; set; } = _ => Array.Empty<PriceRow>();
     public Func<string, IReadOnlyList<PriceRow>> FetchPublicIpPricesFn { get; set; } = _ => Array.Empty<PriceRow>();
     public Func<string, IReadOnlyList<PriceRow>> FetchSnapshotPricesFn { get; set; } = _ => Array.Empty<PriceRow>();
+    public Func<string, IReadOnlyList<PriceRow>> FetchStorageFilesPricesFn { get; set; } = _ => Array.Empty<PriceRow>();
 
     // -------------------- Registro de llamadas --------------------
 
@@ -62,6 +63,7 @@ public sealed class FakeRetailPriceClient : IRetailPriceClient
     public List<string> FetchAzureManagedRedisPricesCalls { get; } = new();
     public List<string> FetchPublicIpPricesCalls { get; } = new();
     public List<string> FetchSnapshotPricesCalls { get; } = new();
+    public List<string> FetchStorageFilesPricesCalls { get; } = new();
 
     // -------------------- IRetailPriceClient --------------------
 
@@ -171,5 +173,11 @@ public sealed class FakeRetailPriceClient : IRetailPriceClient
     {
         FetchSnapshotPricesCalls.Add(region);
         return FetchSnapshotPricesFn(region);
+    }
+
+    public IReadOnlyList<PriceRow> FetchStorageFilesPrices(string region)
+    {
+        FetchStorageFilesPricesCalls.Add(region);
+        return FetchStorageFilesPricesFn(region);
     }
 }

@@ -181,6 +181,7 @@ public sealed class CostExcelDataSourceV3(
         // El viejo exportador asegura el esquema de vm_power_usage (LEFT JOIN en la hoja de VMs).
         // Aquí se crea best-effort por si nunca se corrió el refresh de encendido/apagado.
         await EnsurePowerUsageSchemaAsync(conn, ct);
+        await EnsureNewDetailTablesAsync(conn, ct);
 
         var queries = new (string Key, string Sql)[]
         {
@@ -299,6 +300,26 @@ public sealed class CostExcelDataSourceV3(
                 WHERE cr.analysis_id = @id AND cr.service_key = 'public_ip'
                 ORDER BY r.resource_name
                 """),
+            ("snapshots", """
+                SELECT cr.*, r.resource_name, r.subscription_name, r.resource_group,
+                       r.location, r.sku_name, d.snapshot_sku, d.disk_size_gb,
+                       d.incremental, d.time_created
+                FROM dbo.cost_results cr
+                INNER JOIN dbo.azure_resources r ON r.resource_id = cr.resource_id
+                LEFT JOIN dbo.snapshot_details d ON d.resource_id = r.resource_id
+                WHERE cr.analysis_id = @id AND cr.service_key = 'snapshots'
+                ORDER BY d.disk_size_gb DESC, r.resource_name
+                """),
+            ("storage_files", """
+                SELECT cr.*, r.resource_name, r.subscription_name, r.resource_group,
+                       r.location, r.sku_name, d.kind, d.files_sku, d.share_count,
+                       d.used_gib, d.provisioned_gib, d.billable_gib
+                FROM dbo.cost_results cr
+                INNER JOIN dbo.azure_resources r ON r.resource_id = cr.resource_id
+                LEFT JOIN dbo.storage_files_details d ON d.resource_id = r.resource_id
+                WHERE cr.analysis_id = @id AND cr.service_key = 'storage_files'
+                ORDER BY d.billable_gib DESC, r.resource_name
+                """),
             ("analysis", """
                 SELECT ca.analysis_id, ca.analysis_name, ca.created_at, c.client_name
                 FROM dbo.cost_analysis ca
@@ -385,6 +406,19 @@ public sealed class CostExcelDataSourceV3(
                 CONSTRAINT PK_vm_power_usage PRIMARY KEY (resource_id, analysis_id)
             );
             """;
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>Las hojas de snapshots/storage_files hacen LEFT JOIN a tablas detalle que crea el
+    /// import (Tasks 5/7 del plan 2026-07-24); si el análisis es previo a ese código, se crean acá
+    /// vacías para que el export no falle. Si ya existen, no toca nada. DDL compartida con
+    /// InventoryInserter.EnsureSchemaAsync vía
+    /// <see cref="OptimizacionCostos.Api.Features.Inventory.InventoryInserter.NewDetailTablesDdl"/>
+    /// (única fuente de verdad, ver task-11 revisión 2026-07-24).</summary>
+    private static async Task EnsureNewDetailTablesAsync(SqlConnection conn, CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = OptimizacionCostos.Api.Features.Inventory.InventoryInserter.NewDetailTablesDdl;
         await cmd.ExecuteNonQueryAsync(ct);
     }
 

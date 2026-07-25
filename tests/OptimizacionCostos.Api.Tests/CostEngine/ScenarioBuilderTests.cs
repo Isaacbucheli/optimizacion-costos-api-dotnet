@@ -110,4 +110,19 @@ public sealed class ScenarioBuilderTests
         Assert.Equal("Discos", bd[1].LineLabel);
         Assert.Equal(9.99, bd[1].MonthlyCost, 5);
     }
+
+    [Fact]
+    public void Breakdown_LabelsSnapshotsAndStorageFiles()
+    {
+        // Etiquetas de los dos servicios nuevos (snapshots/storage_files), deben coincidir con
+        // SERVICE_LABELS del front (innovacion-CDC/src/lib/costs.ts).
+        var rows = new List<ScenarioResultRow>
+        {
+            new() { ServiceKey = "snapshots", PaygMonthly = 10.0 },
+            new() { ServiceKey = "storage_files", PaygMonthly = 20.0 },
+        };
+        var bd = ScenarioBuilder.BuildBreakdown(rows, E2);
+        Assert.Equal("Snapshots de discos", bd[0].LineLabel);
+        Assert.Equal("Storage (Azure Files)", bd[1].LineLabel);
+    }
 }
