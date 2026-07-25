@@ -30,10 +30,12 @@ public sealed record StorageFilesEnrichment(IReadOnlyList<RgRow> Kept, IReadOnly
 /// Fallo por cuenta (LIST) → se omite CON advertencia, EXCEPTO cuando ARM responde 400
 /// FeatureNotSupportedForAccount (cuenta sin servicio de Files, p.ej. Storage/Premium_LRS de solo
 /// page-blob usada por Azure Site Recovery): eso se trata como "0 shares" y se omite EN SILENCIO,
-/// para no diluir el canal de advertencias con falsas alarmas. Fallo de stats en UN share, o fallo
-/// al leer el diferencial de snapshots de la cuenta → esa cuenta se sigue procesando (el resto sí
-/// cuenta) pero queda advertencia visible de que el total puede estar incompleto (nunca cero
-/// silencioso).
+/// para no diluir el canal de advertencias con falsas alarmas. Fallo de stats en UN share, un
+/// <c>shareUsageBytes</c> AUSENTE en una respuesta 200 (ver <see cref="GetShareUsageBytesAsync"/>),
+/// o un diferencial de snapshots que no se pudo leer o confirmar (excepción, sin datos, o
+/// <c>errorCode</c> distinto de "Success" — ver <see cref="GetSnapshotDifferentialGibAsync"/>) →
+/// esa cuenta se sigue procesando (el resto sí cuenta) pero queda advertencia visible de que el
+/// total puede estar incompleto (nunca cero silencioso).
 /// </summary>
 public interface IStorageFilesEnricher
 {
@@ -126,7 +128,19 @@ public sealed class StorageFilesEnricher(
                 {
                     try
                     {
-                        snapshotGib = await GetSnapshotDifferentialGibAsync(http, token.Token, id, ct);
+                        var gib = await GetSnapshotDifferentialGibAsync(http, token.Token, id, ct);
+                        if (gib is null)
+                        {
+                            // Igual que failedStats: la métrica no trajo ningún punto de dato
+                            // confiable (ver GetSnapshotDifferentialGibAsync) — nunca se trata como
+                            // "0 GiB", se advierte y la cuenta se sigue procesando con lo que sí
+                            // se pudo traer.
+                            warnings.Add($"{name}: no se pudo leer el uso de snapshots de los fileshares; el total puede estar incompleto");
+                        }
+                        else
+                        {
+                            snapshotGib = gib.Value;
+                        }
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
@@ -315,8 +329,10 @@ public sealed class StorageFilesEnricher(
     /// <summary>Fase 2: obtiene <c>shareUsageBytes</c> por-share con <c>$expand=stats</c> (el
     /// único endpoint que lo devuelve). Cuentas PREMIUM se saltan esta llamada por completo —
     /// facturan por cuota, no por uso, así que pedir el stats sería una llamada ARM desperdiciada.
-    /// Un fallo en UN share no pierde la cuenta: cuenta como 0 y se reporta en <c>FailedCount</c>
-    /// para que el llamador agregue la advertencia visible (uso posiblemente incompleto).</summary>
+    /// Un fallo en UN share (excepción HTTP, o una respuesta 200 sin el campo
+    /// <c>shareUsageBytes</c> — ver <see cref="GetShareUsageBytesAsync"/>) no pierde la cuenta:
+    /// cuenta como 0 y se reporta en <c>FailedCount</c> para que el llamador agregue la
+    /// advertencia visible (uso posiblemente incompleto).</summary>
     private async Task<(List<ShareInfo> Shares, int FailedCount)> FetchShareUsageAsync(
         HttpClient http, string bearerToken, string accountId, string accountName,
         IReadOnlyList<ShareListItem> listed, bool isPremium, CancellationToken ct)
@@ -330,7 +346,24 @@ public sealed class StorageFilesEnricher(
             {
                 try
                 {
-                    usageBytes = await GetShareUsageBytesAsync(http, bearerToken, accountId, item.Name, ct);
+                    var bytes = await GetShareUsageBytesAsync(http, bearerToken, accountId, item.Name, ct);
+                    if (bytes is null)
+                    {
+                        // El campo shareUsageBytes vino AUSENTE en una respuesta 200 (distinto de
+                        // un fallo HTTP): indistinguible de "0 bytes usados" si se tratara como 0
+                        // silencioso, y podría empujar la cuenta al lado equivocado del corte de
+                        // 10 TiB sin ninguna señal visible. Se trata EXACTAMENTE igual que el
+                        // camino de excepción: cuenta como fallo (failedStats) para que la
+                        // advertencia agregada de EnrichAsync se dispare.
+                        failed++;
+                        logger.LogWarning(
+                            "shareUsageBytes ausente en respuesta 200 account={Name} share={Share}",
+                            accountName, item.Name);
+                    }
+                    else
+                    {
+                        usageBytes = bytes.Value;
+                    }
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
@@ -351,8 +384,10 @@ public sealed class StorageFilesEnricher(
     }
 
     /// <summary>GET .../shares/{name}?api-version=...&amp;$expand=stats — único endpoint que
-    /// devuelve <c>shareUsageBytes</c> (el LIST no lo trae).</summary>
-    private static async Task<long> GetShareUsageBytesAsync(
+    /// devuelve <c>shareUsageBytes</c> (el LIST no lo trae). Null (NO 0) cuando la respuesta 200
+    /// no trae el campo — indistinguible de "0 bytes usados" para el llamador, que debe tratarlo
+    /// como fallo (ver FetchShareUsageAsync), nunca como uso cero silencioso.</summary>
+    private static async Task<long?> GetShareUsageBytesAsync(
         HttpClient http, string bearerToken, string accountId, string shareName, CancellationToken ct)
     {
         var url = $"https://management.azure.com{accountId}/fileServices/default/shares/{Uri.EscapeDataString(shareName)}"
@@ -369,7 +404,7 @@ public sealed class StorageFilesEnricher(
         {
             return u.GetInt64();
         }
-        return 0L;
+        return null;
     }
 
     /// <summary>
@@ -392,9 +427,24 @@ public sealed class StorageFilesEnricher(
     /// soporta desglose por-fileshare/por-tier pese a declarar la dimensión "FileShare" en
     /// metricDefinitions — se verificó que tanto <c>$filter=FileShare eq '*'</c> como un nombre
     /// de share exacto devuelven series vacías; solo el agregado <c>&lt;All&gt;</c> de la cuenta
-    /// funciona. <see cref="Aggregate"/> reparte ese agregado entre los tiers ya calculados.
+    /// funciona (en la práctica, una sola serie). <see cref="Aggregate"/> reparte ese agregado
+    /// entre los tiers ya calculados.
+    ///
+    /// Devuelve <b>null</b> (NO 0) cuando no se puede confiar en la lectura: ningún punto de
+    /// dato trajo un valor <c>average</c> numérico (payload vacío, o un <c>data</c> con solo
+    /// <c>timeStamp</c> y sin <c>average</c> — Azure Monitor puede omitir el campo para
+    /// intervalos sin datos), o algún elemento de <c>value</c> reportó un <c>errorCode</c>
+    /// distinto de <c>"Success"</c>. Ambos casos son indistinguibles de "0 GiB" si se tratan
+    /// como cero, y pueden esconder capacidad facturable real. El llamador (<see cref="EnrichAsync"/>)
+    /// trata null exactamente igual que una excepción: advertencia visible, nunca cero silencioso.
+    ///
+    /// Suma el último punto de CADA timeseries (en vez de quedarse con el de la última serie
+    /// vista, como antes): esta métrica siempre trae una sola serie "&lt;All&gt;" en la práctica
+    /// verificada, pero sumar es la lectura correcta si Azure alguna vez devolviera más de una
+    /// serie — evita que el total de la cuenta se reduzca silenciosamente al valor de una sola
+    /// serie.
     /// </summary>
-    private static async Task<double> GetSnapshotDifferentialGibAsync(
+    private static async Task<double?> GetSnapshotDifferentialGibAsync(
         HttpClient http, string bearerToken, string accountId, CancellationToken ct)
     {
         var end = DateTimeOffset.UtcNow;
@@ -413,12 +463,21 @@ public sealed class StorageFilesEnricher(
         using var doc = JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("value", out var metrics) || metrics.ValueKind != JsonValueKind.Array)
         {
-            return 0d;
+            return null; // payload sin "value": no hay nada que sumar, no se puede confiar en "0 GiB".
         }
 
-        double? lastAverage = null;
+        double sumOfLastPerSeries = 0d;
+        var foundAnyPoint = false;
         foreach (var metric in metrics.EnumerateArray())
         {
+            if (metric.TryGetProperty("errorCode", out var errorCode)
+                && errorCode.ValueKind == JsonValueKind.String
+                && !string.Equals(errorCode.GetString(), "Success", StringComparison.Ordinal))
+            {
+                // Azure reportó un error explícito para esta métrica (ej. "InternalServerError",
+                // "ThrottledRequests"): la ausencia de datos NO significa "0 GiB".
+                return null;
+            }
             if (!metric.TryGetProperty("timeseries", out var series) || series.ValueKind != JsonValueKind.Array)
             {
                 continue;
@@ -430,17 +489,28 @@ public sealed class StorageFilesEnricher(
                     continue;
                 }
                 // Los puntos vienen en orden cronológico ascendente (verificado empíricamente);
-                // nos quedamos con el ÚLTIMO valor no nulo, es decir el más reciente disponible.
+                // nos quedamos con el ÚLTIMO valor no nulo DE ESTA SERIE (el más reciente
+                // disponible) y sumamos entre series — ver nota de la clase sobre por qué sumar.
+                double? lastOfThisSeries = null;
                 foreach (var point in points.EnumerateArray())
                 {
                     if (point.TryGetProperty("average", out var avg) && avg.ValueKind == JsonValueKind.Number)
                     {
-                        lastAverage = avg.GetDouble();
+                        lastOfThisSeries = avg.GetDouble();
+                        foundAnyPoint = true;
                     }
                 }
+                sumOfLastPerSeries += lastOfThisSeries ?? 0d;
             }
         }
-        return (lastAverage ?? 0d) / BytesPerGib;
+
+        if (!foundAnyPoint)
+        {
+            // Ningún punto de ninguna serie trajo "average" (ej. todos los "data" solo tienen
+            // "timeStamp"): no hay lectura real, no se puede confiar en "0 GiB".
+            return null;
+        }
+        return sumOfLastPerSeries / BytesPerGib;
     }
 
     /// <summary>Body real verificado: <c>{"error":{"code":"FeatureNotSupportedForAccount",...}}</c>.

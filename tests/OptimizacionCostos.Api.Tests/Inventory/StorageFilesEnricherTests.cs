@@ -88,13 +88,22 @@ public sealed class StorageFilesEnricherTests
             }.ToJsonString()),
         };
 
-    /// <summary>Enruta por URL como lo haría un fake de Azure real: LIST vs GET por-share ($expand=stats).</summary>
+    /// <summary>Enruta por URL como lo haría un fake de Azure real: LIST vs GET por-share
+    /// ($expand=stats) vs la métrica de diferencial de snapshots. Los tests que usan este
+    /// helper no ejercitan el diferencial de snapshots en sí (eso lo cubren los tests
+    /// "MetricaDeSnapshots*"/"SnapshotsSumanAlFacturable_*" dedicados) — por eso la métrica
+    /// responde con un diferencial real de 0 (un "average": 0 explícito, NO una respuesta
+    /// vacía/sin "average") para no disparar la advertencia de FIX 5.</summary>
     private static HttpResponseMessage RouteListAndStats(
         HttpRequestMessage req,
         (string Name, int QuotaGib, string? Tier)[] listShares,
         Dictionary<string, long> usageByShare)
     {
         var url = req.RequestUri!.ToString();
+        if (url.Contains("Insights/metrics", StringComparison.OrdinalIgnoreCase))
+        {
+            return SnapshotMetricResponse(0);
+        }
         if (url.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))
         {
             // GET /shares/{name}?...&$expand=stats
@@ -403,6 +412,10 @@ public sealed class StorageFilesEnricherTests
         var handler = new FakeHandler(req =>
         {
             var url = req.RequestUri!.ToString();
+            if (url.Contains("Insights/metrics", StringComparison.OrdinalIgnoreCase))
+            {
+                return SnapshotMetricResponse(0); // fuera de alcance de este test (ver FIX 5)
+            }
             if (url.Contains("/shares/share1") && url.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))
             {
                 return new HttpResponseMessage(HttpStatusCode.Forbidden);
@@ -423,6 +436,199 @@ public sealed class StorageFilesEnricherTests
         Assert.Contains("stg", warning);
         Assert.Contains("uso", warning, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("incompleto", warning);
+    }
+
+    // -------------------- FIX 4: shareUsageBytes ausente en un 200 debe advertir, no valer 0 --------------------
+
+    [Fact]
+    public async Task StatsSinShareUsageBytes_AdvierteYCuentaComoFallo_NoComoCero()
+    {
+        // share1 responde 200 OK (no un fallo HTTP), pero "properties" NO trae shareUsageBytes
+        // — antes GetShareUsageBytesAsync devolvía 0L en ese caso, indistinguible de "el share
+        // genuinamente no tiene uso" y sin incrementar el contador de fallos. Debe tratarse
+        // EXACTAMENTE igual que el 403 de FalloDeStatsEnUnShare_AdvierteYNoPierdeLaCuenta.
+        (string, int, string?)[] listShares = [("share0", 6000, "Hot"), ("share1", 6000, "Hot")];
+        var handler = new FakeHandler(req =>
+        {
+            var url = req.RequestUri!.ToString();
+            if (url.Contains("Insights/metrics", StringComparison.OrdinalIgnoreCase))
+            {
+                return SnapshotMetricResponse(0); // fuera de alcance de este test (ver FIX 5)
+            }
+            if (url.Contains("/shares/share1") && url.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(new JsonObject
+                    {
+                        ["name"] = "share1",
+                        ["properties"] = new JsonObject { ["shareQuota"] = 6000, ["accessTier"] = "Hot" },
+                    }.ToJsonString()),
+                };
+            }
+            if (url.Contains("expand=stats", StringComparison.OrdinalIgnoreCase))
+            {
+                return ShareStatsResponse("share0", (long)(11000 * Gib), 6000, "Hot");
+            }
+            return ListSharesResponse(listShares);
+        });
+
+        var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stgsinbytes")], default);
+
+        var kept = Assert.Single(result.Kept);
+        Assert.Equal(2, kept.Int("shareCount"));
+        Assert.Equal(11000.0, kept.Dbl("usedGib")!.Value, 1); // share1 cuenta como 0 por el campo ausente
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("stgsinbytes", warning);
+        Assert.Contains("uso", warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("incompleto", warning);
+    }
+
+    // -------------------- FIX 5: métrica de snapshots sin dato confiable debe advertir, no valer 0 --------------------
+
+    /// <summary>Serie con puntos que solo tienen timeStamp, SIN "average" — Azure Monitor puede
+    /// omitir el campo para intervalos sin datos (a diferencia de un "average": 0 explícito).</summary>
+    private static HttpResponseMessage SnapshotMetricResponseSinAverage()
+        => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(new JsonObject
+            {
+                ["value"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["timeseries"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["data"] = new JsonArray
+                                {
+                                    new JsonObject { ["timeStamp"] = "2026-07-22T21:37:00Z" },
+                                    new JsonObject { ["timeStamp"] = "2026-07-23T21:37:00Z" },
+                                },
+                            },
+                        },
+                        ["errorCode"] = "Success",
+                    },
+                },
+            }.ToJsonString()),
+        };
+
+    private static HttpResponseMessage SnapshotMetricResponseConErrorCode()
+        => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(new JsonObject
+            {
+                ["value"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["timeseries"] = new JsonArray(),
+                        ["errorCode"] = "InternalServerError",
+                    },
+                },
+            }.ToJsonString()),
+        };
+
+    [Fact]
+    public async Task MetricaDeSnapshotsSinPuntosDeAverage_AdvierteYNoColapsaACero()
+    {
+        // 9,000 GiB en vivo (bajo el corte de 10,240): sin un diferencial de snapshots
+        // confiable, la cuenta se costea SOLO con lo en vivo y queda por debajo del corte — pero
+        // la advertencia DEBE aparecer igual (antes esto habría leído 0 GiB de diferencial en
+        // silencio, indistinguible de "no hay snapshots", y la cuenta se habría excluido sin
+        // ninguna señal de que el dato pudo estar incompleto).
+        (string, int, string?)[] listShares = [("share0", 20480, "Hot")];
+        var usage = new Dictionary<string, long> { ["share0"] = (long)(9000 * Gib) };
+        var handler = new FakeHandler(req =>
+            req.RequestUri!.ToString().Contains("Insights/metrics", StringComparison.OrdinalIgnoreCase)
+                ? SnapshotMetricResponseSinAverage()
+                : RouteListAndStats(req, listShares, usage));
+
+        var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stgsinavg")], default);
+
+        Assert.Empty(result.Kept); // sin diferencial confirmado, 9000 GiB en vivo no alcanza el corte
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("stgsinavg", warning);
+        Assert.Contains("snapshot", warning, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("incompleto", warning);
+    }
+
+    [Fact]
+    public async Task MetricaDeSnapshotsConErrorCode_AdvierteYNoColapsaACero()
+    {
+        // errorCode distinto de "Success" en el elemento de "value": Azure señaló explícitamente
+        // que la lectura falló; antes esto se leía igual como "sin timeseries" → 0 GiB silencioso.
+        (string, int, string?)[] listShares = [("share0", 20480, "Hot")];
+        var usage = new Dictionary<string, long> { ["share0"] = (long)(9000 * Gib) };
+        var handler = new FakeHandler(req =>
+            req.RequestUri!.ToString().Contains("Insights/metrics", StringComparison.OrdinalIgnoreCase)
+                ? SnapshotMetricResponseConErrorCode()
+                : RouteListAndStats(req, listShares, usage));
+
+        var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stgerrorcode")], default);
+
+        Assert.Empty(result.Kept);
+        var warning = Assert.Single(result.Warnings);
+        Assert.Contains("stgerrorcode", warning);
+        Assert.Contains("incompleto", warning);
+    }
+
+    /// <summary>Dos timeseries en la misma métrica, cada una con un solo punto.</summary>
+    private static HttpResponseMessage SnapshotMetricResponseConDosSeries(double bytesSerie1, double bytesSerie2)
+        => new(HttpStatusCode.OK)
+        {
+            Content = new StringContent(new JsonObject
+            {
+                ["value"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["timeseries"] = new JsonArray
+                        {
+                            new JsonObject
+                            {
+                                ["data"] = new JsonArray
+                                {
+                                    new JsonObject { ["timeStamp"] = "2026-07-23T21:37:00Z", ["average"] = bytesSerie1 },
+                                },
+                            },
+                            new JsonObject
+                            {
+                                ["data"] = new JsonArray
+                                {
+                                    new JsonObject { ["timeStamp"] = "2026-07-23T21:37:00Z", ["average"] = bytesSerie2 },
+                                },
+                            },
+                        },
+                        ["errorCode"] = "Success",
+                    },
+                },
+            }.ToJsonString()),
+        };
+
+    [Fact]
+    public async Task MetricaDeSnapshotsConDosSeries_SumaAmbasEnVezDePisarConLaUltima()
+    {
+        // Si Azure alguna vez devolviera más de una serie (hoy siempre trae una sola "<All>",
+        // verificado empíricamente contra una cuenta real), sumar es la lectura correcta del
+        // diferencial total de la cuenta. Antes el código se quedaba con el ÚLTIMO valor visto
+        // recorriendo TODAS las series (una variable compartida, no una por serie), lo que
+        // habría reducido silenciosamente el total al valor de una sola serie.
+        (string, int, string?)[] listShares = [("share0", 20480, "Hot")];
+        var usage = new Dictionary<string, long> { ["share0"] = (long)(9000 * Gib) };
+        var serie1Bytes = 1000 * Gib;
+        var serie2Bytes = 1500 * Gib;
+        var handler = new FakeHandler(req =>
+            req.RequestUri!.ToString().Contains("Insights/metrics", StringComparison.OrdinalIgnoreCase)
+                ? SnapshotMetricResponseConDosSeries(serie1Bytes, serie2Bytes)
+                : RouteListAndStats(req, listShares, usage));
+
+        var result = await NewEnricher(handler).EnrichAsync(FakeCred, [AccountRow("stgdosseries")], default);
+
+        var kept = Assert.Single(result.Kept);
+        Assert.Empty(result.Warnings);
+        Assert.Equal(11500.0, kept.Dbl("billableGib")!.Value, 1); // 9000 vivo + 1000 + 1500 diferencial
     }
 
     [Fact]

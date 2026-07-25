@@ -12,13 +12,21 @@ namespace OptimizacionCostos.Api.Features.CostEngine.Calculators;
 /// con la redundancia del SKU. Estándar factura GiB usados MÁS el diferencial de snapshots
 /// del share (ya sumado por StorageFilesEnricher: Azure factura pay-as-you-go sobre
 /// "Data Stored", que incluye el diferencial de snapshots); premium GiB de cuota (el
-/// desglose ya viene con ese criterio). RI 1y/3y HÍBRIDA COMPARABLE (spec 2026-07-24, revisión):
-/// por término, Σ de (gib × tasa reservada si el tier la tiene, sino gib × su tasa PAYG) — el
-/// término se emite si ALGÚN tier con capacidad aportó una tasa reservada real (si ninguno la
-/// tiene, ej. transaction_optimized —que nunca la tiene en Azure—, el término queda null). Esto
-/// evita el bug de "todo o nada": antes, un solo tier sin reserva (típicamente
-/// transaction_optimized, que además es el tier DEFAULT de los shares sin accessTier explícito)
-/// anulaba el RI completo aunque el resto de la cuenta sí fuera reservable. No incluye
+/// desglose ya viene con ese criterio). RI 1y/3y HÍBRIDA COMPARABLE POR BLOQUES (spec
+/// 2026-07-24, revisión 2026-07-24 post-review): Azure Files Reserved Capacity se compra en
+/// BLOQUES ENTEROS de 10 TiB (10.240 GiB) por tier+redundancia+región (fixture
+/// StorageFilesRetailFixture.md §6.3/§4.1: los skuName de reserva son literalmente
+/// "Hot LRS - 10 TB") — no existe "reserva parcial" de un bloque. Por término, cada tier
+/// aporta: si alcanza al menos 1 bloque Y Azure publica una tasa reservada para ese término,
+/// bloque(s) completo(s) a la tasa reservada + el remanente (&lt; 1 bloque) a su tasa PAYG;
+/// si no alcanza un bloque o Azure no publica esa tasa, el tier completo a su tasa PAYG. El
+/// término se emite si ALGÚN tier aportó al menos un bloque reservado real (si ninguno lo
+/// aportó, el término queda null, con una razón que distingue "ningún tier tiene tasa
+/// reservada en Azure" de "ningún tier alcanza el bloque mínimo"). Esto evita el bug de "todo o
+/// nada": antes, un solo tier sin reserva (típicamente transaction_optimized, que además es el
+/// tier DEFAULT de los shares sin accessTier explícito) anulaba el RI completo aunque el resto
+/// de la cuenta sí fuera reservable; y evita el bug de sobreestimar la reserva aplicando la
+/// tasa de bloque a capacidad que Azure no vende en bloques parciales. No incluye
 /// transacciones/metadata (nota). SKUs provisioned v2 → manual_required (modelo de facturación
 /// distinto, sin inventar números).
 /// </summary>
@@ -26,6 +34,14 @@ public sealed class StorageFilesCalculator(IPriceRepository prices, IPricingCons
 {
     private readonly IPriceRepository _prices = prices;
     private readonly IPricingConstants _constants = constants;
+
+    /// <summary>
+    /// Tamaño del bloque mínimo comprable de Azure Files Reserved Capacity (fixture
+    /// StorageFilesRetailFixture.md §6.3: "increments of 10 TiB and 100 TiB", skuName literal
+    /// "Hot LRS - 10 TB"). 10 TiB binarios = 10.240 GiB. No existe reserva por debajo de este
+    /// bloque ni por una fracción de él.
+    /// </summary>
+    internal const double ReservationBlockGib = 10240.0;
 
     public IReadOnlyList<CostResult> Calculate(IReadOnlyList<ResourceRow> resources, int analysisId)
     {
@@ -79,7 +95,14 @@ public sealed class StorageFilesCalculator(IPriceRepository prices, IPricingCons
             double payg = 0, ri1 = 0, ri3 = 0;
             var ri1Applies = false;
             var ri3Applies = false;
-            double reservableGib = 0;
+            double reservable1Gib = 0;
+            double reservable3Gib = 0;
+            // Distingue las dos causas de "sin RI" (usado solo si al final ningún término
+            // aplica): true si ALGÚN tier con capacidad alcanzó el bloque mínimo (aunque le haya
+            // faltado la tasa reservada) — en ese caso la causa es "Azure no publica reserva para
+            // estos tiers"; false si NINGÚN tier llegó al bloque — la causa es puramente de
+            // tamaño, "ningún tier alcanza el bloque mínimo".
+            var anyTierReachesBlock = false;
             string? meterId = null;
             string? matchStrategy = null;
             var missingTiers = new List<string>();
@@ -125,35 +148,48 @@ public sealed class StorageFilesCalculator(IPriceRepository prices, IPricingCons
                 meterId ??= p.PaygMeterId;
                 matchStrategy ??= string.IsNullOrEmpty(p.MatchStrategy) ? null : p.MatchStrategy;
 
-                // RI híbrida comparable: cada término suma, tier por tier, la tasa reservada si
-                // existe o la tasa PAYG de ese mismo tier si no (transaction_optimized nunca
-                // tiene reserva en Azure; esto también cubre huecos puntuales de datos en tiers
-                // que sí son reservables). El término solo "aplica" si algún tier aportó una tasa
-                // reservada real — de lo contrario no hay nada que reservar.
-                var tierIsReservable = false;
-                if (p.Ri1yPerGbMonth is not null)
+                // RI híbrida comparable POR BLOQUES: Azure Files Reserved Capacity solo se
+                // compra en bloques ENTEROS de 10 TiB (ReservationBlockGib) por tier — no existe
+                // "reserva parcial" de un bloque (fixture §6.3/§4.1). Un tier con menos de un
+                // bloque no puede comprar nada de reserva, sin importar si Azure publica una
+                // tasa para ese tipo de tier: se cotiza 100% PAYG. Un tier con varios bloques
+                // reserva solo los bloques COMPLETOS; el remanente (&lt; 1 bloque) se cotiza a su
+                // propia tasa PAYG. Esto reemplaza el bug donde se aplicaba la tasa de bloque a
+                // CUALQUIER cantidad de GiB, inflando el ahorro reportado (ver StorageFiles
+                // RetailFixture.md §6.3 y el caso real documentado en el plan de este fix).
+                //
+                // TODO(bloques de 100 TiB): con gib >= 102.400 (100 TiB) el bloque de 100 TiB
+                // tiene mejor tasa/GiB que el de 10 TiB (fixture §4.1: ~22% de descuento vs
+                // ~18% a 1 año); SqlPriceRepository.StorageFiles.SelectFilesReservationPerGbMonth
+                // siempre prefiere el bloque de 10 TiB (ordena por bloque ascendente). No se
+                // corrige aquí — cuentas de 100+ TiB seguirán usando la tasa (más cara) del
+                // bloque de 10 TiB, lo que SUBESTIMA el ahorro posible pero nunca lo sobreestima.
+                var blocks = Math.Floor(gib / ReservationBlockGib);
+                var reservedBlockGib = blocks * ReservationBlockGib;
+                var paygRemainderGib = gib - reservedBlockGib;
+                if (blocks >= 1)
                 {
-                    ri1 += gib * p.Ri1yPerGbMonth.Value;
+                    anyTierReachesBlock = true;
+                }
+
+                var tier1Reservable = blocks >= 1 && p.Ri1yPerGbMonth is > 0;
+                ri1 += tier1Reservable
+                    ? reservedBlockGib * p.Ri1yPerGbMonth!.Value + paygRemainderGib * p.PricePerGbMonth.Value
+                    : gib * p.PricePerGbMonth.Value;
+                if (tier1Reservable)
+                {
                     ri1Applies = true;
-                    tierIsReservable = true;
+                    reservable1Gib += reservedBlockGib;
                 }
-                else
+
+                var tier3Reservable = blocks >= 1 && p.Ri3yPerGbMonth is > 0;
+                ri3 += tier3Reservable
+                    ? reservedBlockGib * p.Ri3yPerGbMonth!.Value + paygRemainderGib * p.PricePerGbMonth.Value
+                    : gib * p.PricePerGbMonth.Value;
+                if (tier3Reservable)
                 {
-                    ri1 += gib * p.PricePerGbMonth.Value;
-                }
-                if (p.Ri3yPerGbMonth is not null)
-                {
-                    ri3 += gib * p.Ri3yPerGbMonth.Value;
                     ri3Applies = true;
-                    tierIsReservable = true;
-                }
-                else
-                {
-                    ri3 += gib * p.PricePerGbMonth.Value;
-                }
-                if (tierIsReservable)
-                {
-                    reservableGib += gib;
+                    reservable3Gib += reservedBlockGib;
                 }
             }
 
@@ -190,9 +226,15 @@ public sealed class StorageFilesCalculator(IPriceRepository prices, IPricingCons
             result.RiApplies = result.Ri1yMonthly is not null || result.Ri3yMonthly is not null;
             if (!result.RiApplies)
             {
-                result.RiNotApplicableReason =
-                    "Ningún tier de este storage account tiene capacidad reservada en Azure "
-                    + "(transaction optimized no la soporta)";
+                // Dos causas distintas de "sin RI" (ver anyTierReachesBlock arriba): tamaño
+                // (ningún tier junta un bloque de 10 TiB) vs disponibilidad (algún tier sí junta
+                // un bloque, pero Azure no publica tasa reservada para ese tipo de tier, ej.
+                // transaction_optimized). No se fusionan en una sola frase vaga.
+                result.RiNotApplicableReason = anyTierReachesBlock
+                    ? "Ningún tier de este storage account tiene capacidad reservada en Azure "
+                      + "(transaction optimized no la soporta)"
+                    : "Ningún tier de este storage account alcanza el bloque mínimo de 10 TiB que "
+                      + "exige la reserva de Azure Files (sin un bloque completo no hay nada que comprar)";
             }
             result.ComputeSavings();
             result.DiscardNonSavingRi();
@@ -204,13 +246,28 @@ public sealed class StorageFilesCalculator(IPriceRepository prices, IPricingCons
                 + "Incluye el uso diferencial de snapshots (respaldos/versiones). "
                 + "No incluye transacciones ni metadata. "
                 + "La reserva se adquiere en bloques de 10/100 TiB (se usa como referencia la tasa del bloque de 10 TiB).";
-            if (reservableGib > 0)
+            if (ri1Applies || ri3Applies)
             {
-                var reservableNote = reservableGib.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+                // reservable1Gib/reservable3Gib son la capacidad YA ALINEADA A BLOQUES que cada
+                // término puede cubrir (nunca la capacidad total del tier): si un tier publica
+                // tasa a 1 año pero no a 3 (o viceversa), los dos términos pueden diferir y se
+                // muestran por separado; si coinciden, se muestra un solo número.
+                string reservableDesc;
+                if (ri1Applies && ri3Applies && reservable1Gib == reservable3Gib)
+                {
+                    reservableDesc = $"{FormatGib(reservable1Gib)} GiB";
+                }
+                else
+                {
+                    var parts = new List<string>();
+                    if (ri1Applies) { parts.Add($"{FormatGib(reservable1Gib)} GiB (1 año)"); }
+                    if (ri3Applies) { parts.Add($"{FormatGib(reservable3Gib)} GiB (3 años)"); }
+                    reservableDesc = string.Join(" / ", parts);
+                }
                 note +=
-                    $" Reserva aplicable a {reservableNote} GiB de {billableNote} GiB "
-                    + "(los tiers sin reserva se cotizan PAYG; transaction optimized no tiene "
-                    + "capacidad reservada en Azure).";
+                    $" Reserva SOLO puede cubrir hasta {reservableDesc} de {billableNote} GiB facturables "
+                    + "(bloques completos de 10 TiB ya comprables; el resto de cada tier y los "
+                    + "tiers sin bloque completo o sin capacidad reservada en Azure se cotizan PAYG).";
             }
             note += $" match={matchStrategy ?? "deterministic"}";
             result.CalculationNotes = string.IsNullOrEmpty(result.CalculationNotes)
@@ -245,6 +302,10 @@ public sealed class StorageFilesCalculator(IPriceRepository prices, IPricingCons
             _ => null,
         };
     }
+
+    /// <summary>Formato uniforme de GiB en las notas (sin decimales de más).</summary>
+    private static string FormatGib(double gib)
+        => gib.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
 
     /// <summary>tier_breakdown_json ({"hot":8000.0,...}) → dict tier→GiB. Vacío si inválido.</summary>
     internal static IReadOnlyDictionary<string, double> ParseTierBreakdown(string? json)

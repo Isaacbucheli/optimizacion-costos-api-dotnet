@@ -77,6 +77,24 @@ public sealed class SnapshotCalculatorTests
     }
 
     [Fact]
+    public void PrecioEnCero_TratadoComoFaltante_NuncaCalculatedConCero()
+    {
+        // Defensa en profundidad (mismo criterio que StorageFilesCalculator/PrecioEnCero...):
+        // GetSnapshotPricePerGb comparte QueryCached("Storage", region) con productos reales
+        // que traen TODOS sus meters en $0.00 (ej. "Azure Files Provisioned v2"); si el
+        // repositorio alguna vez entrega 0.0 (en vez de null), antes esto pasaba la única
+        // guarda "perGb is null" y emitía payg_monthly = $0 con estado "calculated".
+        var prices = new FakePriceRepository { GetSnapshotPricePerGbFn = (_, _) => 0.0 };
+        var resources = Res.Rows(Res.Row(
+            ("resource_id", 1), ("snapshot_sku", "Standard_LRS"),
+            ("disk_size_gb", 128), ("incremental", false), ("location", "eastus")));
+
+        var r = Assert.Single(NewCalc(prices).Calculate(resources, 99));
+        Assert.Equal("price_not_found", r.CalculationStatus);
+        Assert.Null(r.PaygMonthly);
+    }
+
+    [Fact]
     public void SinTamano_PriceNotFound()
     {
         var prices = new FakePriceRepository { GetSnapshotPricePerGbFn = (_, _) => 0.05 };

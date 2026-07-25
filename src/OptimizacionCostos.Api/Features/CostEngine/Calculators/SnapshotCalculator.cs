@@ -63,8 +63,13 @@ public sealed class SnapshotCalculator(IPriceRepository prices, IPricingConstant
                 priceCache[key] = perGb;
             }
 
-            if (perGb is null)
+            if (perGb is null or <= 0)
             {
+                // Nunca aceptar un precio $0 silencioso: null Y <= 0 son "no encontrado". Los
+                // snapshots vienen del MISMO QueryCached("Storage", region) que trae, en la misma
+                // consulta de región, productos reales con TODOS sus meters en $0.00 (ej. "Azure
+                // Files Provisioned v2" — ver StorageFilesRetailFixture.md §1.6); sin esta guarda
+                // un $0.00 pasaría como precio válido y emitiría payg_monthly = $0 "calculated".
                 result.CalculationStatus = "price_not_found";
                 result.CalculationNotes = $"No price for snapshot sku={sku} region={region}";
                 results.Add(result);
