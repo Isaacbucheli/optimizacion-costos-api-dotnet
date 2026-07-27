@@ -6,14 +6,16 @@ namespace OptimizacionCostos.Api.Features.Cdc.AccessReview;
 public interface IAccessReviewExcelExporter
 {
     ExcelV3Result Generate(string clientName, AccessReviewSnapshot snapshot,
-        IReadOnlyList<AccessAccountRow> accounts, AccessReviewKpis kpis, int inactivityDays);
+        IReadOnlyList<AccessAccountRow> accounts, AccessReviewKpis kpis,
+        IReadOnlyList<AccessFinding> findings, int inactivityDays);
 }
 
-/// <summary>XLSX de revisión de accesos: Resumen + 5 datasets. Puro (sin BD).</summary>
+/// <summary>XLSX de revisión de accesos: Resumen + Hallazgos + 5 datasets. Puro (sin BD).</summary>
 public sealed class AccessReviewExcelExporter : IAccessReviewExcelExporter
 {
     public ExcelV3Result Generate(string clientName, AccessReviewSnapshot snapshot,
-        IReadOnlyList<AccessAccountRow> accounts, AccessReviewKpis kpis, int inactivityDays)
+        IReadOnlyList<AccessAccountRow> accounts, AccessReviewKpis kpis,
+        IReadOnlyList<AccessFinding> findings, int inactivityDays)
     {
         using var wb = new XLWorkbook();
 
@@ -94,6 +96,20 @@ public sealed class AccessReviewExcelExporter : IAccessReviewExcelExporter
         // Cadena vacía cuando el eje no se midió: el Excel no debe afirmar "Interna" sin dato.
         static string Externa(bool? e) => e switch { true => "Externa", false => "Interna", null => "" };
         static string SiNo(bool? v) => v switch { true => "Sí", false => "No", null => "" };
+
+        static string Sev(string s) => s switch
+        {
+            AccessFindingSeverity.Critica => "Crítica", AccessFindingSeverity.Alta => "Alta",
+            AccessFindingSeverity.Media => "Media", _ => "Informativa",
+        };
+
+        // Los hallazgos van primero entre los datasets: es la cola de trabajo, no un anexo.
+        Sheet(wb, "Hallazgos",
+            ["Severidad", "Hallazgo", "Detalle", "Recomendación", "Cuentas", "Asignaciones", "Evaluado"],
+            findings,
+            f => [Sev(f.Severity), f.Title, f.Detail, f.Recommendation,
+                  f.Evaluable ? f.AffectedAccounts : "", f.Evaluable ? f.AffectedAssignments : "",
+                  f.Evaluable ? "Sí" : "No"]);
 
         Sheet(wb, "Cuentas",
             ["Cuenta", "Tipo", "Interna / Externa", "Total asignaciones", "Owner", "Otorga accesos",

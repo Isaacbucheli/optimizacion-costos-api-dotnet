@@ -57,9 +57,11 @@ public sealed class AccessReviewController(
 
         var snapshot = await store.GetSnapshotAsync(run.RunId, ct);
         if (snapshot is null) return Ok(new { status = "none" });
+        var now = DateTimeOffset.UtcNow;
         var accounts = AccessReviewAccountBuilder.Build(snapshot);
-        var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, inactivityDays, DateTimeOffset.UtcNow);
-        return Ok(ToResponse(snapshot, accounts, kpis, inactivityDays));
+        var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, inactivityDays, now);
+        var findings = AccessReviewFindingsBuilder.Build(snapshot, accounts, kpis, inactivityDays, now);
+        return Ok(ToResponse(snapshot, accounts, kpis, findings, inactivityDays));
     }
 
     [HttpGet("clients/{clientId:int}/access-review/runs")]
@@ -101,9 +103,11 @@ public sealed class AccessReviewController(
         if (snapshot is null) return NotFound(new { detail = "Corrida no encontrada." });
 
         var clientName = await ClientNameAsync(clientId, ct) ?? $"cliente-{clientId}";
+        var now = DateTimeOffset.UtcNow;
         var accounts = AccessReviewAccountBuilder.Build(snapshot);
-        var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, inactivityDays, DateTimeOffset.UtcNow);
-        var result = excel.Generate(clientName, snapshot, accounts, kpis, inactivityDays);
+        var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, inactivityDays, now);
+        var findings = AccessReviewFindingsBuilder.Build(snapshot, accounts, kpis, inactivityDays, now);
+        var result = excel.Generate(clientName, snapshot, accounts, kpis, findings, inactivityDays);
         return File(result.Bytes, XlsxContentType, result.FileName);
     }
 
@@ -117,7 +121,7 @@ public sealed class AccessReviewController(
     }
 
     private static object ToResponse(AccessReviewSnapshot s, IReadOnlyList<AccessAccountRow> accounts,
-        AccessReviewKpis k, int inactivityDays)
+        AccessReviewKpis k, IReadOnlyList<AccessFinding> findings, int inactivityDays)
     {
         var graphComplete = AccessReviewAccountBuilder.GraphComplete(s);
         return new
@@ -150,6 +154,19 @@ public sealed class AccessReviewController(
             owners_externos = k.OwnersExternos,
             roles_personalizados = k.RolesPersonalizados,
         },
+        findings = findings.Select(f => new
+        {
+            key = f.Key,
+            severity = f.Severity,
+            title = f.Title,
+            detail = f.Detail,
+            recommendation = f.Recommendation,
+            evaluable = f.Evaluable,
+            not_evaluable_reason = f.NotEvaluableReason,
+            affected_accounts = f.AffectedAccounts,
+            affected_assignments = f.AffectedAssignments,
+            affected_principals = f.AffectedPrincipals,
+        }),
         accounts = accounts.Select(a => new
         {
             principal_object_id = a.PrincipalObjectId,

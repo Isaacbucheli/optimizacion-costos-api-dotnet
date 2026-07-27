@@ -20,19 +20,21 @@ public class AccessReviewExcelExporterTests
     {
         var accounts = AccessReviewAccountBuilder.Build(snapshot);
         var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, 90, Now);
-        var result = new AccessReviewExcelExporter().Generate("Cliente Demo", snapshot, accounts, kpis, 90);
+        var findings = AccessReviewFindingsBuilder.Build(snapshot, accounts, kpis, 90, Now);
+        var result = new AccessReviewExcelExporter().Generate("Cliente Demo", snapshot, accounts, kpis, findings, 90);
         fileName = result.FileName;
         return new XLWorkbook(new MemoryStream(result.Bytes));
     }
 
     [Fact]
-    public void Genera_seis_hojas_con_datos()
+    public void Genera_siete_hojas_con_datos()
     {
         using var wb = Generate(Snapshot(), out var fileName);
 
         Assert.EndsWith(".xlsx", fileName);
-        Assert.Equal(6, wb.Worksheets.Count);
+        Assert.Equal(7, wb.Worksheets.Count);
         Assert.True(wb.Worksheets.Contains("Resumen"));
+        Assert.True(wb.Worksheets.Contains("Hallazgos"));
         Assert.True(wb.Worksheets.Contains("Cuentas"));
         Assert.True(wb.Worksheets.Contains("Asignaciones RBAC"));
         Assert.True(wb.Worksheets.Contains("Global Administrators"));
@@ -84,6 +86,34 @@ public class AccessReviewExcelExporterTests
         Assert.True(ultimoKpi < etiqueta,
             $"El último KPI (fila {ultimoKpi}) se pisa con el bloque de credenciales (fila {etiqueta}).");
         Assert.Equal("cred", ws.Cell(etiqueta + 1, 1).GetString());
+    }
+
+    [Fact]
+    public void Hoja_de_hallazgos_lista_severidad_y_recomendacion()
+    {
+        using var wb = Generate(Snapshot(), out _);
+
+        var ws = wb.Worksheet("Hallazgos");
+        Assert.Equal("Severidad", ws.Cell(1, 1).GetString());
+        Assert.Equal("Recomendación", ws.Cell(1, 4).GetString());
+        // 15 reglas + encabezado: los limpios también se listan (saber que se evaluó es información).
+        Assert.Equal(16, ws.LastRowUsed()!.RowNumber());
+        // Owner a nivel suscripción no dispara el hallazgo de raíz, pero la fila existe igual.
+        Assert.Contains("Crítica", ws.Column(1).CellsUsed().Select(c => c.GetString()));
+    }
+
+    [Fact]
+    public void Un_hallazgo_no_evaluable_no_muestra_conteos()
+    {
+        // Sin Graph, las reglas de directorio salen sin cifras en vez de con cero.
+        var sinGraph = Snapshot() with { Credentials = [new(1, "cred", "ok", "sin_consent", null)] };
+
+        using var wb = Generate(sinGraph, out _);
+
+        var ws = wb.Worksheet("Hallazgos");
+        var noEvaluados = ws.RowsUsed().Skip(1).Where(r => r.Cell(7).GetString() == "No").ToList();
+        Assert.NotEmpty(noEvaluados);
+        Assert.All(noEvaluados, r => Assert.Equal("", r.Cell(5).GetString()));
     }
 
     [Fact]
