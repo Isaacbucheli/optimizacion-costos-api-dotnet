@@ -67,6 +67,17 @@ public class AccessReviewSyncService(
 
         foreach (var unit in units)
         {
+            // Cronometraje por fase: una corrida de un tenant grande tarda decenas de minutos y sin
+            // esto no hay forma de saber dónde se va el tiempo (se optimiza por corazonada).
+            var phase = System.Diagnostics.Stopwatch.StartNew();
+            void Fase(string nombre, int? items = null)
+            {
+                logger.LogInformation("Fase {Fase} de la credencial {Cred}: {Seconds:0.0}s{Items}",
+                    nombre, unit.CredentialId, phase.Elapsed.TotalSeconds,
+                    items is null ? "" : $" ({items} elementos)");
+                phase.Restart();
+            }
+
             // ── Fase ARM ──────────────────────────────────────────────
             var armRows = new List<(ArmRoleAssignment A, string SubId, string? SubName, string? SubState)>();
             string armStatus = "ok"; string? armDetail = null;
@@ -85,6 +96,8 @@ public class AccessReviewSyncService(
                     logger.LogWarning(ex, "ARM fallo cred {Cred} sub {Sub}", unit.CredentialId, subId);
                 }
             }
+
+            Fase("ARM (role assignments)", armRows.Count);
 
             // ── Fase Graph ────────────────────────────────────────────
             string graphStatus; string? graphDetail = null;
@@ -110,8 +123,10 @@ public class AccessReviewSyncService(
                         graphDetail = "El tenant no expone signInActivity (requiere Entra ID P1/P2).";
                         anyProblem = true;
                     }
+                    Fase("Graph: barrido de usuarios", sweep.ById.Count);
 
                     gas = await graph.GetGlobalAdminsAsync(unit.CredentialId, ct);
+                    Fase("Graph: Global Admins", gas.Count);
 
                     // Solo se piden al directorio los tipos que viven en el tenant del cliente:
                     // un ForeignGroup (otro tenant), un Device o un principal sin tipo nunca van a
@@ -122,9 +137,11 @@ public class AccessReviewSyncService(
                         .Where(id => !sweep.ById.ContainsKey(id))
                         .Distinct().ToList();
                     dirObjects = await graph.GetByIdsAsync(unit.CredentialId, unresolved, ct);
+                    Fase("Graph: resolución de principals", unresolved.Count);
 
                     foreach (var gid in armRows.Where(x => x.A.PrincipalType == "Group").Select(x => x.A.PrincipalId).Distinct())
                         groupMembers[gid] = await graph.GetGroupTransitiveMembersAsync(unit.CredentialId, gid, ct);
+                    Fase("Graph: expansión de grupos", groupMembers.Count);
                 }
                 catch (Exception ex)
                 {
@@ -279,6 +296,8 @@ public class AccessReviewSyncService(
                 }
             }
 
+            Fase("Composición de filas", assignments.Count);
+
             credStatuses.Add(new AccessCredStatus(unit.CredentialId, unit.CredentialName, armStatus, graphStatus,
                 Join(armDetail, graphDetail)));
         }
@@ -288,7 +307,12 @@ public class AccessReviewSyncService(
         guests = guests.GroupBy(g => g.ObjectId).Select(g => g.First()).ToList();
         globalAdmins = globalAdmins.GroupBy(g => g.ObjectId).Select(g => g.First()).ToList();
 
+        var saveWatch = System.Diagnostics.Stopwatch.StartNew();
         await store.SaveResultsAsync(runId, assignments, guests, globalAdmins, credStatuses, ct);
+        logger.LogInformation(
+            "Persistencia de la corrida {Run}: {Seconds:0.0}s ({Assignments} asignaciones, {Guests} guests, {Gas} global admins)",
+            runId, saveWatch.Elapsed.TotalSeconds, assignments.Count, guests.Count, globalAdmins.Count);
+
         await store.MarkFinishedAsync(runId, anyProblem ? "partial" : "ok", null, ct);
     }
 

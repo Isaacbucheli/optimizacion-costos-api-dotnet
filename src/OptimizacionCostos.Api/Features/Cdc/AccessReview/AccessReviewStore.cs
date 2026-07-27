@@ -1,3 +1,4 @@
+using System.Data;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Data;
 
@@ -111,6 +112,38 @@ public sealed class SqlAccessReviewStore(ISqlConnectionFactory factory) : IAcces
 
     private static object Db(object? v) => v ?? DBNull.Value;
 
+    /// <summary>
+    /// Inserta filas con SqlBulkCopy dentro de la transacción en curso. El mapeo es explícito por
+    /// nombre de columna: la tabla tiene una columna IDENTITY que no se escribe, así que depender del
+    /// orden ordinal desplazaría todos los valores una posición.
+    /// </summary>
+    private static async Task BulkInsertAsync<T>(
+        SqlConnection conn, SqlTransaction tx, string table, IReadOnlyList<T> rows,
+        (string Column, Type Type, Func<T, object> Value)[] columns, CancellationToken ct)
+    {
+        if (rows.Count == 0) return;
+
+        using var data = new DataTable();
+        foreach (var (column, type, _) in columns)
+            data.Columns.Add(column, type).AllowDBNull = true;
+
+        foreach (var row in rows)
+        {
+            var values = new object[columns.Length];
+            for (var i = 0; i < columns.Length; i++) values[i] = columns[i].Value(row);
+            data.Rows.Add(values);
+        }
+
+        using var bulk = new SqlBulkCopy(conn, SqlBulkCopyOptions.Default, tx)
+        {
+            DestinationTableName = table,
+            BatchSize = 2000,
+            BulkCopyTimeout = 300,
+        };
+        foreach (var (column, _, _) in columns) bulk.ColumnMappings.Add(column, column);
+        await bulk.WriteToServerAsync(data, ct);
+    }
+
     public async Task<int> CreateRunAsync(int clientId, string? requestedBy, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
@@ -179,44 +212,48 @@ public sealed class SqlAccessReviewStore(ISqlConnectionFactory factory) : IAcces
         await EnsureSchemaAsync(conn, ct);
         await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct);
 
-        foreach (var a in assignments)
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandText = """
-                INSERT INTO dbo.cdc_access_assignment (run_id, subscription_id, subscription_name, subscription_state,
-                    scope, scope_level, role_name, role_definition_id, principal_object_id, principal_type,
-                    display_name, login, user_type, via_group_id, via_group_name, account_enabled, last_sign_in, mfa_status,
-                    role_class, is_custom_role)
-                VALUES (@run, @sid, @sname, @sstate, @scope, @slevel, @role, @roledef, @pid, @ptype,
-                    @dname, @login, @utype, @vgid, @vgname, @enabled, @lsi, @mfa, @rclass, @rcustom)
-                """;
-            cmd.Parameters.AddRange([
-                new("@run", runId), new("@sid", a.SubscriptionId), new("@sname", Db(a.SubscriptionName)),
-                new("@sstate", Db(a.SubscriptionState)), new("@scope", a.Scope), new("@slevel", a.ScopeLevel),
-                new("@role", a.RoleName), new("@roledef", a.RoleDefinitionId), new("@pid", a.PrincipalObjectId),
-                new("@ptype", a.PrincipalType), new("@dname", Db(a.DisplayName)), new("@login", Db(a.Login)),
-                new("@utype", Db(a.UserType)), new("@vgid", Db(a.ViaGroupId)), new("@vgname", Db(a.ViaGroupName)),
-                new("@enabled", Db(a.AccountEnabled)), new("@lsi", Db(a.LastSignIn?.UtcDateTime)), new("@mfa", Db(a.MfaStatus)),
-                new("@rclass", Db(a.RoleClass)), new("@rcustom", a.IsCustomRole)]);
-            await cmd.ExecuteNonQueryAsync(ct);
-        }
-        foreach (var g in guests)
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.Transaction = tx;
-            cmd.CommandText = """
-                INSERT INTO dbo.cdc_access_guest (run_id, object_id, display_name, email, external_domain,
-                    account_enabled, external_state, created_at_azure, last_sign_in, roles_in_subs, mfa_status)
-                VALUES (@run, @oid, @dname, @mail, @dom, @enabled, @state, @created, @lsi, @roles, @mfa)
-                """;
-            cmd.Parameters.AddRange([
-                new("@run", runId), new("@oid", g.ObjectId), new("@dname", Db(g.DisplayName)),
-                new("@mail", Db(g.Email)), new("@dom", Db(g.ExternalDomain)), new("@enabled", g.AccountEnabled),
-                new("@state", Db(g.ExternalState)), new("@created", Db(g.CreatedAtAzure?.UtcDateTime)),
-                new("@lsi", Db(g.LastSignIn?.UtcDateTime)), new("@roles", Db(g.RolesInSubs)), new("@mfa", Db(g.MfaStatus))]);
-            await cmd.ExecuteNonQueryAsync(ct);
-        }
+        // Asignaciones y guests van por SqlBulkCopy: son los dos conjuntos grandes (en un tenant real,
+        // 6013 y 3943 filas). Insertarlas de a un comando costaba ~106 ms por fila contra Azure SQL,
+        // o sea 1060 s = el 72% de una corrida de 24 minutos. Las otras dos tablas son de decenas de
+        // filas y no justifican el andamiaje.
+        await BulkInsertAsync(conn, tx, "dbo.cdc_access_assignment", assignments,
+            [
+                ("run_id", typeof(int), _ => runId),
+                ("subscription_id", typeof(string), a => a.SubscriptionId),
+                ("subscription_name", typeof(string), a => Db(a.SubscriptionName)),
+                ("subscription_state", typeof(string), a => Db(a.SubscriptionState)),
+                ("scope", typeof(string), a => a.Scope),
+                ("scope_level", typeof(string), a => a.ScopeLevel),
+                ("role_name", typeof(string), a => a.RoleName),
+                ("role_definition_id", typeof(string), a => a.RoleDefinitionId),
+                ("principal_object_id", typeof(string), a => a.PrincipalObjectId),
+                ("principal_type", typeof(string), a => a.PrincipalType),
+                ("display_name", typeof(string), a => Db(a.DisplayName)),
+                ("login", typeof(string), a => Db(a.Login)),
+                ("user_type", typeof(string), a => Db(a.UserType)),
+                ("via_group_id", typeof(string), a => Db(a.ViaGroupId)),
+                ("via_group_name", typeof(string), a => Db(a.ViaGroupName)),
+                ("account_enabled", typeof(bool), a => Db(a.AccountEnabled)),
+                ("last_sign_in", typeof(DateTime), a => Db(a.LastSignIn?.UtcDateTime)),
+                ("mfa_status", typeof(string), a => Db(a.MfaStatus)),
+                ("role_class", typeof(string), a => Db(a.RoleClass)),
+                ("is_custom_role", typeof(bool), a => a.IsCustomRole),
+            ], ct);
+
+        await BulkInsertAsync(conn, tx, "dbo.cdc_access_guest", guests,
+            [
+                ("run_id", typeof(int), _ => runId),
+                ("object_id", typeof(string), g => g.ObjectId),
+                ("display_name", typeof(string), g => Db(g.DisplayName)),
+                ("email", typeof(string), g => Db(g.Email)),
+                ("external_domain", typeof(string), g => Db(g.ExternalDomain)),
+                ("account_enabled", typeof(bool), g => g.AccountEnabled),
+                ("external_state", typeof(string), g => Db(g.ExternalState)),
+                ("created_at_azure", typeof(DateTime), g => Db(g.CreatedAtAzure?.UtcDateTime)),
+                ("last_sign_in", typeof(DateTime), g => Db(g.LastSignIn?.UtcDateTime)),
+                ("roles_in_subs", typeof(string), g => Db(g.RolesInSubs)),
+                ("mfa_status", typeof(string), g => Db(g.MfaStatus)),
+            ], ct);
         foreach (var ga in globalAdmins)
         {
             await using var cmd = conn.CreateCommand();
