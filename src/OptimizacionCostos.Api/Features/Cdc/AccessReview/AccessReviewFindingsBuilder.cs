@@ -281,6 +281,21 @@ public static class AccessReviewFindingsBuilder
             .Where(x => AccessReviewEnvironment.IsKnown(x.Env))
             .ToList();
 
+        // Cobertura de la inferencia: sin esto el hallazgo afirma sobre una parte del tenant y suena
+        // como si fuera sobre todo. En el E2E, un cliente tenia 1156 de 1451 asignaciones en una
+        // suscripcion sin clasificar: reportar "14 cuentas cruzan ambientes" y callar que el 80% del
+        // tenant no se evaluo es una media verdad.
+        var subsTotales = assignments.Select(a => a.SubscriptionName ?? a.SubscriptionId).Distinct().Count();
+        var subsClasificadas = assignments
+            .Select(a => a.SubscriptionName ?? a.SubscriptionId).Distinct()
+            .Count(n => AccessReviewEnvironment.IsKnown(AccessReviewEnvironment.Classify(n)));
+        var asignacionesCubiertas = assignments
+            .Count(a => AccessReviewEnvironment.IsKnown(AccessReviewEnvironment.Classify(a.SubscriptionName)));
+        var pctCobertura = assignments.Count == 0 ? 0
+            : (int)Math.Round(asignacionesCubiertas * 100d / assignments.Count);
+        var cobertura = $"Se pudo inferir el ambiente de {subsClasificadas} de {subsTotales} suscripciones "
+            + $"({pctCobertura}% de las asignaciones); el resto no se evaluo.";
+
         var ambientes = relevantes.Select(x => x.Env).Distinct().ToList();
         if (ambientes.Count < 2)
             return NotEvaluable(key, AccessFindingSeverity.Alta, title, recommendation,
@@ -293,11 +308,11 @@ public static class AccessReviewFindingsBuilder
             .ToList();
 
         var principals = cruzados.Select(g => g.Key.PrincipalObjectId).Distinct().Order().ToList();
-        var detail = principals.Count == 0
-            ? "No se detectaron cuentas con el mismo rol elevado en produccion y en no produccion."
+        var detail = (principals.Count == 0
+            ? "No se detectaron cuentas con el mismo rol elevado en produccion y en no produccion. "
             : $"{principals.Count} cuentas tienen el mismo rol elevado en suscripciones de produccion y de no produccion "
-              + $"({cruzados.Count} combinaciones de cuenta y rol). Quien administra desarrollo tiene el mismo poder en produccion. "
-              + "El ambiente se infiere del nombre de la suscripcion.";
+              + $"({cruzados.Count} combinaciones de cuenta y rol). Quien administra desarrollo tiene el mismo poder en produccion. ")
+            + cobertura;
 
         return new AccessFinding(key, AccessFindingSeverity.Alta, title, detail, recommendation,
             true, null, principals.Count, cruzados.Count, principals);
