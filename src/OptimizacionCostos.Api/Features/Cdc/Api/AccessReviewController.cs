@@ -57,8 +57,9 @@ public sealed class AccessReviewController(
 
         var snapshot = await store.GetSnapshotAsync(run.RunId, ct);
         if (snapshot is null) return Ok(new { status = "none" });
-        var kpis = AccessReviewKpiCalculator.Compute(snapshot, inactivityDays, DateTimeOffset.UtcNow);
-        return Ok(ToResponse(snapshot, kpis, inactivityDays));
+        var accounts = AccessReviewAccountBuilder.Build(snapshot);
+        var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, inactivityDays, DateTimeOffset.UtcNow);
+        return Ok(ToResponse(snapshot, accounts, kpis, inactivityDays));
     }
 
     [HttpGet("clients/{clientId:int}/access-review/runs")]
@@ -100,8 +101,9 @@ public sealed class AccessReviewController(
         if (snapshot is null) return NotFound(new { detail = "Corrida no encontrada." });
 
         var clientName = await ClientNameAsync(clientId, ct) ?? $"cliente-{clientId}";
-        var kpis = AccessReviewKpiCalculator.Compute(snapshot, inactivityDays, DateTimeOffset.UtcNow);
-        var result = excel.Generate(clientName, snapshot, kpis, inactivityDays);
+        var accounts = AccessReviewAccountBuilder.Build(snapshot);
+        var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, inactivityDays, DateTimeOffset.UtcNow);
+        var result = excel.Generate(clientName, snapshot, accounts, kpis, inactivityDays);
         return File(result.Bytes, XlsxContentType, result.FileName);
     }
 
@@ -114,13 +116,20 @@ public sealed class AccessReviewController(
         return await cmd.ExecuteScalarAsync(ct) as string;
     }
 
-    private static object ToResponse(AccessReviewSnapshot s, AccessReviewKpis k, int inactivityDays) => new
+    private static object ToResponse(AccessReviewSnapshot s, IReadOnlyList<AccessAccountRow> accounts,
+        AccessReviewKpis k, int inactivityDays)
+    {
+        var graphComplete = AccessReviewAccountBuilder.GraphComplete(s);
+        return new
     {
         status = s.Run.Status,
         run_id = s.Run.RunId,
         started_at = s.Run.StartedAt,
         finished_at = s.Run.FinishedAt,
         inactivity_days = inactivityDays,
+        // Lo decide el backend (misma regla que usa el AccountBuilder) para que el front no tenga
+        // que rederivar cuándo un indicador de Entra ID está medido y cuándo no.
+        graph_complete = graphComplete,
         kpis = new
         {
             total_asignaciones = k.TotalAsignaciones,
@@ -133,7 +142,37 @@ public sealed class AccessReviewController(
             guests_inactivos = k.GuestsInactivos,
             guests_inactivos_con_permisos = k.GuestsInactivosConPermisos,
             service_principals = k.ServicePrincipalsUnicos,
+            cuentas_unicas = k.CuentasUnicas,
+            asignaciones_elevadas = k.AsignacionesElevadas,
+            pct_elevadas = k.PctElevadas,
+            owners = k.Owners,
+            cuentas_externas = k.CuentasExternasConRbac,
+            owners_externos = k.OwnersExternos,
+            roles_personalizados = k.RolesPersonalizados,
         },
+        accounts = accounts.Select(a => new
+        {
+            principal_object_id = a.PrincipalObjectId,
+            principal_type = a.PrincipalType,
+            display_name = a.DisplayName,
+            login = a.Login,
+            user_type = a.UserType,
+            is_external = a.IsExternal,
+            total_assignments = a.TotalAssignments,
+            owner = a.Owner,
+            otorga_accesos = a.OtorgaAccesos,
+            escritura_total = a.EscrituraTotal,
+            escritura_servicio = a.EscrituraServicio,
+            lectura = a.Lectura,
+            sin_clasificar = a.SinClasificar,
+            subscriptions = a.Subscriptions,
+            broadest_scope_level = a.BroadestScopeLevel,
+            via = a.Via,
+            account_enabled = a.AccountEnabled,
+            last_sign_in = a.LastSignIn,
+            mfa_status = a.MfaStatus,
+            orphan = a.Orphan,
+        }),
         credentials = s.Credentials.Select(c => new
         {
             credential_id = c.CredentialId,
@@ -149,6 +188,11 @@ public sealed class AccessReviewController(
             scope = a.Scope,
             scope_level = a.ScopeLevel,
             role_name = a.RoleName,
+            role_definition_id = a.RoleDefinitionId,
+            role_class = a.RoleClass,
+            is_custom_role = a.IsCustomRole,
+            is_elevated = AccessReviewRoleClassifier.IsElevated(a.RoleClass),
+            is_external = AccessReviewAccountBuilder.External(a.PrincipalType, a.UserType, a.Login, graphComplete),
             principal_object_id = a.PrincipalObjectId,
             principal_type = a.PrincipalType,
             display_name = a.DisplayName,
@@ -183,7 +227,8 @@ public sealed class AccessReviewController(
             last_sign_in = g.LastSignIn,
             mfa_status = g.MfaStatus,
         }),
-    };
+        };
+    }
 
     private IActionResult Translate(AccessCheck check) => check.Result switch
     {

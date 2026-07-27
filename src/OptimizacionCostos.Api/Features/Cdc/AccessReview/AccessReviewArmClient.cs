@@ -4,9 +4,11 @@ using OptimizacionCostos.Api.Features.AzureIntegration;
 
 namespace OptimizacionCostos.Api.Features.Cdc.AccessReview;
 
+/// <summary>RoleClass es null cuando la definición de rol no está en la suscripción (definida en
+/// otra rama de management group): "sin clasificar", nunca asumir lectura.</summary>
 public sealed record ArmRoleAssignment(
     string Scope, string ScopeLevel, string PrincipalId, string PrincipalType,
-    string RoleDefinitionId, string RoleName);
+    string RoleDefinitionId, string RoleName, string? RoleClass = null, bool IsCustomRole = false);
 
 public interface IAccessReviewArmClient
 {
@@ -29,8 +31,9 @@ public static class AccessReviewScope
     }
 }
 
-public sealed class AccessReviewArmClient(IAzureCredentialFactory credentials, IHttpClientFactory httpFactory)
-    : IAccessReviewArmClient
+public sealed class AccessReviewArmClient(
+    IAzureCredentialFactory credentials, IHttpClientFactory httpFactory,
+    ILogger<AccessReviewArmClient> logger) : IAccessReviewArmClient
 {
     private const string ArmScope = "https://management.azure.com/.default";
     private const string ArmBase = "https://management.azure.com";
@@ -46,7 +49,7 @@ public sealed class AccessReviewArmClient(IAzureCredentialFactory credentials, I
         return (http, token.Token);
     }
 
-    private static async Task<List<JsonElement>> GetPagedAsync(HttpClient http, string token, string url, CancellationToken ct)
+    private async Task<List<JsonElement>> GetPagedAsync(HttpClient http, string token, string url, CancellationToken ct)
     {
         var items = new List<JsonElement>();
         string? next = url;
@@ -63,6 +66,11 @@ public sealed class AccessReviewArmClient(IAzureCredentialFactory credentials, I
             next = doc.RootElement.TryGetProperty("nextLink", out var nl) && nl.ValueKind == JsonValueKind.String
                 ? nl.GetString() : null;
         }
+        // Cortar en el tope y no decirlo se lee como "está todo": el conteo saldría por debajo del
+        // portal sin ninguna señal de por qué.
+        if (next is not null)
+            logger.LogWarning("Paginación ARM truncada en {MaxPages} páginas para {Url}: quedaron resultados sin leer",
+                MaxPages, url);
         return items;
     }
 
@@ -74,15 +82,18 @@ public sealed class AccessReviewArmClient(IAzureCredentialFactory credentials, I
     {
         var (http, token) = await ClientAsync(credentialId, ct);
 
-        // 1) Definiciones de rol → nombre por id (case-insensitive).
+        // 1) Definiciones de rol → nombre y clase de privilegio por id (case-insensitive). La clase
+        //    se deriva de los permisos del propio payload, que ya se está descargando.
         var roleNames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var roleClasses = new Dictionary<string, RoleClassification>(StringComparer.OrdinalIgnoreCase);
         var defs = await GetPagedAsync(http, token,
             $"{ArmBase}/subscriptions/{subscriptionId}/providers/Microsoft.Authorization/roleDefinitions?api-version={AuthApi}", ct);
         foreach (var d in defs)
         {
             var id = S(d, "id");
-            var name = d.TryGetProperty("properties", out var p) ? S(p, "roleName") : null;
-            if (id is not null && name is not null) roleNames[id] = name;
+            if (id is null || !d.TryGetProperty("properties", out var p)) continue;
+            if (S(p, "roleName") is { } name) roleNames[id] = name;
+            roleClasses[id] = AccessReviewRoleClassifier.Classify(p);
         }
 
         // 2) Asignaciones SIN atScope(): todas (heredadas de MG, sub, RG y recurso).
@@ -98,11 +109,15 @@ public sealed class AccessReviewArmClient(IAzureCredentialFactory credentials, I
             var roleDefId = S(p, "roleDefinitionId");
             var scope = S(p, "scope");
             if (principalId is null || roleDefId is null || scope is null) continue;
-            if (principalType is not ("User" or "Group" or "ServicePrincipal")) continue;
+            // Se conserva TODO tipo de principal. Descartar los que no son User/Group/ServicePrincipal
+            // dejaba invisible, entre otros, al ForeignGroup (grupo administrado desde otro tenant) y
+            // hacía que el total no cuadrara con el portal. Sin principalType → "Unknown".
+            var pType = principalType ?? "Unknown";
 
             var roleName = roleNames.TryGetValue(roleDefId, out var rn) ? rn : roleDefId;
+            var cls = roleClasses.GetValueOrDefault(roleDefId);
             rows.Add(new ArmRoleAssignment(scope, AccessReviewScope.Level(scope),
-                principalId, principalType, roleDefId, roleName));
+                principalId, pType, roleDefId, roleName, cls?.RoleClass, cls?.IsCustom ?? false));
         }
         return rows;
     }

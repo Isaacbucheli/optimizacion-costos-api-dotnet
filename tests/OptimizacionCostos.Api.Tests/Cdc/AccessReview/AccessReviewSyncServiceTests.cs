@@ -23,15 +23,18 @@ public sealed class FakeGraph : IAccessReviewGraphClient
     public Dictionary<string, string> Mfa = [];
     public HashSet<int> FailCredentials = [];
     public Exception? GlobalAdminsError;
+    // Registro de llamadas: hay tipos de principal que NO se deben intentar resolver ni expandir.
+    public List<string> GroupExpansions = [];
+    public List<string> RequestedIds = [];
 
     private void Gate(int credentialId) { if (FailCredentials.Contains(credentialId)) throw new HttpRequestException("403 consent", null, HttpStatusCode.Forbidden); }
     public Task<GraphUserSweep> SweepUsersAsync(int c, CancellationToken ct = default) { Gate(c); return Task.FromResult(Sweep); }
     public Task<IReadOnlyList<GraphDirectoryObject>> GetGroupTransitiveMembersAsync(int c, string g, CancellationToken ct = default)
-        { Gate(c); return Task.FromResult<IReadOnlyList<GraphDirectoryObject>>(GroupMembers.GetValueOrDefault(g, [])); }
+        { Gate(c); GroupExpansions.Add(g); return Task.FromResult<IReadOnlyList<GraphDirectoryObject>>(GroupMembers.GetValueOrDefault(g, [])); }
     public Task<IReadOnlyList<GraphDirectoryObject>> GetGlobalAdminsAsync(int c, CancellationToken ct = default)
         { Gate(c); if (GlobalAdminsError is not null) throw GlobalAdminsError; return Task.FromResult<IReadOnlyList<GraphDirectoryObject>>(GlobalAdmins); }
     public Task<IReadOnlyDictionary<string, GraphDirectoryObject>> GetByIdsAsync(int c, IReadOnlyCollection<string> ids, CancellationToken ct = default)
-        { Gate(c); return Task.FromResult<IReadOnlyDictionary<string, GraphDirectoryObject>>(
+        { Gate(c); RequestedIds.AddRange(ids); return Task.FromResult<IReadOnlyDictionary<string, GraphDirectoryObject>>(
             ids.Where(Directory.ContainsKey).ToDictionary(i => i, i => Directory[i])); }
     public Task<string> GetMfaStatusAsync(int c, string u, CancellationToken ct = default)
         { Gate(c); return Task.FromResult(Mfa.GetValueOrDefault(u, "unavailable")); }
@@ -264,5 +267,50 @@ public class AccessReviewSyncServiceTests
         Assert.Equal("guest1", guest.ObjectId);
         var ga = Assert.Single(store.Gas);
         Assert.Equal("admin1", ga.ObjectId);
+    }
+
+    [Fact]
+    public async Task Principals_de_otro_tenant_se_persisten_sin_resolver_ni_expandir()
+    {
+        // ForeignGroup vive en el tenant de otro (típico de MSP): intentar expandirlo o resolverlo
+        // no tiene sentido, y su nombre vacío NO es una asignación huérfana.
+        var arm = new FakeArm { BySub = { ["s1"] = [
+            new("/subscriptions/s1", "subscription", "fg1", "ForeignGroup", "def-1", "Owner", "owner"),
+            new("/subscriptions/s1", "subscription", "d1", "Device", "def-2", "Reader", "lectura"),
+            new("/subscriptions/s1", "subscription", "x1", "Unknown", "def-2", "Reader", "lectura")] } };
+        var graph = new FakeGraph();
+        var store = new FakeStore();
+
+        await new TestableSyncService(arm, graph, store, [Cred1]).RunAsync(1, 7);
+
+        Assert.Equal(3, store.Assignments.Count);
+        Assert.Equal(["ForeignGroup", "Device", "Unknown"], store.Assignments.Select(a => a.PrincipalType));
+        Assert.All(store.Assignments, a => Assert.Null(a.DisplayName));
+        Assert.Empty(graph.GroupExpansions);
+        Assert.DoesNotContain("fg1", graph.RequestedIds);
+        Assert.Equal("owner", store.Assignments[0].RoleClass);
+    }
+
+    [Fact]
+    public async Task Filas_derivadas_heredan_la_clase_de_rol()
+    {
+        var arm = new FakeArm { BySub = { ["s1"] = [
+            new("/subscriptions/s1", "subscription", "g1", "Group", "def-1", "Soporte N3", "owner", true)] } };
+        var graph = new FakeGraph
+        {
+            Sweep = new(new Dictionary<string, GraphUser> { ["u1"] = User("u1") }, true),
+            GroupMembers = { ["g1"] = [new("u1", "#microsoft.graph.user", "User u1", null, "u1@x.com", "Member")] },
+            Directory = { ["g1"] = new("g1", "#microsoft.graph.group", "Grupo Admins", null, null, null) },
+        };
+        var store = new FakeStore();
+
+        await new TestableSyncService(arm, graph, store, [Cred1]).RunAsync(1, 7);
+
+        Assert.Equal(2, store.Assignments.Count);
+        Assert.All(store.Assignments, a => Assert.Equal("owner", a.RoleClass));
+        Assert.All(store.Assignments, a => Assert.True(a.IsCustomRole));
+        var derivada = Assert.Single(store.Assignments.Where(a => a.ViaGroupId is not null));
+        Assert.Equal("u1", derivada.PrincipalObjectId);
+        Assert.Equal("g1", derivada.ViaGroupId);
     }
 }

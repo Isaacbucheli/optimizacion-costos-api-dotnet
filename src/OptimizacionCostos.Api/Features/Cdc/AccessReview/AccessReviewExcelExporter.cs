@@ -5,13 +5,15 @@ namespace OptimizacionCostos.Api.Features.Cdc.AccessReview;
 
 public interface IAccessReviewExcelExporter
 {
-    ExcelV3Result Generate(string clientName, AccessReviewSnapshot snapshot, AccessReviewKpis kpis, int inactivityDays);
+    ExcelV3Result Generate(string clientName, AccessReviewSnapshot snapshot,
+        IReadOnlyList<AccessAccountRow> accounts, AccessReviewKpis kpis, int inactivityDays);
 }
 
-/// <summary>XLSX de revisión de accesos: Resumen + 4 datasets. Puro (sin BD).</summary>
+/// <summary>XLSX de revisión de accesos: Resumen + 5 datasets. Puro (sin BD).</summary>
 public sealed class AccessReviewExcelExporter : IAccessReviewExcelExporter
 {
-    public ExcelV3Result Generate(string clientName, AccessReviewSnapshot snapshot, AccessReviewKpis kpis, int inactivityDays)
+    public ExcelV3Result Generate(string clientName, AccessReviewSnapshot snapshot,
+        IReadOnlyList<AccessAccountRow> accounts, AccessReviewKpis kpis, int inactivityDays)
     {
         using var wb = new XLWorkbook();
 
@@ -20,9 +22,16 @@ public sealed class AccessReviewExcelExporter : IAccessReviewExcelExporter
         ws.Cell(1, 1).Value = $"Revisión de accesos — {clientName}";
         ws.Cell(1, 1).Style.Font.SetBold().Font.FontSize = 14;
         ws.Cell(2, 1).Value = $"Corrida #{snapshot.Run.RunId} · {snapshot.Run.FinishedAt:yyyy-MM-dd HH:mm} UTC · umbral inactividad {inactivityDays} días";
-        var kpiRows = new (string Label, int Value)[]
+        var kpiRows = new (string Label, object Value)[]
         {
             ("Total de asignaciones RBAC", kpis.TotalAsignaciones),
+            ("Cuentas únicas con RBAC", kpis.CuentasUnicas),
+            ("Asignaciones con privilegio elevado", kpis.AsignacionesElevadas),
+            ("% de asignaciones elevadas", kpis.PctElevadas),
+            ("Asignaciones Owner", kpis.Owners),
+            ("Cuentas externas con RBAC", kpis.CuentasExternasConRbac),
+            ("Cuentas externas con Owner", kpis.OwnersExternos),
+            ("Definiciones de rol personalizadas en uso", kpis.RolesPersonalizados),
             ("Global Administrators", kpis.GlobalAdmins),
             ("Global Administrators sin MFA", kpis.GlobalAdminsSinMfa),
             ("Internos sin MFA con RBAC", kpis.InternosSinMfaConRbac),
@@ -33,18 +42,22 @@ public sealed class AccessReviewExcelExporter : IAccessReviewExcelExporter
             ("Guests inactivos con permisos", kpis.GuestsInactivosConPermisos),
             ("Service principals únicos", kpis.ServicePrincipalsUnicos),
         };
+        const int kpiFirstRow = 4;
         for (var i = 0; i < kpiRows.Length; i++)
         {
-            ws.Cell(4 + i, 1).Value = kpiRows[i].Label;
-            ws.Cell(4 + i, 2).Value = kpiRows[i].Value;
+            ws.Cell(kpiFirstRow + i, 1).Value = kpiRows[i].Label;
+            ws.Cell(kpiFirstRow + i, 2).Value = XLCellValue.FromObject(kpiRows[i].Value);
         }
-        ws.Cell(15, 1).Value = "Estado por credencial:";
-        ws.Cell(15, 1).Style.Font.SetBold();
+        // Ancla derivada del número de KPIs: fijarla a mano hacía que al agregar indicadores el
+        // bloque de credenciales se pisara con las últimas filas.
+        var credRow = kpiFirstRow + kpiRows.Length + 1;
+        ws.Cell(credRow, 1).Value = "Estado por credencial:";
+        ws.Cell(credRow, 1).Style.Font.SetBold();
         for (var i = 0; i < snapshot.Credentials.Count; i++)
         {
             var c = snapshot.Credentials[i];
-            ws.Cell(16 + i, 1).Value = c.CredentialName ?? $"credencial {c.CredentialId}";
-            ws.Cell(16 + i, 2).Value = $"ARM: {c.ArmStatus} · Graph: {c.GraphStatus}" + (c.Detail is null ? "" : $" · {c.Detail}");
+            ws.Cell(credRow + 1 + i, 1).Value = c.CredentialName ?? $"credencial {c.CredentialId}";
+            ws.Cell(credRow + 1 + i, 2).Value = $"ARM: {c.ArmStatus} · Graph: {c.GraphStatus}" + (c.Detail is null ? "" : $" · {c.Detail}");
         }
         ws.Columns().AdjustToContents(1, 60);
 
@@ -72,14 +85,34 @@ public sealed class AccessReviewExcelExporter : IAccessReviewExcelExporter
             "unavailable" => "No disponible", _ => "",
         };
         static string Fecha(DateTimeOffset? d) => d?.ToString("yyyy-MM-dd HH:mm") ?? "";
+        static string Clase(string? c) => c switch
+        {
+            "owner" => "Owner (otorga accesos)", "otorga_accesos" => "Otorga accesos",
+            "escritura_total" => "Escritura total", "escritura_servicio" => "Escritura de servicio",
+            "lectura" => "Lectura", _ => "Sin clasificar",
+        };
+        // Cadena vacía cuando el eje no se midió: el Excel no debe afirmar "Interna" sin dato.
+        static string Externa(bool? e) => e switch { true => "Externa", false => "Interna", null => "" };
+        static string SiNo(bool? v) => v switch { true => "Sí", false => "No", null => "" };
+
+        Sheet(wb, "Cuentas",
+            ["Cuenta", "Tipo", "Interna / Externa", "Total asignaciones", "Owner", "Otorga accesos",
+             "Escritura total", "Escritura de servicio", "Lectura", "Sin clasificar", "Suscripciones",
+             "Scope más amplio", "Vía", "Cuenta activa", "Último login", "MFA", "Eliminada de Entra ID"],
+            accounts,
+            a => [a.DisplayName ?? a.Login ?? a.PrincipalObjectId, a.PrincipalType, Externa(a.IsExternal),
+                  a.TotalAssignments, a.Owner, a.OtorgaAccesos, a.EscrituraTotal, a.EscrituraServicio,
+                  a.Lectura, a.SinClasificar, a.Subscriptions, a.BroadestScopeLevel, a.Via,
+                  SiNo(a.AccountEnabled), Fecha(a.LastSignIn), Mfa(a.MfaStatus), a.Orphan ? "Sí" : ""]);
 
         Sheet(wb, "Asignaciones RBAC",
-            ["Suscripción", "Scope", "Nivel", "Rol", "Tipo", "Nombre", "Correo / Login", "Tipo usuario",
-             "Vía grupo", "Cuenta activa", "Último login", "MFA"],
+            ["Suscripción", "Scope", "Nivel", "Rol", "Clase de rol", "Rol personalizado", "Tipo",
+             "Nombre", "Correo / Login", "Tipo usuario", "Vía grupo", "Cuenta activa", "Último login", "MFA"],
             snapshot.Assignments,
-            a => [a.SubscriptionName ?? a.SubscriptionId, a.Scope, a.ScopeLevel, a.RoleName, a.PrincipalType,
+            a => [a.SubscriptionName ?? a.SubscriptionId, a.Scope, a.ScopeLevel, a.RoleName,
+                  Clase(a.RoleClass), a.IsCustomRole ? "Sí" : "", a.PrincipalType,
                   a.DisplayName ?? a.PrincipalObjectId, a.Login ?? "", a.UserType ?? "",
-                  a.ViaGroupName ?? "", a.AccountEnabled switch { true => "Sí", false => "No", null => "" },
+                  a.ViaGroupName ?? "", SiNo(a.AccountEnabled),
                   Fecha(a.LastSignIn), Mfa(a.MfaStatus)]);
 
         Sheet(wb, "Global Administrators",

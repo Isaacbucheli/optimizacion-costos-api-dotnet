@@ -98,6 +98,12 @@ public sealed class SqlAccessReviewStore(ISqlConnectionFactory factory) : IAcces
                 last_sign_in DATETIME2 NULL,
                 mfa_status NVARCHAR(20) NULL,
                 INDEX IX_cdc_aga_run (run_id));
+            -- Columnas agregadas después del despliegue inicial: el bloque de arriba solo crea
+            -- tablas ausentes, así que las tablas ya existentes necesitan ALTER idempotente.
+            IF COL_LENGTH('dbo.cdc_access_assignment','role_class') IS NULL
+                ALTER TABLE dbo.cdc_access_assignment ADD role_class NVARCHAR(30) NULL;
+            IF COL_LENGTH('dbo.cdc_access_assignment','is_custom_role') IS NULL
+                ALTER TABLE dbo.cdc_access_assignment ADD is_custom_role BIT NULL;
             """;
         await cmd.ExecuteNonQueryAsync(ct);
         _schemaEnsured = true;
@@ -180,9 +186,10 @@ public sealed class SqlAccessReviewStore(ISqlConnectionFactory factory) : IAcces
             cmd.CommandText = """
                 INSERT INTO dbo.cdc_access_assignment (run_id, subscription_id, subscription_name, subscription_state,
                     scope, scope_level, role_name, role_definition_id, principal_object_id, principal_type,
-                    display_name, login, user_type, via_group_id, via_group_name, account_enabled, last_sign_in, mfa_status)
+                    display_name, login, user_type, via_group_id, via_group_name, account_enabled, last_sign_in, mfa_status,
+                    role_class, is_custom_role)
                 VALUES (@run, @sid, @sname, @sstate, @scope, @slevel, @role, @roledef, @pid, @ptype,
-                    @dname, @login, @utype, @vgid, @vgname, @enabled, @lsi, @mfa)
+                    @dname, @login, @utype, @vgid, @vgname, @enabled, @lsi, @mfa, @rclass, @rcustom)
                 """;
             cmd.Parameters.AddRange([
                 new("@run", runId), new("@sid", a.SubscriptionId), new("@sname", Db(a.SubscriptionName)),
@@ -190,7 +197,8 @@ public sealed class SqlAccessReviewStore(ISqlConnectionFactory factory) : IAcces
                 new("@role", a.RoleName), new("@roledef", a.RoleDefinitionId), new("@pid", a.PrincipalObjectId),
                 new("@ptype", a.PrincipalType), new("@dname", Db(a.DisplayName)), new("@login", Db(a.Login)),
                 new("@utype", Db(a.UserType)), new("@vgid", Db(a.ViaGroupId)), new("@vgname", Db(a.ViaGroupName)),
-                new("@enabled", Db(a.AccountEnabled)), new("@lsi", Db(a.LastSignIn?.UtcDateTime)), new("@mfa", Db(a.MfaStatus))]);
+                new("@enabled", Db(a.AccountEnabled)), new("@lsi", Db(a.LastSignIn?.UtcDateTime)), new("@mfa", Db(a.MfaStatus)),
+                new("@rclass", Db(a.RoleClass)), new("@rcustom", a.IsCustomRole)]);
             await cmd.ExecuteNonQueryAsync(ct);
         }
         foreach (var g in guests)
@@ -310,16 +318,19 @@ public sealed class SqlAccessReviewStore(ISqlConnectionFactory factory) : IAcces
             cmd.CommandText = """
                 SELECT subscription_id, subscription_name, subscription_state, scope, scope_level, role_name,
                        role_definition_id, principal_object_id, principal_type, display_name, login, user_type,
-                       via_group_id, via_group_name, account_enabled, last_sign_in, mfa_status
+                       via_group_id, via_group_name, account_enabled, last_sign_in, mfa_status,
+                       role_class, is_custom_role
                 FROM dbo.cdc_access_assignment WHERE run_id=@id
                 ORDER BY subscription_name, display_name, role_name
                 """;
             cmd.Parameters.Add(new SqlParameter("@id", runId));
             await using var r = await cmd.ExecuteReaderAsync(ct);
             while (await r.ReadAsync(ct))
+                // Corridas anteriores a la clasificación traen role_class NULL: "sin clasificar".
                 assignments.Add(new(r.GetString(0), S(r, 1), S(r, 2), r.GetString(3), r.GetString(4), r.GetString(5),
                     r.GetString(6), r.GetString(7), r.GetString(8), S(r, 9), S(r, 10), S(r, 11),
-                    S(r, 12), S(r, 13), B(r, 14), Dt(r, 15), S(r, 16)));
+                    S(r, 12), S(r, 13), B(r, 14), Dt(r, 15), S(r, 16),
+                    S(r, 17), B(r, 18) ?? false));
         }
 
         var guests = new List<AccessGuestRow>();

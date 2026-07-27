@@ -112,7 +112,11 @@ public class AccessReviewSyncService(
 
                     gas = await graph.GetGlobalAdminsAsync(unit.CredentialId, ct);
 
+                    // Solo se piden al directorio los tipos que viven en el tenant del cliente:
+                    // un ForeignGroup (otro tenant), un Device o un principal sin tipo nunca van a
+                    // resolver, y pedirlos es ruido garantizado en getByIds.
                     var unresolved = armRows
+                        .Where(x => x.A.PrincipalType is "User" or "Group" or "ServicePrincipal")
                         .Select(x => x.A.PrincipalId)
                         .Where(id => !sweep.ById.ContainsKey(id))
                         .Distinct().ToList();
@@ -163,30 +167,46 @@ public class AccessReviewSyncService(
                         user?.DisplayName ?? dir?.DisplayName, user?.Upn ?? dir?.Upn,
                         user?.UserType ?? dir?.UserType, null, null,
                         user?.AccountEnabled, user?.LastSignIn,
-                        user is not null ? await MfaAsync(a.PrincipalId) : null));
+                        user is not null ? await MfaAsync(a.PrincipalId) : null,
+                        a.RoleClass, a.IsCustomRole));
                 }
                 else if (a.PrincipalType == "ServicePrincipal")
                 {
                     assignments.Add(new AccessAssignmentRow(subId, subName, subState, a.Scope, a.ScopeLevel,
                         a.RoleName, a.RoleDefinitionId, a.PrincipalId, "ServicePrincipal",
-                        dir?.DisplayName, dir?.AppId, null, null, null, null, null, null));
+                        dir?.DisplayName, dir?.AppId, null, null, null, null, null, null,
+                        a.RoleClass, a.IsCustomRole));
                 }
-                else // Group: fila del grupo + derivadas por miembro transitivo (solo usuarios).
+                else if (a.PrincipalType == "Group") // fila del grupo + derivadas por miembro transitivo (solo usuarios).
                 {
                     var groupName = dir?.DisplayName;
                     assignments.Add(new AccessAssignmentRow(subId, subName, subState, a.Scope, a.ScopeLevel,
                         a.RoleName, a.RoleDefinitionId, a.PrincipalId, "Group",
-                        groupName, null, null, null, null, null, null, null));
+                        groupName, null, null, null, null, null, null, null,
+                        a.RoleClass, a.IsCustomRole));
 
                     foreach (var m in groupMembers.GetValueOrDefault(a.PrincipalId, []))
                     {
                         if (m.OdataType != "#microsoft.graph.user") continue;
                         var mu = sweep?.ById.GetValueOrDefault(m.Id);
+                        // La fila derivada hereda la clase del rol de la asignación del grupo.
                         assignments.Add(new AccessAssignmentRow(subId, subName, subState, a.Scope, a.ScopeLevel,
                             a.RoleName, a.RoleDefinitionId, m.Id, "User",
                             mu?.DisplayName ?? m.DisplayName, mu?.Upn ?? m.Upn, mu?.UserType ?? m.UserType,
-                            a.PrincipalId, groupName, mu?.AccountEnabled, mu?.LastSignIn, await MfaAsync(m.Id)));
+                            a.PrincipalId, groupName, mu?.AccountEnabled, mu?.LastSignIn, await MfaAsync(m.Id),
+                            a.RoleClass, a.IsCustomRole));
                     }
+                }
+                else
+                {
+                    // ForeignGroup (grupo administrado desde otro tenant), Device, Unknown: se
+                    // persisten tal cual, sin resolver ni expandir. No viven en el directorio del
+                    // cliente, así que la ausencia de nombre es lo esperado y NO una asignación
+                    // huérfana. Se conserva el tipo real: etiquetarlos "Group" mentiría sobre su origen.
+                    assignments.Add(new AccessAssignmentRow(subId, subName, subState, a.Scope, a.ScopeLevel,
+                        a.RoleName, a.RoleDefinitionId, a.PrincipalId, a.PrincipalType,
+                        null, null, null, null, null, null, null, null,
+                        a.RoleClass, a.IsCustomRole));
                 }
             }
 
