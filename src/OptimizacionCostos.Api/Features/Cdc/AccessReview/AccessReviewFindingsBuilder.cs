@@ -14,10 +14,31 @@ public static class AccessReviewFindingsBuilder
     private const string SinP1 =
         "No evaluable: el último inicio de sesión requiere licencia Entra ID P1/P2 en el tenant del cliente.";
 
+    /// <param name="decisions">Decisiones del cliente por access_key. SOLO `justificado` descuenta:
+    /// `revocar` es una promesa (mientras el acceso exista sigue siendo riesgo) y `mantener` es una
+    /// revision (no vuelve seguro lo que no lo es). Es decision de producto, esta en el spec.</param>
     public static IReadOnlyList<AccessFinding> Build(
         AccessReviewSnapshot snapshot, IReadOnlyList<AccessAccountRow> accounts,
-        AccessReviewKpis kpis, int inactivityDays, DateTimeOffset now)
+        AccessReviewKpis kpis, int inactivityDays, DateTimeOffset now,
+        IReadOnlyDictionary<string, AccessDecision>? decisions = null)
     {
+        decisions ??= new Dictionary<string, AccessDecision>();
+
+        string Key(AccessAssignmentRow a) =>
+            AccessReviewAccessKey.For(a.PrincipalObjectId, a.RoleDefinitionId, a.Scope);
+
+        bool Justificado(AccessAssignmentRow a) =>
+            decisions.TryGetValue(Key(a), out var d) && d.Decision == AccessDecisionValues.Justificado;
+
+        // Una cuenta sale de un hallazgo solo cuando TODOS sus accesos estan justificados: con uno
+        // pendiente sigue habiendo algo que revisar.
+        var cuentasTotalmenteJustificadas = snapshot.Assignments
+            .GroupBy(a => a.PrincipalObjectId)
+            .Where(g => g.Select(Key).Distinct(StringComparer.OrdinalIgnoreCase)
+                         .All(k => decisions.TryGetValue(k, out var d)
+                                   && d.Decision == AccessDecisionValues.Justificado))
+            .Select(g => g.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var graphOk = AccessReviewAccountBuilder.GraphComplete(snapshot);
         // El último login necesita además signInActivity: sin P1, un null es ambiguo y no permite
         // afirmar ni "nunca entró" ni "hace N días que no entra".
@@ -31,6 +52,12 @@ public static class AccessReviewFindingsBuilder
         // convierte "granularidad" en "tamaño de los grupos" (en el E2E: 68,3% reportado contra 29,2%
         // real). Los service principals y los grupos de otro tenant quedan fuera del universo de
         // "asignación por persona": no son gente que se administre con membresías.
+        // Las reglas de riesgo ignoran lo justificado; las de practica NO, porque miden como se
+        // administra el tenant y eso no cambia porque alguien acepte un caso puntual.
+        var enRiesgo = assignments.Where(a => !Justificado(a)).ToList();
+        var cuentasEnRiesgo = accounts
+            .Where(a => !cuentasTotalmenteJustificadas.Contains(a.PrincipalObjectId)).ToList();
+
         var grants = assignments.Where(a => a.ViaGroupId is null).ToList();
         var agrupables = grants.Where(a => a.PrincipalType is "User" or "Group").ToList();
 
@@ -38,7 +65,7 @@ public static class AccessReviewFindingsBuilder
         // principal eliminado es limpieza; un grupo eliminado significa que su gente pudo perder
         // acceso y hay que revisar si el reemplazo quedó bien. En el E2E: MINSUR 179 SP de 180,
         // BANCO DELTA 9 grupos de 13.
-        var huerfanasPorTipo = string.Join(", ", accounts.Where(a => a.Orphan)
+        var huerfanasPorTipo = string.Join(", ", cuentasEnRiesgo.Where(a => a.Orphan)
             .GroupBy(a => a.PrincipalType)
             .OrderByDescending(g => g.Count())
             .Select(g => $"{g.Count()} {PrincipalLabel(g.Key, g.Count())}"));
@@ -48,7 +75,7 @@ public static class AccessReviewFindingsBuilder
             // ── Solo ARM: se evalúan siempre, incluso en corridas Lighthouse ──
             ByAssignment("owner_en_raiz", AccessFindingSeverity.Critica,
                 "Privilegio de otorgamiento heredado desde la raíz",
-                assignments.Where(a => a.RoleClass is AccessReviewRoleClassifier.Owner
+                enRiesgo.Where(a => a.RoleClass is AccessReviewRoleClassifier.Owner
                                         or AccessReviewRoleClassifier.OtorgaAccesos
                                     && a.ScopeLevel is "root" or "management_group"),
                 n => $"{n.Assignments} asignaciones que pueden otorgar accesos, a nivel root o management group, sobre {n.Accounts} cuentas. Alcanzan todas las suscripciones por herencia.",
@@ -57,7 +84,7 @@ public static class AccessReviewFindingsBuilder
 
             ByAssignment("grupo_foraneo_elevado", AccessFindingSeverity.Alta,
                 "Grupo de otro tenant con privilegio elevado",
-                assignments.Where(a => a.PrincipalType == "ForeignGroup"
+                enRiesgo.Where(a => a.PrincipalType == "ForeignGroup"
                                     && AccessReviewRoleClassifier.IsElevated(a.RoleClass)),
                 n => $"{n.Accounts} grupos administrados desde otro tenant tienen privilegio elevado ({n.Assignments} asignaciones). Su membresía no es visible ni auditable desde el tenant del cliente.",
                 "Identificar el tenant de origen y el propósito (suele ser administración delegada del MSP). Documentarlo formalmente, validar que su membresía esté controlada en el tenant origen, y bajar el rol a lo mínimo necesario.",
@@ -65,7 +92,7 @@ public static class AccessReviewFindingsBuilder
 
             ByAssignment("sp_con_otorgamiento", AccessFindingSeverity.Alta,
                 "Service principal que puede otorgar accesos",
-                assignments.Where(a => a.PrincipalType == "ServicePrincipal"
+                enRiesgo.Where(a => a.PrincipalType == "ServicePrincipal"
                                     && a.RoleClass is AccessReviewRoleClassifier.Owner
                                         or AccessReviewRoleClassifier.OtorgaAccesos),
                 n => $"{n.Accounts} service principals pueden crear asignaciones de rol, lo que equivale a escalar privilegios a voluntad.",
@@ -74,7 +101,7 @@ public static class AccessReviewFindingsBuilder
 
             ByAssignment("rol_propio_elevado", AccessFindingSeverity.Media,
                 "Roles personalizados con privilegio elevado",
-                assignments.Where(a => a.IsCustomRole && AccessReviewRoleClassifier.IsElevated(a.RoleClass)),
+                enRiesgo.Where(a => a.IsCustomRole && AccessReviewRoleClassifier.IsElevated(a.RoleClass)),
                 n => $"{n.Assignments} asignaciones usan roles personalizados cuyos permisos equivalen a escritura amplia o a otorgar accesos.",
                 "Revisar la definición de cada rol personalizado: los permisos con comodín (*) y los de Microsoft.Authorization suelen estar de más. Documentar quién lo creó y por qué.",
                 true, null),
@@ -98,28 +125,28 @@ public static class AccessReviewFindingsBuilder
             // ── Requieren directorio (Graph) ──
             ByAccount("externa_elevada", AccessFindingSeverity.Critica,
                 "Cuenta externa con privilegio elevado",
-                accounts.Where(a => a.IsExternal == true && Elevated(a)),
+                cuentasEnRiesgo.Where(a => a.IsExternal == true && Elevated(a)),
                 n => $"{n.Accounts} cuentas externas (invitadas o de otro tenant) tienen privilegio elevado. Su MFA, su ciclo de vida y su revocación los controla el tenant de origen, no el cliente.",
                 "Formalizar con el proveedor el listado de cuentas activas y su vigencia. Bajar el privilegio a lo mínimo necesario, exigir MFA por Acceso Condicional y programar revisiones trimestrales de invitados.",
                 graphOk, SinGraph),
 
             ByAccount("principal_eliminado", AccessFindingSeverity.Critica,
                 "Asignaciones a principals que ya no existen",
-                accounts.Where(a => a.Orphan),
+                cuentasEnRiesgo.Where(a => a.Orphan),
                 n => $"{n.Accounts} principals con asignaciones RBAC ya no existen en Entra ID (en el portal aparecen como 'Identity not found'): {huerfanasPorTipo}. Son {n.Assignments} accesos residuales que nadie va a reclamar.",
                 "Eliminar esas asignaciones. Si son service principals, suele ser rastro de app registrations borradas por pipeline: revisar el proceso que las crea. Si hay grupos, revisar además qué accesos perdió la gente que los integraba y si el reemplazo quedó bien.",
                 graphOk, SinGraph),
 
             ByAccount("deshabilitada_con_rbac", AccessFindingSeverity.Alta,
                 "Cuentas deshabilitadas que conservan RBAC",
-                accounts.Where(a => a.AccountEnabled == false),
+                cuentasEnRiesgo.Where(a => a.AccountEnabled == false),
                 n => $"{n.Accounts} cuentas deshabilitadas siguen teniendo permisos asignados. Si se reactivan, recuperan el acceso sin pasar por ninguna aprobación.",
                 "Eliminar las asignaciones como parte del proceso de baja. Deshabilitar la cuenta no revoca RBAC.",
                 graphOk, SinGraph),
 
             ByAccount("elevada_sin_mfa", AccessFindingSeverity.Alta,
                 "Privilegio elevado sin MFA registrado",
-                accounts.Where(a => a.MfaStatus == "disabled" && Elevated(a)),
+                cuentasEnRiesgo.Where(a => a.MfaStatus == "disabled" && Elevated(a)),
                 n => $"{n.Accounts} cuentas con privilegio elevado no tienen ningún método de MFA registrado.",
                 "Exigir MFA por Acceso Condicional para cualquier rol con escritura, y bloquear autenticación legacy. Ojo: esto mide métodos registrados, no si una política los exige.",
                 graphOk, SinGraph),
@@ -134,14 +161,14 @@ public static class AccessReviewFindingsBuilder
             // ── Requieren directorio + licencia P1 (último inicio de sesión) ──
             ByAccount("nunca_inicio_sesion", AccessFindingSeverity.Media,
                 "Cuentas con permisos que nunca iniciaron sesión",
-                accounts.Where(a => a.PrincipalType == "User" && a.AccountEnabled != false && a.LastSignIn is null),
+                cuentasEnRiesgo.Where(a => a.PrincipalType == "User" && a.AccountEnabled != false && a.LastSignIn is null),
                 n => $"{n.Accounts} cuentas de usuario tienen RBAC y no registran ningún inicio de sesión: permisos otorgados y jamás usados.",
                 "Confirmar con el responsable si la cuenta sigue haciendo falta y eliminar las asignaciones si no. Es el patrón típico del alta que se hizo 'por si acaso'.",
                 signInOk, graphOk ? SinP1 : SinGraph),
 
             ByAccount("inactiva_con_rbac", AccessFindingSeverity.Media,
                 $"Cuentas sin actividad por más de {inactivityDays} días",
-                accounts.Where(a => a.PrincipalType == "User" && Inactive(a.LastSignIn, inactivityDays, now)),
+                cuentasEnRiesgo.Where(a => a.PrincipalType == "User" && Inactive(a.LastSignIn, inactivityDays, now)),
                 n => $"{n.Accounts} cuentas con RBAC no registran actividad en más de {inactivityDays} días.",
                 "Validar con el área correspondiente y revocar. Ajustá el umbral de inactividad arriba si para este cliente 90 días no es el criterio.",
                 signInOk, graphOk ? SinP1 : SinGraph),
@@ -153,9 +180,24 @@ public static class AccessReviewFindingsBuilder
                 "Revocar los permisos y quitar la invitación. Establecer access reviews periódicos para invitados, que es donde más se acumula acceso olvidado.",
                 signInOk, graphOk ? SinP1 : SinGraph),
 
-            // ── Alcance de la corrida ──
+            // Cierre del ciclo: lo que se prometio revocar y sigue vivo.
+            ByAssignment("revocacion_incumplida", AccessFindingSeverity.Alta,
+                "Accesos marcados para revocar que siguen activos",
+                assignments.Where(a => decisions.TryGetValue(Key(a), out var d)
+                                    && d.Decision == AccessDecisionValues.Revocar
+                                    && d.RunsSince > 0),
+                n => $"{n.Accounts} cuentas conservan {n.Assignments} accesos que ya se habian marcado para revocar en una revision anterior (hasta {MaxRunsSince(assignments, decisions)} corridas atras). La decision esta tomada y no se ejecuto.",
+                "Escalar con el responsable de cada acceso: o se revoca, o se documenta por que se mantiene y se cambia la decision a justificado. Un pendiente que se arrastra entre revisiones es peor que no haberlo detectado, porque ya hay constancia de que se sabia.",
+                true, null),
+
             Scope(snapshot, graphOk, signInOk),
         ];
+
+        // Aceptacion explicita de las reglas de umbral (las que no tienen accesos que marcar).
+        findings = [.. findings.Select(f =>
+            decisions.TryGetValue(AccessReviewAccessKey.ForFinding(f.Key), out var acc)
+                ? f with { Accepted = true, AcceptedNote = acc.Note, AcceptedBy = acc.DecidedBy, AcceptedAt = acc.DecidedAt }
+                : f)];
 
         return [.. findings
             .OrderBy(f => AccessFindingSeverity.Rank(f.Severity))
@@ -172,6 +214,20 @@ public static class AccessReviewFindingsBuilder
         ("ServicePrincipal", 1) => "service principal", ("ServicePrincipal", _) => "service principals",
         (_, 1) => type, _ => type,
     };
+
+    /// <summary>Cuantas corridas lleva sin cumplirse la revocacion mas vieja que sigue viva.</summary>
+    private static int MaxRunsSince(
+        IReadOnlyList<AccessAssignmentRow> assignments, IReadOnlyDictionary<string, AccessDecision> decisions)
+    {
+        var max = 0;
+        foreach (var a in assignments)
+        {
+            var key = AccessReviewAccessKey.For(a.PrincipalObjectId, a.RoleDefinitionId, a.Scope);
+            if (decisions.TryGetValue(key, out var d)
+                && d.Decision == AccessDecisionValues.Revocar && d.RunsSince > max) max = d.RunsSince;
+        }
+        return max;
+    }
 
     private static bool Elevated(AccessAccountRow a) =>
         a.Owner + a.OtorgaAccesos + a.EscrituraTotal > 0;

@@ -21,18 +21,18 @@ public class AccessReviewExcelExporterTests
         var accounts = AccessReviewAccountBuilder.Build(snapshot);
         var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, 90, Now);
         var findings = AccessReviewFindingsBuilder.Build(snapshot, accounts, kpis, 90, Now);
-        var result = new AccessReviewExcelExporter().Generate("Cliente Demo", snapshot, accounts, kpis, findings, 90);
+        var result = new AccessReviewExcelExporter().Generate("Cliente Demo", snapshot, accounts, kpis, findings, [], 90);
         fileName = result.FileName;
         return new XLWorkbook(new MemoryStream(result.Bytes));
     }
 
     [Fact]
-    public void Genera_siete_hojas_con_datos()
+    public void Genera_ocho_hojas_con_datos()
     {
         using var wb = Generate(Snapshot(), out var fileName);
 
         Assert.EndsWith(".xlsx", fileName);
-        Assert.Equal(7, wb.Worksheets.Count);
+        Assert.Equal(8, wb.Worksheets.Count);
         Assert.True(wb.Worksheets.Contains("Resumen"));
         Assert.True(wb.Worksheets.Contains("Hallazgos"));
         Assert.True(wb.Worksheets.Contains("Cuentas"));
@@ -96,8 +96,8 @@ public class AccessReviewExcelExporterTests
         var ws = wb.Worksheet("Hallazgos");
         Assert.Equal("Severidad", ws.Cell(1, 1).GetString());
         Assert.Equal("Recomendación", ws.Cell(1, 4).GetString());
-        // 15 reglas + encabezado: los limpios también se listan (saber que se evaluó es información).
-        Assert.Equal(16, ws.LastRowUsed()!.RowNumber());
+        // 16 reglas + encabezado: los limpios también se listan (saber que se evaluó es información).
+        Assert.Equal(17, ws.LastRowUsed()!.RowNumber());
         // Owner a nivel suscripción no dispara el hallazgo de raíz, pero la fila existe igual.
         Assert.Contains("Crítica", ws.Column(1).CellsUsed().Select(c => c.GetString()));
     }

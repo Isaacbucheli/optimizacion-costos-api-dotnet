@@ -23,20 +23,24 @@ public static class AccessReviewAccountBuilder
         s.Run.Status != "error"
         && s.Credentials.All(c => c.GraphStatus is "ok" or "sin_licencia_p1");
 
-    public static IReadOnlyList<AccessAccountRow> Build(AccessReviewSnapshot s)
+    /// <param name="decisions">Decisiones del cliente por access_key (bloque 3). Vacío = todo pendiente.</param>
+    public static IReadOnlyList<AccessAccountRow> Build(
+        AccessReviewSnapshot s, IReadOnlyDictionary<string, AccessDecision>? decisions = null)
     {
         var graphComplete = GraphComplete(s);
+        decisions ??= new Dictionary<string, AccessDecision>();
 
         return [.. s.Assignments
             .GroupBy(a => a.PrincipalObjectId)
-            .Select(g => Account(g.Key, [.. g], graphComplete))
+            .Select(g => Account(g.Key, [.. g], graphComplete, decisions))
             .OrderByDescending(a => a.Owner)
             .ThenByDescending(a => a.OtorgaAccesos)
             .ThenByDescending(a => a.TotalAssignments)
             .ThenBy(a => a.DisplayName ?? a.PrincipalObjectId, StringComparer.OrdinalIgnoreCase)];
     }
 
-    private static AccessAccountRow Account(string principalId, List<AccessAssignmentRow> rows, bool graphComplete)
+    private static AccessAccountRow Account(string principalId, List<AccessAssignmentRow> rows,
+        bool graphComplete, IReadOnlyDictionary<string, AccessDecision> decisions)
     {
         // Asignación efectiva = (rol, scope). Dos fuentes de duplicación que hay que colapsar:
         //  1. La misma potestad obtenida de forma directa Y heredada por grupo es UNA sola.
@@ -98,7 +102,30 @@ public static class AccessReviewAccountBuilder
             // Principal con asignación RBAC que ya no existe en el directorio ("Identity not found"
             // en el portal). Solo se afirma con Graph completo: nombre vacío sin Graph significa
             // "no resuelto", no "eliminado".
-            Orphan: graphComplete && LivesInTenant(type) && displayName is null);
+            Orphan: graphComplete && LivesInTenant(type) && displayName is null,
+            Decisions: SummarizeDecisions(rows, decisions));
+    }
+
+    /// <summary>Resumen de decisiones de la cuenta, sobre sus accesos efectivos (una decisión por
+    /// combinación de rol y scope, no por fila: las derivadas de grupo comparten la del acceso).</summary>
+    private static AccessDecisionSummary SummarizeDecisions(
+        List<AccessAssignmentRow> rows, IReadOnlyDictionary<string, AccessDecision> decisions)
+    {
+        int pendientes = 0, mantener = 0, revocar = 0, justificado = 0;
+        foreach (var key in rows
+            .Select(a => AccessReviewAccessKey.For(a.PrincipalObjectId, a.RoleDefinitionId, a.Scope))
+            .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            if (!decisions.TryGetValue(key, out var d)) { pendientes++; continue; }
+            switch (d.Decision)
+            {
+                case AccessDecisionValues.Mantener: mantener++; break;
+                case AccessDecisionValues.Revocar: revocar++; break;
+                case AccessDecisionValues.Justificado: justificado++; break;
+                default: pendientes++; break;
+            }
+        }
+        return new AccessDecisionSummary(pendientes, mantener, revocar, justificado);
     }
 
     /// <summary>

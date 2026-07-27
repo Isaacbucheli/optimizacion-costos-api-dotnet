@@ -67,6 +67,8 @@ builder.Services.AddHostedService<OptimizacionCostos.Api.Features.Cdc.PowerHisto
 // en background (202 + polling), calcado de PowerHistory.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.AccessReview.IAccessReviewStore,
     OptimizacionCostos.Api.Features.Cdc.AccessReview.SqlAccessReviewStore>();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.AccessReview.IAccessReviewDecisionStore,
+    OptimizacionCostos.Api.Features.Cdc.AccessReview.SqlAccessReviewDecisionStore>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.AccessReview.IAccessReviewGraphClient,
     OptimizacionCostos.Api.Features.Cdc.AccessReview.AccessReviewGraphClient>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Cdc.AccessReview.IAccessReviewArmClient,

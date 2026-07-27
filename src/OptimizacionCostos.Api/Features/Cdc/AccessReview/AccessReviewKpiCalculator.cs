@@ -5,8 +5,10 @@ public static class AccessReviewKpiCalculator
     /// <summary>`accounts` viene de AccessReviewAccountBuilder: se pasa ya construido para no
     /// agregar dos veces lo mismo y para que UI, KPIs y Excel muestren idéntico número.</summary>
     public static AccessReviewKpis Compute(AccessReviewSnapshot s, IReadOnlyList<AccessAccountRow> accounts,
-        int inactivityDays, DateTimeOffset now)
+        int inactivityDays, DateTimeOffset now,
+        IReadOnlyDictionary<string, AccessDecision>? decisions = null)
     {
+        decisions ??= new Dictionary<string, AccessDecision>();
         var users = s.Assignments.Where(a => a.PrincipalType == "User").ToList();
         // Una cuenta se evalúa una sola vez aunque tenga N asignaciones.
         var byUser = users.GroupBy(a => a.PrincipalObjectId).Select(g => g.First()).ToList();
@@ -46,6 +48,12 @@ public static class AccessReviewKpiCalculator
             // consultada, así que el mismo rol personalizado usado en N suscripciones llega con N ids
             // y se contaría N veces (en el E2E: 4 roles reales reportados como 18).
             RolesPersonalizados: s.Assignments.Where(a => a.IsCustomRole)
-                .Select(a => AccessReviewRoleClassifier.RoleKey(a.RoleDefinitionId)).Distinct().Count());
+                .Select(a => AccessReviewRoleClassifier.RoleKey(a.RoleDefinitionId)).Distinct().Count(),
+            // Accesos elevados que nadie decidió todavía: el número que el consultor tiene que bajar.
+            PendientesDeRevisar: s.Assignments
+                .Where(a => AccessReviewRoleClassifier.IsElevated(a.RoleClass))
+                .Select(a => AccessReviewAccessKey.For(a.PrincipalObjectId, a.RoleDefinitionId, a.Scope))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count(k => !decisions.ContainsKey(k)));
     }
 }

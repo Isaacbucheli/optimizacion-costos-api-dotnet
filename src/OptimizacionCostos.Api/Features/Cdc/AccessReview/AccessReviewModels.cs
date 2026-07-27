@@ -46,7 +46,8 @@ public sealed record AccessAccountRow(
     bool? IsExternal, int TotalAssignments,
     int Owner, int OtorgaAccesos, int EscrituraTotal, int EscrituraServicio, int Lectura, int SinClasificar,
     int Subscriptions, string BroadestScopeLevel, string Via,
-    bool? AccountEnabled, DateTimeOffset? LastSignIn, string? MfaStatus, bool Orphan);
+    bool? AccountEnabled, DateTimeOffset? LastSignIn, string? MfaStatus, bool Orphan,
+    AccessDecisionSummary? Decisions = null);
 
 /// <summary>Los contadores de privilegio (elevadas, owners, roles personalizados) solo dependen de
 /// ARM: siguen midiéndose aunque la fase Graph haya fallado. Los de externos dependen de Graph.</summary>
@@ -56,4 +57,6 @@ public sealed record AccessReviewKpis(
     int GuestsTotal, int GuestsInactivos, int GuestsInactivosConPermisos,
     int ServicePrincipalsUnicos, int TotalAsignaciones,
     int CuentasUnicas, int AsignacionesElevadas, decimal PctElevadas, int Owners,
-    int CuentasExternasConRbac, int OwnersExternos, int RolesPersonalizados);
+    int CuentasExternasConRbac, int OwnersExternos, int RolesPersonalizados,
+    // Accesos con privilegio elevado que todavia nadie decidio: la cola de trabajo real.
+    int PendientesDeRevisar);

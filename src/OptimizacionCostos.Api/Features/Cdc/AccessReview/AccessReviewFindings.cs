@@ -10,7 +10,10 @@ public sealed record AccessFinding(
     string Key, string Severity, string Title, string Detail, string Recommendation,
     bool Evaluable, string? NotEvaluableReason,
     int AffectedAccounts, int AffectedAssignments,
-    IReadOnlyList<string> AffectedPrincipals);
+    IReadOnlyList<string> AffectedPrincipals,
+    // Aceptado explicitamente (solo reglas de umbral, que no tienen accesos que marcar).
+    bool Accepted = false, string? AcceptedNote = null, string? AcceptedBy = null,
+    DateTimeOffset? AcceptedAt = null);
 
 public static class AccessFindingSeverity
 {

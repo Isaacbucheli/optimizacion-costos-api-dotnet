@@ -7,7 +7,8 @@ public interface IAccessReviewExcelExporter
 {
     ExcelV3Result Generate(string clientName, AccessReviewSnapshot snapshot,
         IReadOnlyList<AccessAccountRow> accounts, AccessReviewKpis kpis,
-        IReadOnlyList<AccessFinding> findings, int inactivityDays);
+        IReadOnlyList<AccessFinding> findings, IReadOnlyList<AccessDecision> decisions,
+        int inactivityDays);
 }
 
 /// <summary>XLSX de revisión de accesos: Resumen + Hallazgos + 5 datasets. Puro (sin BD).</summary>
@@ -15,7 +16,8 @@ public sealed class AccessReviewExcelExporter : IAccessReviewExcelExporter
 {
     public ExcelV3Result Generate(string clientName, AccessReviewSnapshot snapshot,
         IReadOnlyList<AccessAccountRow> accounts, AccessReviewKpis kpis,
-        IReadOnlyList<AccessFinding> findings, int inactivityDays)
+        IReadOnlyList<AccessFinding> findings, IReadOnlyList<AccessDecision> decisions,
+        int inactivityDays)
     {
         using var wb = new XLWorkbook();
 
@@ -145,6 +147,19 @@ public sealed class AccessReviewExcelExporter : IAccessReviewExcelExporter
             g => [g.DisplayName ?? g.ObjectId, g.Email ?? "", g.ExternalDomain ?? "",
                   g.AccountEnabled ? "Sí" : "No", g.ExternalState ?? "", Fecha(g.CreatedAtAzure),
                   Fecha(g.LastSignIn), g.RolesInSubs ?? "Sin permisos directos", Mfa(g.MfaStatus)]);
+
+        static string Dec(string d) => d switch
+        {
+            "mantener" => "Mantener", "revocar" => "Revocar",
+            "justificado" => "Justificado", _ => d,
+        };
+
+        Sheet(wb, "Decisiones",
+            ["Decision", "Cuenta / hallazgo", "Rol", "Scope", "Nota", "Decidido por", "Fecha",
+             "Corridas desde entonces"],
+            decisions,
+            d => [Dec(d.Decision), d.FindingKey ?? d.PrincipalObjectId, d.RoleKey, d.Scope,
+                  d.Note ?? "", d.DecidedBy ?? "", Fecha(d.DecidedAt), d.RunsSince]);
 
         Sheet(wb, "Service Principals",
             ["Suscripción", "Scope", "Nivel", "Rol", "Nombre", "AppId"],

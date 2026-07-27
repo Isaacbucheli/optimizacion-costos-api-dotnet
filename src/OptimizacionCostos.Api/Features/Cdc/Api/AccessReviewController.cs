@@ -19,6 +19,7 @@ namespace OptimizacionCostos.Api.Features.Cdc.Api;
 [RequireModule(Modules.AccessReview)]
 public sealed class AccessReviewController(
     IAccessReviewStore store,
+    IAccessReviewDecisionStore decisions,
     IAccessReviewJobQueue queue,
     IAccessReviewExcelExporter excel,
     IAnalysisAccess access,
@@ -58,10 +59,11 @@ public sealed class AccessReviewController(
         var snapshot = await store.GetSnapshotAsync(run.RunId, ct);
         if (snapshot is null) return Ok(new { status = "none" });
         var now = DateTimeOffset.UtcNow;
-        var accounts = AccessReviewAccountBuilder.Build(snapshot);
-        var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, inactivityDays, now);
-        var findings = AccessReviewFindingsBuilder.Build(snapshot, accounts, kpis, inactivityDays, now);
-        return Ok(ToResponse(snapshot, accounts, kpis, findings, inactivityDays));
+        var decided = await decisions.GetForClientAsync(clientId, ct);
+        var accounts = AccessReviewAccountBuilder.Build(snapshot, decided);
+        var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, inactivityDays, now, decided);
+        var findings = AccessReviewFindingsBuilder.Build(snapshot, accounts, kpis, inactivityDays, now, decided);
+        return Ok(ToResponse(snapshot, accounts, kpis, findings, decided, inactivityDays));
     }
 
     [HttpGet("clients/{clientId:int}/access-review/runs")]
@@ -104,11 +106,68 @@ public sealed class AccessReviewController(
 
         var clientName = await ClientNameAsync(clientId, ct) ?? $"cliente-{clientId}";
         var now = DateTimeOffset.UtcNow;
-        var accounts = AccessReviewAccountBuilder.Build(snapshot);
-        var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, inactivityDays, now);
-        var findings = AccessReviewFindingsBuilder.Build(snapshot, accounts, kpis, inactivityDays, now);
-        var result = excel.Generate(clientName, snapshot, accounts, kpis, findings, inactivityDays);
+        var decided = await decisions.GetForClientAsync(clientId, ct);
+        var accounts = AccessReviewAccountBuilder.Build(snapshot, decided);
+        var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, inactivityDays, now, decided);
+        var findings = AccessReviewFindingsBuilder.Build(snapshot, accounts, kpis, inactivityDays, now, decided);
+        var result = excel.Generate(clientName, snapshot, accounts, kpis, findings, decided.Values.ToList(), inactivityDays);
         return File(result.Bytes, XlsxContentType, result.FileName);
+    }
+
+    public sealed record DecisionItemDto(
+        string? principal_object_id, string? role_definition_id, string? scope, string? decision, string? note);
+    public sealed record DecisionsBody(List<DecisionItemDto>? items);
+    public sealed record AcceptBody(string? note);
+
+    /// <summary>Registra decisiones sobre accesos. Por lote: el consultor marca varias filas a la vez.
+    /// Valida todo antes de escribir — un item invalido no deja el lote a medias.</summary>
+    [HttpPost("clients/{clientId:int}/access-review/decisions")]
+    [RequireModule(Modules.AccessReview, ModuleAccess.Edit)]
+    public async Task<IActionResult> SaveDecisions(int clientId, [FromBody] DecisionsBody body, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+
+        var items = body?.items ?? [];
+        if (items.Count == 0) return BadRequest(new { detail = "No se recibio ninguna decision." });
+
+        var inputs = new List<AccessDecisionInput>(items.Count);
+        foreach (var i in items)
+        {
+            if (string.IsNullOrWhiteSpace(i.principal_object_id) || string.IsNullOrWhiteSpace(i.scope))
+                return BadRequest(new { detail = "Cada decision requiere principal_object_id y scope." });
+            if (!AccessDecisionValues.IsValid(i.decision))
+                return BadRequest(new { detail = $"Decision invalida: '{i.decision}'. Valores: mantener, revocar, justificado." });
+            // Justificar es la unica que baja el conteo de un hallazgo: exige razon escrita.
+            if (i.decision == AccessDecisionValues.Justificado && string.IsNullOrWhiteSpace(i.note))
+                return BadRequest(new { detail = "Justificar un acceso requiere una nota." });
+
+            inputs.Add(new AccessDecisionInput(
+                i.principal_object_id!, i.role_definition_id ?? "", i.scope!, i.decision!, i.note));
+        }
+
+        var run = await store.GetLatestRunAsync(clientId, ct);
+        var saved = await decisions.UpsertAsync(clientId, inputs, User.FindFirst("sub")?.Value, run?.RunId, ct);
+        return Ok(new { saved });
+    }
+
+    /// <summary>Acepta un hallazgo de umbral (los que no tienen accesos individuales que marcar).</summary>
+    [HttpPost("clients/{clientId:int}/access-review/findings/{findingKey}/accept")]
+    [RequireModule(Modules.AccessReview, ModuleAccess.Edit)]
+    public async Task<IActionResult> AcceptFinding(int clientId, string findingKey,
+        [FromBody] AcceptBody body, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+
+        if (string.IsNullOrWhiteSpace(findingKey)) return BadRequest(new { detail = "Falta la clave del hallazgo." });
+        if (string.IsNullOrWhiteSpace(body?.note))
+            return BadRequest(new { detail = "Aceptar un hallazgo requiere una nota que lo justifique." });
+
+        var run = await store.GetLatestRunAsync(clientId, ct);
+        await decisions.AcceptFindingAsync(clientId, findingKey, body!.note!,
+            User.FindFirst("sub")?.Value, run?.RunId, ct);
+        return Ok(new { saved = 1 });
     }
 
     private async Task<string?> ClientNameAsync(int clientId, CancellationToken ct)
@@ -121,9 +180,14 @@ public sealed class AccessReviewController(
     }
 
     private static object ToResponse(AccessReviewSnapshot s, IReadOnlyList<AccessAccountRow> accounts,
-        AccessReviewKpis k, IReadOnlyList<AccessFinding> findings, int inactivityDays)
+        AccessReviewKpis k, IReadOnlyList<AccessFinding> findings,
+        IReadOnlyDictionary<string, AccessDecision> decided, int inactivityDays)
     {
         var graphComplete = AccessReviewAccountBuilder.GraphComplete(s);
+
+        AccessDecision? DecisionFor(AccessAssignmentRow a) =>
+            decided.TryGetValue(
+                AccessReviewAccessKey.For(a.PrincipalObjectId, a.RoleDefinitionId, a.Scope), out var d) ? d : null;
         return new
     {
         status = s.Run.Status,
@@ -153,6 +217,7 @@ public sealed class AccessReviewController(
             cuentas_externas = k.CuentasExternasConRbac,
             owners_externos = k.OwnersExternos,
             roles_personalizados = k.RolesPersonalizados,
+            pendientes_de_revisar = k.PendientesDeRevisar,
         },
         findings = findings.Select(f => new
         {
@@ -166,6 +231,10 @@ public sealed class AccessReviewController(
             affected_accounts = f.AffectedAccounts,
             affected_assignments = f.AffectedAssignments,
             affected_principals = f.AffectedPrincipals,
+            accepted = f.Accepted,
+            accepted_note = f.AcceptedNote,
+            accepted_by = f.AcceptedBy,
+            accepted_at = f.AcceptedAt,
         }),
         accounts = accounts.Select(a => new
         {
@@ -189,6 +258,10 @@ public sealed class AccessReviewController(
             last_sign_in = a.LastSignIn,
             mfa_status = a.MfaStatus,
             orphan = a.Orphan,
+            decision_pendientes = a.Decisions?.Pendientes ?? 0,
+            decision_mantener = a.Decisions?.Mantener ?? 0,
+            decision_revocar = a.Decisions?.Revocar ?? 0,
+            decision_justificado = a.Decisions?.Justificado ?? 0,
         }),
         credentials = s.Credentials.Select(c => new
         {
@@ -220,6 +293,11 @@ public sealed class AccessReviewController(
             account_enabled = a.AccountEnabled,
             last_sign_in = a.LastSignIn,
             mfa_status = a.MfaStatus,
+            decision = DecisionFor(a)?.Decision,
+            decision_note = DecisionFor(a)?.Note,
+            decision_decided_by = DecisionFor(a)?.DecidedBy,
+            decision_decided_at = DecisionFor(a)?.DecidedAt,
+            decision_runs_since = DecisionFor(a)?.RunsSince,
         }),
         guests = s.Guests.Select(g => new
         {
