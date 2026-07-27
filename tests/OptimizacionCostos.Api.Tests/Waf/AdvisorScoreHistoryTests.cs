@@ -164,6 +164,7 @@ public sealed class AdvisorScoreHistoryTests
         public Task<CredentialAuthResult> TestCredentialAuthAsync(int credentialId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task UpdateValidationStatusAsync(int credentialId, bool success, string? errorMessage = null, CancellationToken ct = default) => throw new NotSupportedException();
         public Task WriteAuditLogAsync(int credentialId, string action, string? actor = null, string? details = null, CancellationToken ct = default) => throw new NotSupportedException();
+        public void InvalidateCachedCredential(int credentialId) { }
     }
     private sealed class ThrowingFactory : ISqlConnectionFactory
     {

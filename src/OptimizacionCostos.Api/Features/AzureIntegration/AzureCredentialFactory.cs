@@ -37,9 +37,13 @@ public interface IAzureCredentialFactory
 
     /// <summary>Registra una entrada de auditoría. No recibe ni guarda secretos.</summary>
     Task WriteAuditLogAsync(int credentialId, string action, string? actor = null, string? details = null, CancellationToken ct = default);
+
+    /// <summary>Descarta la credencial memoizada de este scope. Obligatorio tras rotar el secreto:
+    /// si en la misma request ya se había construido, seguiría usando el secreto anterior.</summary>
+    void InvalidateCachedCredential(int credentialId);
 }
 
-public sealed class SqlAzureCredentialFactory(
+public class SqlAzureCredentialFactory(
     ISqlConnectionFactory factory,
     IKeyVaultService keyVault,
     OptimizacionCostos.Api.Features.AzureIntegration.UserSessions.IAzureUserSessionService sessions,
@@ -48,12 +52,23 @@ public sealed class SqlAzureCredentialFactory(
     // Scope estándar para ARM. No requiere permisos extra.
     private const string ArmScope = "https://management.azure.com/.default";
 
-    private sealed record CredentialRow(
+    // ── Caché por instancia ───────────────────────────────────────────────────────────────────
+    // Este servicio está registrado Scoped y los jobs crean un scope por corrida, así que el
+    // alcance del caché es "una request HTTP / una corrida". Sin él, CADA llamada a ARM o Graph
+    // costaba una query a SQL + una lectura de Key Vault + un token nuevo a AAD (el caché interno
+    // del ClientSecretCredential nace vacío en cada instancia): en una revisión de accesos con
+    // miles de identidades, cuatro round-trips donde debería haber uno.
+    // Un secreto rotado se toma en la request siguiente, que estrena scope.
+    private readonly SemaphoreSlim _cacheGate = new(1, 1);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, CredentialRow> _rowCache = new();
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<int, TokenCredential> _appSecretCache = new();
+
+    protected sealed record CredentialRow(
         int CredentialId, int ClientId, string? CredentialName,
         string TenantId, string AppClientId, string KeyVaultSecretName,
         string AuthType, string? SessionUserEmail);
 
-    private async Task<CredentialRow> FetchCredentialRowAsync(int credentialId, CancellationToken ct)
+    protected virtual async Task<CredentialRow> FetchCredentialRowAsync(int credentialId, CancellationToken ct)
     {
         await using var conn = await factory.OpenAsync(ct);
         await AzureCredentialSchema.EnsureAsync(conn, ct);
@@ -88,19 +103,42 @@ public sealed class SqlAzureCredentialFactory(
 
     public async Task<TokenCredential> GetClientSecretCredentialAsync(int credentialId, CancellationToken ct = default)
     {
-        var row = await FetchCredentialRowAsync(credentialId, ct);
-
-        // Credencial de sesión de usuario (Lighthouse): resuelve la sesión viva del dueño.
-        if (string.Equals(row.AuthType, "user_session", StringComparison.OrdinalIgnoreCase))
+        // El gate serializa el armado, no el uso: tras la primera llamada todo es un hit de
+        // diccionario. Con N llamadas concurrentes (p. ej. el prefetch de MFA) las demás esperan
+        // ese único armado en vez de repetirlo. Solo se cachea en caso de éxito: un fallo transitorio
+        // de Key Vault no queda pegado para el resto del scope.
+        await _cacheGate.WaitAsync(ct);
+        try
         {
-            if (string.IsNullOrEmpty(row.SessionUserEmail))
-                throw new UserSessions.UserSessionExpiredException("(sin dueño)");
-            return sessions.GetCredentialForEmail(row.SessionUserEmail);
-        }
+            if (!_rowCache.TryGetValue(credentialId, out var row))
+                _rowCache[credentialId] = row = await FetchCredentialRowAsync(credentialId, ct);
 
-        // El secreto se lee y se inyecta directo; la variable local sale de scope al retornar.
-        var secretValue = await keyVault.ReadSecretAsync(row.KeyVaultSecretName, ct);
-        return new ClientSecretCredential(row.TenantId, row.AppClientId, secretValue);
+            // Credencial de sesión de usuario (Lighthouse): resuelve la sesión viva del dueño.
+            // NO se cachea: la sesión puede expirar durante la corrida y hay que volver a validarla.
+            if (string.Equals(row.AuthType, "user_session", StringComparison.OrdinalIgnoreCase))
+            {
+                if (string.IsNullOrEmpty(row.SessionUserEmail))
+                    throw new UserSessions.UserSessionExpiredException("(sin dueño)");
+                return sessions.GetCredentialForEmail(row.SessionUserEmail);
+            }
+
+            if (_appSecretCache.TryGetValue(credentialId, out var cached)) return cached;
+
+            // El secreto se lee y se inyecta directo; la variable local sale de scope al retornar.
+            var secretValue = await keyVault.ReadSecretAsync(row.KeyVaultSecretName, ct);
+            var credential = new ClientSecretCredential(row.TenantId, row.AppClientId, secretValue);
+            return _appSecretCache[credentialId] = credential;
+        }
+        finally
+        {
+            _cacheGate.Release();
+        }
+    }
+
+    public void InvalidateCachedCredential(int credentialId)
+    {
+        _rowCache.TryRemove(credentialId, out _);
+        _appSecretCache.TryRemove(credentialId, out _);
     }
 
     public async Task<CredentialAuthResult> TestCredentialAuthAsync(int credentialId, CancellationToken ct = default)

@@ -44,6 +44,7 @@ public sealed class FakeCredentialFactory : IAzureCredentialFactory
         => Task.CompletedTask;
     public Task WriteAuditLogAsync(int credentialId, string action, string? actor = null, string? details = null, CancellationToken ct = default)
         => Task.CompletedTask;
+    public void InvalidateCachedCredential(int credentialId) { }
 }
 
 public sealed class FakeHttpFactory(HttpMessageHandler handler) : IHttpClientFactory

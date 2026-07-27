@@ -96,6 +96,9 @@ public sealed class AzureCredentialsController(
 
         await keyVault.StoreSecretAsync(secretName, payload.ClientSecret!, ct);
         await store.UpdateRotateMetaAsync(credentialId, payload.SecretExpiresAt, ct);
+        // El factory memoiza la credencial por scope: sin esto, la validación de más abajo podría
+        // usar el secreto anterior si algo ya la había construido en esta misma request.
+        factory.InvalidateCachedCredential(credentialId);
 
         await factory.WriteAuditLogAsync(credentialId, "secret_rotated", details: "Secret rotated", ct: ct);
         var result = await factory.TestCredentialAuthAsync(credentialId, ct);

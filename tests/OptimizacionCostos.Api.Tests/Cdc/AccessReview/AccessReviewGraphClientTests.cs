@@ -16,6 +16,7 @@ public sealed class FakeCredentialFactory : IAzureCredentialFactory
         throw new NotImplementedException();
     public Task WriteAuditLogAsync(int credentialId, string action, string? actor = null, string? details = null, CancellationToken ct = default) =>
         throw new NotImplementedException();
+    public void InvalidateCachedCredential(int credentialId) { }
 }
 
 public class AccessReviewGraphClientTests
