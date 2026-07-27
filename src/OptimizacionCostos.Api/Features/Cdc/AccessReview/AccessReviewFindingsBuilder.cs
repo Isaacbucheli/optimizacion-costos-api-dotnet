@@ -315,7 +315,7 @@ public static class AccessReviewFindingsBuilder
             + cobertura;
 
         return new AccessFinding(key, AccessFindingSeverity.Alta, title, detail, recommendation,
-            true, null, principals.Count, cruzados.Count, principals);
+            true, null, principals.Count, cruzados.Count, principals, CoveragePct: pctCobertura);
     }
 
     /// <summary>Cuantas corridas lleva sin cumplirse la revocacion mas vieja que sigue viva.</summary>

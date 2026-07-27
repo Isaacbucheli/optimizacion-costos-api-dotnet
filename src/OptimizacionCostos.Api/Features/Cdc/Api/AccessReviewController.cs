@@ -259,6 +259,7 @@ public sealed class AccessReviewController(
             accepted_note = f.AcceptedNote,
             accepted_by = f.AcceptedBy,
             accepted_at = f.AcceptedAt,
+            coverage_pct = f.CoveragePct,
         }),
         accounts = accounts.Select(a => new
         {

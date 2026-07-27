@@ -13,7 +13,11 @@ public sealed record AccessFinding(
     IReadOnlyList<string> AffectedPrincipals,
     // Aceptado explicitamente (solo reglas de umbral, que no tienen accesos que marcar).
     bool Accepted = false, string? AcceptedNote = null, string? AcceptedBy = null,
-    DateTimeOffset? AcceptedAt = null);
+    DateTimeOffset? AcceptedAt = null,
+    // Porcentaje del tenant que la regla pudo evaluar, cuando la regla depende de una inferencia
+    // (hoy solo segregacion de ambientes). Va como CAMPO y no solo dentro del texto: el front lo
+    // necesita y hacerlo parsear la prosa del detalle es un acoplamiento que se rompe en silencio.
+    int? CoveragePct = null);
 
 public static class AccessFindingSeverity
 {
