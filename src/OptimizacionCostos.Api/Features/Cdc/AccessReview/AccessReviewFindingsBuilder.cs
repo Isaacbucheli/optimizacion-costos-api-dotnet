@@ -188,8 +188,8 @@ public static class AccessReviewFindingsBuilder
                 assignments.Where(a => decisions.TryGetValue(Key(a), out var d)
                                     && d.Decision == AccessDecisionValues.Revocar
                                     && d.RunsSince > 0),
-                n => $"{n.Accounts} cuentas conservan {n.Assignments} accesos que ya se habian marcado para revocar en una revision anterior (hasta {MaxRunsSince(assignments, decisions)} corridas atras). La decision esta tomada y no se ejecuto.",
-                "Escalar con el responsable de cada acceso: o se revoca, o se documenta por que se mantiene y se cambia la decision a justificado. Un pendiente que se arrastra entre revisiones es peor que no haberlo detectado, porque ya hay constancia de que se sabia.",
+                n => $"{n.Accounts} cuentas conservan {n.Assignments} accesos que ya se habían marcado para revocar en una revisión anterior (hasta {MaxRunsSince(assignments, decisions)} corridas atrás). La decisión está tomada y no se ejecutó.",
+                "Escalar con el responsable de cada acceso: o se revoca, o se documenta por qué se mantiene y se cambia la decisión a justificado. Un pendiente que se arrastra entre revisiones es peor que no haberlo detectado, porque ya hay constancia de que se sabía.",
                 true, null),
 
             // ── Novedades respecto de la corrida anterior (bloque 4) ──
@@ -264,10 +264,10 @@ public static class AccessReviewFindingsBuilder
         IReadOnlyList<AccessAssignmentRow> assignments, IReadOnlyDictionary<string, AccessDecision> decisions)
     {
         const string key = "sin_segregacion_ambientes";
-        const string title = "Mismo privilegio en produccion y en no produccion";
+        const string title = "Mismo privilegio en producción y en no producción";
         const string recommendation =
             "Separar los grupos administrativos por ambiente y asignar RBAC al grupo, no a la persona. "
-            + "El acceso a produccion deberia requerir activacion via PIM con aprobacion, no ser permanente.";
+            + "El acceso a producción debería requerir activación vía PIM con aprobación, no ser permanente.";
 
         var relevantes = assignments
             .Where(a => a.ScopeLevel is "subscription" or "resource_group" or "resource")
@@ -294,7 +294,7 @@ public static class AccessReviewFindingsBuilder
         var pctCobertura = assignments.Count == 0 ? 0
             : (int)Math.Round(asignacionesCubiertas * 100d / assignments.Count);
         var cobertura = $"Se pudo inferir el ambiente de {subsClasificadas} de {subsTotales} suscripciones "
-            + $"({pctCobertura}% de las asignaciones); el resto no se evaluo.";
+            + $"({pctCobertura}% de las asignaciones); el resto no se evaluó.";
 
         var ambientes = relevantes.Select(x => x.Env).Distinct().ToList();
         if (ambientes.Count < 2)
@@ -309,9 +309,9 @@ public static class AccessReviewFindingsBuilder
 
         var principals = cruzados.Select(g => g.Key.PrincipalObjectId).Distinct().Order().ToList();
         var detail = (principals.Count == 0
-            ? "No se detectaron cuentas con el mismo rol elevado en produccion y en no produccion. "
-            : $"{principals.Count} cuentas tienen el mismo rol elevado en suscripciones de produccion y de no produccion "
-              + $"({cruzados.Count} combinaciones de cuenta y rol). Quien administra desarrollo tiene el mismo poder en produccion. ")
+            ? "No se detectaron cuentas con el mismo rol elevado en producción y en no producción. "
+            : $"{principals.Count} cuentas tienen el mismo rol elevado en suscripciones de producción y de no producción "
+              + $"({cruzados.Count} combinaciones de cuenta y rol). Quien administra desarrollo tiene el mismo poder en producción. ")
             + cobertura;
 
         return new AccessFinding(key, AccessFindingSeverity.Alta, title, detail, recommendation,
