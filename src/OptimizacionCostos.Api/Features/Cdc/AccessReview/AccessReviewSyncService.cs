@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Data;
@@ -145,14 +146,55 @@ public class AccessReviewSyncService(
                 }
             }
 
-            // ── Composición de filas ──────────────────────────────────
-            var mfaCache = new Dictionary<string, string>();
+            // ── Estado de MFA ─────────────────────────────────────────
+            // Es el costo dominante de la corrida: un round-trip a Graph por identidad única, y no
+            // hay endpoint por lotes. Se precalcula en paralelo con tope MfaConcurrency (Graph
+            // aplica throttling 429 si se abusa) antes de componer las filas. MfaAsync sigue siendo
+            // el único accesor: un id que no haya quedado en el prefetch se resuelve igual, solo sin
+            // la ganancia — el prefetch es una optimización, no la fuente de verdad.
+            var mfaCache = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+            var mfaApplies = graphStatus is not ("no_aplica" or "sin_consent");
+
             async Task<string?> MfaAsync(string userId)
             {
-                if (graphStatus is "no_aplica" or "sin_consent") return null;
+                if (!mfaApplies) return null;
                 if (mfaCache.TryGetValue(userId, out var m)) return m;
                 return mfaCache[userId] = await graph.GetMfaStatusAsync(unit.CredentialId, userId, ct);
             }
+
+            if (mfaApplies)
+            {
+                // Mismo conjunto que pediría la composición, para no gastar llamadas de más.
+                var pending = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var (a, _, _, _) in armRows)
+                    if (a.PrincipalType == "User" && sweep?.ById.ContainsKey(a.PrincipalId) == true)
+                        pending.Add(a.PrincipalId);
+                foreach (var members in groupMembers.Values)
+                    foreach (var m in members)
+                        if (m.OdataType == "#microsoft.graph.user") pending.Add(m.Id);
+                if (sweep is not null && graphStatus is "ok" or "sin_licencia_p1")
+                {
+                    foreach (var u in sweep.ById.Values)
+                        if (u.UserType == "Guest") pending.Add(u.Id);
+                    foreach (var ga in gas) pending.Add(ga.Id);
+                }
+
+                if (pending.Count > 0)
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    await Parallel.ForEachAsync(pending,
+                        new ParallelOptions { MaxDegreeOfParallelism = MfaConcurrency, CancellationToken = ct },
+                        async (id, token) =>
+                        {
+                            mfaCache[id] = await graph.GetMfaStatusAsync(unit.CredentialId, id, token);
+                        });
+                    logger.LogInformation(
+                        "MFA resuelto para {Count} identidades de la credencial {Cred} en {Seconds:0.0}s (concurrencia {Max})",
+                        pending.Count, unit.CredentialId, sw.Elapsed.TotalSeconds, MfaConcurrency);
+                }
+            }
+
+            // ── Composición de filas ──────────────────────────────────
 
             // 1) Asignaciones directas + fila del grupo + filas derivadas.
             foreach (var (a, subId, subName, subState) in armRows)

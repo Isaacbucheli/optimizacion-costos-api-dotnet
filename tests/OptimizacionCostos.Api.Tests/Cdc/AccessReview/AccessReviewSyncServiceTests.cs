@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using OptimizacionCostos.Api.Features.Cdc.AccessReview;
 
@@ -26,6 +27,8 @@ public sealed class FakeGraph : IAccessReviewGraphClient
     // Registro de llamadas: hay tipos de principal que NO se deben intentar resolver ni expandir.
     public List<string> GroupExpansions = [];
     public List<string> RequestedIds = [];
+    // MFA se resuelve en paralelo → el registro tiene que ser seguro para concurrencia.
+    public ConcurrentBag<string> MfaCalls = [];
 
     private void Gate(int credentialId) { if (FailCredentials.Contains(credentialId)) throw new HttpRequestException("403 consent", null, HttpStatusCode.Forbidden); }
     public Task<GraphUserSweep> SweepUsersAsync(int c, CancellationToken ct = default) { Gate(c); return Task.FromResult(Sweep); }
@@ -37,7 +40,7 @@ public sealed class FakeGraph : IAccessReviewGraphClient
         { Gate(c); RequestedIds.AddRange(ids); return Task.FromResult<IReadOnlyDictionary<string, GraphDirectoryObject>>(
             ids.Where(Directory.ContainsKey).ToDictionary(i => i, i => Directory[i])); }
     public Task<string> GetMfaStatusAsync(int c, string u, CancellationToken ct = default)
-        { Gate(c); return Task.FromResult(Mfa.GetValueOrDefault(u, "unavailable")); }
+        { Gate(c); MfaCalls.Add(u); return Task.FromResult(Mfa.GetValueOrDefault(u, "unavailable")); }
 }
 
 public sealed class FakeStore : IAccessReviewStore
@@ -267,6 +270,77 @@ public class AccessReviewSyncServiceTests
         Assert.Equal("guest1", guest.ObjectId);
         var ga = Assert.Single(store.Gas);
         Assert.Equal("admin1", ga.ObjectId);
+    }
+
+    [Fact]
+    public async Task Consulta_mfa_una_sola_vez_por_identidad()
+    {
+        // El prefetch paralelo NO debe multiplicar llamadas: una por identidad única, aunque la
+        // misma cuenta aparezca en N asignaciones y además sea guest y Global Admin.
+        var arm = new FakeArm { BySub = { ["s1"] = [
+            new("/subscriptions/s1", "subscription", "u1", "User", "def-1", "Reader"),
+            new("/subscriptions/s1/resourceGroups/rg", "resource_group", "u1", "User", "def-1", "Reader"),
+            new("/subscriptions/s1", "subscription", "u1", "User", "def-2", "Owner"),
+            new("/subscriptions/s1", "subscription", "u2", "User", "def-1", "Reader")] } };
+        var graph = new FakeGraph
+        {
+            Sweep = new(new Dictionary<string, GraphUser>
+            {
+                ["u1"] = User("u1"),
+                ["u2"] = User("u2", "ana_ext#EXT#@x.com", "Guest"),
+            }, true),
+            GlobalAdmins = [new("u1", "#microsoft.graph.user", "User u1", null, "u1@x.com", "Member")],
+        };
+        var store = new FakeStore();
+
+        await new TestableSyncService(arm, graph, store, [Cred1]).RunAsync(1, 7);
+
+        Assert.Equal(2, graph.MfaCalls.Count);
+        Assert.Equal(["u1", "u2"], graph.MfaCalls.Order());
+        Assert.All(store.Assignments, a => Assert.Equal("unavailable", a.MfaStatus));
+    }
+
+    [Fact]
+    public async Task Sin_consent_no_consulta_mfa()
+    {
+        // Sin Graph no hay a quién preguntar: ni una llamada, y el estado queda null (no medido).
+        var arm = new FakeArm { BySub = { ["s1"] = [
+            new("/subscriptions/s1", "subscription", "u1", "User", "def-1", "Reader")] } };
+        var graph = new FakeGraph { FailCredentials = { 1 } };
+        var store = new FakeStore();
+
+        await new TestableSyncService(arm, graph, store, [Cred1]).RunAsync(1, 7);
+
+        Assert.Empty(graph.MfaCalls);
+        Assert.Null(Assert.Single(store.Assignments).MfaStatus);
+    }
+
+    [Fact]
+    public async Task Resuelve_mfa_de_miembros_de_grupo_guests_y_global_admins()
+    {
+        var arm = new FakeArm { BySub = { ["s1"] = [
+            new("/subscriptions/s1", "subscription", "g1", "Group", "def-1", "Reader")] } };
+        var graph = new FakeGraph
+        {
+            Sweep = new(new Dictionary<string, GraphUser>
+            {
+                ["miembro"] = User("miembro"),
+                ["invitado"] = User("invitado", "x_ext#EXT#@x.com", "Guest"),
+                ["admin"] = User("admin"),
+            }, true),
+            GroupMembers = { ["g1"] = [new("miembro", "#microsoft.graph.user", "User miembro", null, "miembro@x.com", "Member")] },
+            Directory = { ["g1"] = new("g1", "#microsoft.graph.group", "Grupo", null, null, null) },
+            GlobalAdmins = [new("admin", "#microsoft.graph.user", "User admin", null, "admin@x.com", "Member")],
+            Mfa = { ["miembro"] = "enabled", ["invitado"] = "disabled", ["admin"] = "enabled" },
+        };
+        var store = new FakeStore();
+
+        await new TestableSyncService(arm, graph, store, [Cred1]).RunAsync(1, 7);
+
+        Assert.Equal(["admin", "invitado", "miembro"], graph.MfaCalls.Order());
+        Assert.Equal("enabled", store.Assignments.Single(a => a.ViaGroupId is not null).MfaStatus);
+        Assert.Equal("disabled", Assert.Single(store.Guests).MfaStatus);
+        Assert.Equal("enabled", Assert.Single(store.Gas).MfaStatus);
     }
 
     [Fact]
