@@ -94,14 +94,24 @@ public sealed class SqlAccessReviewDecisionStore(ISqlConnectionFactory factory) 
         await EnsureSchemaAsync(conn, ct);
         await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct);
 
-        var saved = 0;
+        // Dedup por clave: dos filas de la tabla pueden ser el MISMO acceso (una directa y otra
+        // derivada de un grupo). Sin esto el conteo devuelto diría "2 decisiones" para un solo
+        // acceso, que es lo que el usuario ve en el toast.
+        var porClave = new Dictionary<string, (string Principal, string RoleKey, string Scope, AccessDecisionInput Input)>(
+            StringComparer.OrdinalIgnoreCase);
         foreach (var input in inputs)
         {
-            var roleKey = AccessReviewRoleClassifier.RoleKey(input.RoleDefinitionId ?? "");
-            var accessKey = AccessReviewAccessKey.For(input.PrincipalObjectId, input.RoleDefinitionId ?? "", input.Scope);
+            var key = AccessReviewAccessKey.For(input.PrincipalObjectId, input.RoleDefinitionId ?? "", input.Scope);
+            porClave[key] = (input.PrincipalObjectId,
+                AccessReviewRoleClassifier.RoleKey(input.RoleDefinitionId ?? ""), input.Scope, input);
+        }
+
+        var saved = 0;
+        foreach (var (accessKey, v) in porClave)
+        {
             saved += await WriteAsync(conn, tx, clientId, accessKey,
-                input.PrincipalObjectId, roleKey, input.Scope, null,
-                input.Decision, input.Note, actor, runId, ct);
+                v.Principal, v.RoleKey, v.Scope, null,
+                v.Input.Decision, v.Input.Note, actor, runId, ct);
         }
         await tx.CommitAsync(ct);
         return saved;
