@@ -8,7 +8,7 @@ public interface IAccessReviewExcelExporter
     ExcelV3Result Generate(string clientName, AccessReviewSnapshot snapshot,
         IReadOnlyList<AccessAccountRow> accounts, AccessReviewKpis kpis,
         IReadOnlyList<AccessFinding> findings, IReadOnlyList<AccessDecision> decisions,
-        int inactivityDays);
+        AccessReviewDelta delta, int inactivityDays);
 }
 
 /// <summary>XLSX de revisión de accesos: Resumen + Hallazgos + 5 datasets. Puro (sin BD).</summary>
@@ -17,7 +17,7 @@ public sealed class AccessReviewExcelExporter : IAccessReviewExcelExporter
     public ExcelV3Result Generate(string clientName, AccessReviewSnapshot snapshot,
         IReadOnlyList<AccessAccountRow> accounts, AccessReviewKpis kpis,
         IReadOnlyList<AccessFinding> findings, IReadOnlyList<AccessDecision> decisions,
-        int inactivityDays)
+        AccessReviewDelta delta, int inactivityDays)
     {
         using var wb = new XLWorkbook();
 
@@ -153,6 +153,14 @@ public sealed class AccessReviewExcelExporter : IAccessReviewExcelExporter
             "mantener" => "Mantener", "revocar" => "Revocar",
             "justificado" => "Justificado", _ => d,
         };
+
+        // Cambios respecto de la corrida anterior: lo nuevo primero, que es lo que hay que revisar.
+        Sheet(wb, "Cambios",
+            ["Cambio", "Cuenta", "Tipo", "Rol", "Clase de rol", "Nivel de scope", "Suscripcion", "Ambiente"],
+            [.. delta.NuevosAccesos.Select(i => ("Nuevo", i)), .. delta.AccesosRemovidos.Select(i => ("Removido", i))],
+            t => [t.Item1, t.Item2.DisplayName ?? t.Item2.PrincipalObjectId, t.Item2.PrincipalType,
+                  t.Item2.RoleName, Clase(t.Item2.RoleClass), t.Item2.ScopeLevel,
+                  t.Item2.SubscriptionName ?? "", AccessReviewEnvironment.Label(t.Item2.Environment)]);
 
         Sheet(wb, "Decisiones",
             ["Decision", "Cuenta / hallazgo", "Rol", "Scope", "Nota", "Decidido por", "Fecha",

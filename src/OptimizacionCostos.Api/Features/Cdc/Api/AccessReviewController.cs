@@ -62,8 +62,13 @@ public sealed class AccessReviewController(
         var decided = await decisions.GetForClientAsync(clientId, ct);
         var accounts = AccessReviewAccountBuilder.Build(snapshot, decided);
         var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, inactivityDays, now, decided);
-        var findings = AccessReviewFindingsBuilder.Build(snapshot, accounts, kpis, inactivityDays, now, decided);
-        return Ok(ToResponse(snapshot, accounts, kpis, findings, decided, inactivityDays));
+        // Delta contra la corrida anterior finalizada: es lo que permite mirar solo lo que cambio.
+        var previousRun = await store.GetPreviousFinishedRunAsync(clientId, run.RunId, ct);
+        var previous = previousRun is null ? null : await store.GetSnapshotAsync(previousRun.RunId, ct);
+        var delta = AccessReviewDeltaBuilder.Build(snapshot, previous);
+
+        var findings = AccessReviewFindingsBuilder.Build(snapshot, accounts, kpis, inactivityDays, now, decided, delta);
+        return Ok(ToResponse(snapshot, accounts, kpis, findings, decided, delta, inactivityDays));
     }
 
     [HttpGet("clients/{clientId:int}/access-review/runs")]
@@ -109,8 +114,12 @@ public sealed class AccessReviewController(
         var decided = await decisions.GetForClientAsync(clientId, ct);
         var accounts = AccessReviewAccountBuilder.Build(snapshot, decided);
         var kpis = AccessReviewKpiCalculator.Compute(snapshot, accounts, inactivityDays, now, decided);
-        var findings = AccessReviewFindingsBuilder.Build(snapshot, accounts, kpis, inactivityDays, now, decided);
-        var result = excel.Generate(clientName, snapshot, accounts, kpis, findings, decided.Values.ToList(), inactivityDays);
+        var previousRun = await store.GetPreviousFinishedRunAsync(clientId, run.RunId, ct);
+        var previous = previousRun is null ? null : await store.GetSnapshotAsync(previousRun.RunId, ct);
+        var delta = AccessReviewDeltaBuilder.Build(snapshot, previous);
+
+        var findings = AccessReviewFindingsBuilder.Build(snapshot, accounts, kpis, inactivityDays, now, decided, delta);
+        var result = excel.Generate(clientName, snapshot, accounts, kpis, findings, decided.Values.ToList(), delta, inactivityDays);
         return File(result.Bytes, XlsxContentType, result.FileName);
     }
 
@@ -181,8 +190,9 @@ public sealed class AccessReviewController(
 
     private static object ToResponse(AccessReviewSnapshot s, IReadOnlyList<AccessAccountRow> accounts,
         AccessReviewKpis k, IReadOnlyList<AccessFinding> findings,
-        IReadOnlyDictionary<string, AccessDecision> decided, int inactivityDays)
+        IReadOnlyDictionary<string, AccessDecision> decided, AccessReviewDelta delta, int inactivityDays)
     {
+        var nuevos = delta.NuevosAccesos.Select(i => i.AccessKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var graphComplete = AccessReviewAccountBuilder.GraphComplete(s);
 
         AccessDecision? DecisionFor(AccessAssignmentRow a) =>
@@ -198,6 +208,20 @@ public sealed class AccessReviewController(
         // Lo decide el backend (misma regla que usa el AccountBuilder) para que el front no tenga
         // que rederivar cuándo un indicador de Entra ID está medido y cuándo no.
         graph_complete = graphComplete,
+        delta = new
+        {
+            has_previous = delta.HasPrevious,
+            previous_run_id = delta.PreviousRunId,
+            previous_finished_at = delta.PreviousFinishedAt,
+            nuevos_accesos = delta.NuevosAccesos.Count,
+            accesos_removidos = delta.AccesosRemovidos.Count,
+            nuevos_global_admins = delta.NuevosGlobalAdmins,
+            global_admins_removidos = delta.GlobalAdminsRemovidos,
+            nuevos_guests = delta.NuevosGuests,
+            guests_removidos = delta.GuestsRemovidos,
+            // Los principals de lo nuevo, para que el front pueda filtrar por "solo nuevos".
+            nuevos_principals = delta.NuevosAccesos.Select(i => i.PrincipalObjectId).Distinct(),
+        },
         kpis = new
         {
             total_asignaciones = k.TotalAsignaciones,
@@ -298,6 +322,8 @@ public sealed class AccessReviewController(
             decision_decided_by = DecisionFor(a)?.DecidedBy,
             decision_decided_at = DecisionFor(a)?.DecidedAt,
             decision_runs_since = DecisionFor(a)?.RunsSince,
+            environment = AccessReviewEnvironment.Classify(a.SubscriptionName),
+            is_new = nuevos.Contains(AccessReviewAccessKey.For(a.PrincipalObjectId, a.RoleDefinitionId, a.Scope)),
         }),
         guests = s.Guests.Select(g => new
         {

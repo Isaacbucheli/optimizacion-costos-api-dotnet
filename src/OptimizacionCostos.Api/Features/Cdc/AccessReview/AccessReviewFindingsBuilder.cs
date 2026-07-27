@@ -20,9 +20,11 @@ public static class AccessReviewFindingsBuilder
     public static IReadOnlyList<AccessFinding> Build(
         AccessReviewSnapshot snapshot, IReadOnlyList<AccessAccountRow> accounts,
         AccessReviewKpis kpis, int inactivityDays, DateTimeOffset now,
-        IReadOnlyDictionary<string, AccessDecision>? decisions = null)
+        IReadOnlyDictionary<string, AccessDecision>? decisions = null,
+        AccessReviewDelta? delta = null)
     {
         decisions ??= new Dictionary<string, AccessDecision>();
+        delta ??= AccessReviewDelta.Empty;
 
         string Key(AccessAssignmentRow a) =>
             AccessReviewAccessKey.For(a.PrincipalObjectId, a.RoleDefinitionId, a.Scope);
@@ -190,6 +192,28 @@ public static class AccessReviewFindingsBuilder
                 "Escalar con el responsable de cada acceso: o se revoca, o se documenta por que se mantiene y se cambia la decision a justificado. Un pendiente que se arrastra entre revisiones es peor que no haberlo detectado, porque ya hay constancia de que se sabia.",
                 true, null),
 
+            // ── Novedades respecto de la corrida anterior (bloque 4) ──
+            ByKeys("nuevo_acceso_elevado", AccessFindingSeverity.Alta,
+                "Accesos con privilegio elevado otorgados desde la revisión anterior",
+                delta.NuevosAccesos.Where(i => AccessReviewRoleClassifier.IsElevated(i.RoleClass)).ToList(),
+                (cuentas, accesos) => $"Se otorgaron {accesos} accesos con privilegio elevado a {cuentas} cuentas desde la corrida anterior"
+                    + (delta.PreviousFinishedAt is null ? "." : $" ({delta.PreviousFinishedAt:yyyy-MM-dd}).")
+                    + " Entre las dos revisiones alguien concedió ese privilegio.",
+                "Confirmar quién lo otorgó y con qué autorización. Si el alta fue legítima, justificarla acá para que no vuelva a aparecer como novedad; si no, revocarla.",
+                delta.HasPrevious, "No evaluable: es la primera corrida de este cliente, no hay con qué comparar."),
+
+            Count("nuevo_global_admin", AccessFindingSeverity.Alta,
+                "Global Admins nuevos desde la revisión anterior",
+                delta.NuevosGlobalAdmins.Count,
+                delta.NuevosGlobalAdmins.Count == 0
+                    ? "No hay Global Administrators nuevos respecto de la corrida anterior."
+                    : $"Aparecieron {delta.NuevosGlobalAdmins.Count} Global Administrators nuevos: {string.Join(", ", delta.NuevosGlobalAdmins.Take(10))}.",
+                "Es el privilegio más alto del tenant: validar la autorización del alta y si corresponde un rol más específico activado vía PIM.",
+                delta.HasPrevious && graphOk,
+                delta.HasPrevious ? SinGraph : "No evaluable: es la primera corrida de este cliente, no hay con qué comparar."),
+
+            Segregacion(assignments, decisions),
+
             Scope(snapshot, graphOk, signInOk),
         ];
 
@@ -214,6 +238,70 @@ public static class AccessReviewFindingsBuilder
         ("ServicePrincipal", 1) => "service principal", ("ServicePrincipal", _) => "service principals",
         (_, 1) => type, _ => type,
     };
+
+    /// <summary>Regla sobre items del delta, que ya vienen deduplicados por clave de acceso.</summary>
+    private static AccessFinding ByKeys(
+        string key, string severity, string title, IReadOnlyList<AccessDeltaItem> items,
+        Func<int, int, string> detail, string recommendation, bool evaluable, string? reason)
+    {
+        if (!evaluable) return NotEvaluable(key, severity, title, recommendation, reason);
+
+        var principals = items.Select(i => i.PrincipalObjectId).Distinct().Order().ToList();
+        return new AccessFinding(key, severity, title,
+            items.Count == 0
+                ? "No hay accesos elevados nuevos respecto de la corrida anterior."
+                : detail(principals.Count, items.Count),
+            recommendation, true, null, principals.Count, items.Count, principals);
+    }
+
+    /// <summary>
+    /// Mismo principal con el mismo rol elevado en produccion y en no-produccion. Solo se miran
+    /// asignaciones de suscripcion o menores: un Owner en root alcanza todos los ambientes por
+    /// definicion, pero eso ya lo reporta owner_en_raiz e incluirlo aca duplicaria el hallazgo.
+    /// El ambiente se INFIERE del nombre de la suscripcion, y el texto lo dice.
+    /// </summary>
+    private static AccessFinding Segregacion(
+        IReadOnlyList<AccessAssignmentRow> assignments, IReadOnlyDictionary<string, AccessDecision> decisions)
+    {
+        const string key = "sin_segregacion_ambientes";
+        const string title = "Mismo privilegio en produccion y en no produccion";
+        const string recommendation =
+            "Separar los grupos administrativos por ambiente y asignar RBAC al grupo, no a la persona. "
+            + "El acceso a produccion deberia requerir activacion via PIM con aprobacion, no ser permanente.";
+
+        var relevantes = assignments
+            .Where(a => a.ScopeLevel is "subscription" or "resource_group" or "resource")
+            .Where(a => AccessReviewRoleClassifier.IsElevated(a.RoleClass))
+            .Select(a => new
+            {
+                a.PrincipalObjectId,
+                Role = AccessReviewRoleClassifier.RoleKey(a.RoleDefinitionId),
+                Env = AccessReviewEnvironment.Classify(a.SubscriptionName),
+            })
+            .Where(x => AccessReviewEnvironment.IsKnown(x.Env))
+            .ToList();
+
+        var ambientes = relevantes.Select(x => x.Env).Distinct().ToList();
+        if (ambientes.Count < 2)
+            return NotEvaluable(key, AccessFindingSeverity.Alta, title, recommendation,
+                "No evaluable: no se pudieron identificar al menos dos ambientes distintos a partir de los nombres de las suscripciones.");
+
+        var cruzados = relevantes
+            .GroupBy(x => (x.PrincipalObjectId, x.Role))
+            .Where(g => g.Any(x => AccessReviewEnvironment.IsProduccion(x.Env))
+                     && g.Any(x => !AccessReviewEnvironment.IsProduccion(x.Env)))
+            .ToList();
+
+        var principals = cruzados.Select(g => g.Key.PrincipalObjectId).Distinct().Order().ToList();
+        var detail = principals.Count == 0
+            ? "No se detectaron cuentas con el mismo rol elevado en produccion y en no produccion."
+            : $"{principals.Count} cuentas tienen el mismo rol elevado en suscripciones de produccion y de no produccion "
+              + $"({cruzados.Count} combinaciones de cuenta y rol). Quien administra desarrollo tiene el mismo poder en produccion. "
+              + "El ambiente se infiere del nombre de la suscripcion.";
+
+        return new AccessFinding(key, AccessFindingSeverity.Alta, title, detail, recommendation,
+            true, null, principals.Count, cruzados.Count, principals);
+    }
 
     /// <summary>Cuantas corridas lleva sin cumplirse la revocacion mas vieja que sigue viva.</summary>
     private static int MaxRunsSince(

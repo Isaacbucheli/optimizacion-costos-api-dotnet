@@ -361,7 +361,7 @@ public class AccessReviewFindingsBuilderTests
         // Un hallazgo limpio es información: la UI los agrupa al final, pero deben existir.
         var findings = Build([Row("u1", viaGroupId: "g1")]);
 
-        Assert.Equal(16, findings.Count);   // 15 reglas + revocacion_incumplida (bloque 3)
+        Assert.Equal(19, findings.Count);   // 15 + revocacion_incumplida (b3) + 3 del bloque 4
         Assert.All(findings, f => Assert.False(string.IsNullOrWhiteSpace(f.Recommendation)));
         Assert.All(findings, f => Assert.False(string.IsNullOrWhiteSpace(f.Title)));
     }
