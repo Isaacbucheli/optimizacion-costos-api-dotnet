@@ -13,6 +13,12 @@ public static class AccessReviewFindingsBuilder
         "No evaluable: esta corrida no leyó el directorio de Entra ID (revisar el estado por credencial).";
     private const string SinP1 =
         "No evaluable: el último inicio de sesión requiere licencia Entra ID P1/P2 en el tenant del cliente.";
+    // Comparar contra un insumo parcial no da "cero cambios": da altas y bajas que nadie hizo. Es
+    // mejor decir que no se puede medir que reportar un alta de privilegio inexistente.
+    private const string SinInventarioComparable =
+        "No evaluable: alguna de las dos corridas comparadas no leyó el inventario completo de asignaciones.";
+    private const string SinDirectorioComparable =
+        "No evaluable: alguna de las dos corridas comparadas no leyó el directorio completo de Entra ID.";
 
     /// <param name="decisions">Decisiones del cliente por access_key. SOLO `justificado` descuenta:
     /// `revocar` es una promesa (mientras el acceso exista sigue siendo riesgo) y `mantener` es una
@@ -195,22 +201,26 @@ public static class AccessReviewFindingsBuilder
             // ── Novedades respecto de la corrida anterior (bloque 4) ──
             ByKeys("nuevo_acceso_elevado", AccessFindingSeverity.Alta,
                 "Accesos con privilegio elevado otorgados desde la revisión anterior",
-                delta.NuevosAccesos.Where(i => AccessReviewRoleClassifier.IsElevated(i.RoleClass)).ToList(),
+                delta.NuevosAccesos?.Where(i => AccessReviewRoleClassifier.IsElevated(i.RoleClass)).ToList() ?? [],
                 (cuentas, accesos) => $"Se otorgaron {accesos} accesos con privilegio elevado a {cuentas} cuentas desde la corrida anterior"
                     + (delta.PreviousFinishedAt is null ? "." : $" ({delta.PreviousFinishedAt:yyyy-MM-dd}).")
                     + " Entre las dos revisiones alguien concedió ese privilegio.",
                 "Confirmar quién lo otorgó y con qué autorización. Si el alta fue legítima, justificarla acá para que no vuelva a aparecer como novedad; si no, revocarla.",
-                delta.HasPrevious, "No evaluable: es la primera corrida de este cliente, no hay con qué comparar."),
+                delta.HasPrevious && delta.AccesosComparables,
+                delta.HasPrevious ? SinInventarioComparable
+                    : "No evaluable: es la primera corrida de este cliente, no hay con qué comparar."),
 
             Count("nuevo_global_admin", AccessFindingSeverity.Alta,
                 "Global Admins nuevos desde la revisión anterior",
-                delta.NuevosGlobalAdmins.Count,
-                delta.NuevosGlobalAdmins.Count == 0
+                delta.NuevosGlobalAdmins?.Count ?? 0,
+                delta.NuevosGlobalAdmins is null or { Count: 0 }
                     ? "No hay Global Administrators nuevos respecto de la corrida anterior."
                     : $"Aparecieron {delta.NuevosGlobalAdmins.Count} Global Administrators nuevos: {string.Join(", ", delta.NuevosGlobalAdmins.Take(10))}.",
                 "Es el privilegio más alto del tenant: validar la autorización del alta y si corresponde un rol más específico activado vía PIM.",
-                delta.HasPrevious && graphOk,
-                delta.HasPrevious ? SinGraph : "No evaluable: es la primera corrida de este cliente, no hay con qué comparar."),
+                delta.HasPrevious && graphOk && delta.DirectorioComparable,
+                delta.HasPrevious
+                    ? (graphOk ? SinDirectorioComparable : SinGraph)
+                    : "No evaluable: es la primera corrida de este cliente, no hay con qué comparar."),
 
             Segregacion(assignments, decisions),
 

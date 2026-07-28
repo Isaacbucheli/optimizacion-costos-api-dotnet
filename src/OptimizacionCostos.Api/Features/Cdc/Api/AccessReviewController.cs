@@ -192,7 +192,7 @@ public sealed class AccessReviewController(
         AccessReviewKpis k, IReadOnlyList<AccessFinding> findings,
         IReadOnlyDictionary<string, AccessDecision> decided, AccessReviewDelta delta, int inactivityDays)
     {
-        var nuevos = delta.NuevosAccesos.Select(i => i.AccessKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var nuevos = (delta.NuevosAccesos ?? []).Select(i => i.AccessKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var graphComplete = AccessReviewAccountBuilder.GraphComplete(s);
 
         AccessDecision? DecisionFor(AccessAssignmentRow a) =>
@@ -213,14 +213,19 @@ public sealed class AccessReviewController(
             has_previous = delta.HasPrevious,
             previous_run_id = delta.PreviousRunId,
             previous_finished_at = delta.PreviousFinishedAt,
-            nuevos_accesos = delta.NuevosAccesos.Count,
-            accesos_removidos = delta.AccesosRemovidos.Count,
+            // null en un eje = no comparable (una de las dos corridas leyó su insumo a medias), que no
+            // es lo mismo que cero cambios. El front lo muestra como "n/d" en vez de afirmar altas y
+            // bajas que nadie hizo.
+            accesos_comparables = delta.AccesosComparables,
+            directorio_comparable = delta.DirectorioComparable,
+            nuevos_accesos = delta.NuevosAccesos?.Count,
+            accesos_removidos = delta.AccesosRemovidos?.Count,
             nuevos_global_admins = delta.NuevosGlobalAdmins,
             global_admins_removidos = delta.GlobalAdminsRemovidos,
             nuevos_guests = delta.NuevosGuests,
             guests_removidos = delta.GuestsRemovidos,
             // Los principals de lo nuevo, para que el front pueda filtrar por "solo nuevos".
-            nuevos_principals = delta.NuevosAccesos.Select(i => i.PrincipalObjectId).Distinct(),
+            nuevos_principals = (delta.NuevosAccesos ?? []).Select(i => i.PrincipalObjectId).Distinct(),
         },
         kpis = new
         {

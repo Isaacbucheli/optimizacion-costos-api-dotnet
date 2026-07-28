@@ -155,12 +155,21 @@ public sealed class AccessReviewExcelExporter : IAccessReviewExcelExporter
         };
 
         // Cambios respecto de la corrida anterior: lo nuevo primero, que es lo que hay que revisar.
-        Sheet(wb, "Cambios",
-            ["Cambio", "Cuenta", "Tipo", "Rol", "Clase de rol", "Nivel de scope", "Suscripcion", "Ambiente"],
-            [.. delta.NuevosAccesos.Select(i => ("Nuevo", i)), .. delta.AccesosRemovidos.Select(i => ("Removido", i))],
-            t => [t.Item1, t.Item2.DisplayName ?? t.Item2.PrincipalObjectId, t.Item2.PrincipalType,
-                  t.Item2.RoleName, Clase(t.Item2.RoleClass), t.Item2.ScopeLevel,
-                  t.Item2.SubscriptionName ?? "", AccessReviewEnvironment.Label(t.Item2.Environment)]);
+        // Si el eje no es comparable la hoja va con una sola fila que lo dice: una hoja vacía se lee
+        // como "no cambió nada", y eso es justo lo que no sabemos.
+        if (delta.AccesosComparables)
+            Sheet(wb, "Cambios",
+                ["Cambio", "Cuenta", "Tipo", "Rol", "Clase de rol", "Nivel de scope", "Suscripcion", "Ambiente"],
+                [.. delta.NuevosAccesos!.Select(i => ("Nuevo", i)), .. delta.AccesosRemovidos!.Select(i => ("Removido", i))],
+                t => [t.Item1, t.Item2.DisplayName ?? t.Item2.PrincipalObjectId, t.Item2.PrincipalType,
+                      t.Item2.RoleName, Clase(t.Item2.RoleClass), t.Item2.ScopeLevel,
+                      t.Item2.SubscriptionName ?? "", AccessReviewEnvironment.Label(t.Item2.Environment)]);
+        else
+            Sheet(wb, "Cambios", ["Cambio"],
+                new[] { delta.HasPrevious
+                    ? "No comparable: alguna de las dos corridas no leyó el inventario completo de asignaciones."
+                    : "Primera corrida de este cliente: no hay corrida anterior con la que comparar." },
+                t => [t]);
 
         Sheet(wb, "Decisiones",
             ["Decision", "Cuenta / hallazgo", "Rol", "Scope", "Nota", "Decidido por", "Fecha",

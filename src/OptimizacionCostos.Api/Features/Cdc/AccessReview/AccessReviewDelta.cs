@@ -8,18 +8,31 @@ public sealed record AccessDeltaItem(
 /// <summary>
 /// Diferencia entre la corrida actual y la anterior finalizada. `PreviousRunId` null = primera
 /// corrida del cliente: no hay novedad que reportar (distinto de "no cambió nada").
+/// <para>
+/// Los ejes van en NULL cuando su insumo estuvo incompleto en CUALQUIERA de las dos corridas
+/// comparadas: null = "no comparable", que no es lo mismo que "no cambió". Sin esa distinción,
+/// comparar contra una corrida parcial hacía que la franja afirmara en rojo "Global Admins nuevos:
+/// &lt;todos&gt;" cuando nadie recibió nada: el eje simplemente estaba vacío en la corrida anterior
+/// porque no se pudo leer el directorio.
+/// </para>
 /// </summary>
 public sealed record AccessReviewDelta(
     int? PreviousRunId, DateTimeOffset? PreviousFinishedAt,
-    IReadOnlyList<AccessDeltaItem> NuevosAccesos,
-    IReadOnlyList<AccessDeltaItem> AccesosRemovidos,
-    IReadOnlyList<string> NuevosGlobalAdmins,
-    IReadOnlyList<string> GlobalAdminsRemovidos,
-    int NuevosGuests, int GuestsRemovidos)
+    IReadOnlyList<AccessDeltaItem>? NuevosAccesos,
+    IReadOnlyList<AccessDeltaItem>? AccesosRemovidos,
+    IReadOnlyList<string>? NuevosGlobalAdmins,
+    IReadOnlyList<string>? GlobalAdminsRemovidos,
+    int? NuevosGuests, int? GuestsRemovidos)
 {
     public bool HasPrevious => PreviousRunId is not null;
 
-    public static AccessReviewDelta Empty { get; } = new(null, null, [], [], [], [], 0, 0);
+    /// <summary>Los accesos (eje ARM) son comparables.</summary>
+    public bool AccesosComparables => NuevosAccesos is not null;
+
+    /// <summary>Los ejes de directorio (Global Admins, invitados) son comparables.</summary>
+    public bool DirectorioComparable => NuevosGlobalAdmins is not null;
+
+    public static AccessReviewDelta Empty { get; } = new(null, null, null, null, null, null, null, null);
 }
 
 /// <summary>
@@ -34,6 +47,16 @@ public static class AccessReviewDeltaBuilder
     {
         if (previous is null) return AccessReviewDelta.Empty;
 
+        // Un eje solo se compara si su insumo estuvo completo en LAS DOS corridas. Si en una de ellas
+        // fallo, su ausencia no significa que algo se removio ni que algo aparecio.
+        var armOk = ArmCompleto(current) && ArmCompleto(previous);
+        var dirOk = AccessReviewAccountBuilder.GraphComplete(current)
+                    && AccessReviewAccountBuilder.GraphComplete(previous);
+
+        if (!armOk && !dirOk)
+            return new AccessReviewDelta(previous.Run.RunId, previous.Run.FinishedAt,
+                null, null, null, null, null, null);
+
         var antes = Index(previous);
         var ahora = Index(current);
 
@@ -45,15 +68,21 @@ public static class AccessReviewDeltaBuilder
 
         return new AccessReviewDelta(
             previous.Run.RunId, previous.Run.FinishedAt,
-            [.. nuevos.OrderByDescending(i => Weight(i.RoleClass)).ThenBy(i => i.DisplayName ?? i.PrincipalObjectId)],
-            [.. removidos.OrderByDescending(i => Weight(i.RoleClass)).ThenBy(i => i.DisplayName ?? i.PrincipalObjectId)],
-            [.. current.GlobalAdmins.Where(g => !gaAntes.Contains(g.ObjectId))
-                .Select(g => g.DisplayName ?? g.Upn ?? g.ObjectId).Order()],
-            [.. previous.GlobalAdmins.Where(g => !gaAhora.Contains(g.ObjectId))
-                .Select(g => g.DisplayName ?? g.Upn ?? g.ObjectId).Order()],
-            NuevosGuests: current.Guests.Count(g => previous.Guests.All(p => !string.Equals(p.ObjectId, g.ObjectId, StringComparison.OrdinalIgnoreCase))),
-            GuestsRemovidos: previous.Guests.Count(g => current.Guests.All(p => !string.Equals(p.ObjectId, g.ObjectId, StringComparison.OrdinalIgnoreCase))));
+            armOk ? [.. nuevos.OrderByDescending(i => Weight(i.RoleClass)).ThenBy(i => i.DisplayName ?? i.PrincipalObjectId)] : null,
+            armOk ? [.. removidos.OrderByDescending(i => Weight(i.RoleClass)).ThenBy(i => i.DisplayName ?? i.PrincipalObjectId)] : null,
+            dirOk ? [.. current.GlobalAdmins.Where(g => !gaAntes.Contains(g.ObjectId))
+                .Select(g => g.DisplayName ?? g.Upn ?? g.ObjectId).Order()] : null,
+            dirOk ? [.. previous.GlobalAdmins.Where(g => !gaAhora.Contains(g.ObjectId))
+                .Select(g => g.DisplayName ?? g.Upn ?? g.ObjectId).Order()] : null,
+            NuevosGuests: dirOk ? current.Guests.Count(g => previous.Guests.All(p => !string.Equals(p.ObjectId, g.ObjectId, StringComparison.OrdinalIgnoreCase))) : null,
+            GuestsRemovidos: dirOk ? previous.Guests.Count(g => current.Guests.All(p => !string.Equals(p.ObjectId, g.ObjectId, StringComparison.OrdinalIgnoreCase))) : null);
     }
+
+    /// <summary>El inventario de asignaciones (ARM) se leyo completo en todas las credenciales. Una
+    /// suscripcion que fallo deja sus asignaciones ausentes, y la corrida siguiente las veria como
+    /// nuevas o removidas sin que nadie haya tocado nada.</summary>
+    private static bool ArmCompleto(AccessReviewSnapshot s) =>
+        s.Run.Status != "error" && s.Credentials.All(c => c.ArmStatus == "ok");
 
     /// <summary>Lo elevado primero: es lo que hay que mirar de lo que cambió.</summary>
     private static int Weight(string? roleClass) => roleClass switch
