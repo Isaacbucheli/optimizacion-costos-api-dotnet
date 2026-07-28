@@ -17,7 +17,7 @@ public sealed class SqlWafCatalogStore(ISqlConnectionFactory factory) : IWafCata
                is_excluded, exclusion_reason, consolidates_to_id,
                ai_review_status, ai_decision, ai_confidence, ai_possible_additional_cost,
                ai_cost_reason, ai_exclusion_reason, ai_duplicate_group_key, ai_raw_model_text,
-               ai_reviewed_by, ai_reviewed_at, created_at, updated_at
+               ai_reviewed_by, ai_reviewed_at, created_at, updated_at, advisor_name_en
         FROM dbo.waf_recommendation_canonical
         """;
 
@@ -33,8 +33,11 @@ public sealed class SqlWafCatalogStore(ISqlConnectionFactory factory) : IWafCata
     public async Task<(int CanonicalId, byte Pillar, bool Created)> GetOrCreateCanonicalAsync(
         SqlConnection conn, SqlTransaction tx, AdvisorRow row,
         Func<SqlConnection, SqlTransaction, AdvisorRow, Task<int?>>? dedupResolver,
-        CancellationToken ct)
+        string source, CancellationToken ct)
     {
+        // Solo el sync contra la API de Advisor garantiza texto original en inglés.
+        var fromAdvisorApi = string.Equals(source, "advisor", StringComparison.OrdinalIgnoreCase);
+
         // 1. Match exacto por firma (advisor_name, advisor_category) case-insensitive.
         await using (var find = conn.CreateCommand())
         {
@@ -46,9 +49,21 @@ public sealed class SqlWafCatalogStore(ISqlConnectionFactory factory) : IWafCata
                 """;
             find.Parameters.Add(new SqlParameter("@name", row.AdvisorName));
             find.Parameters.Add(new SqlParameter("@category", row.AdvisorCategory));
-            await using var r = await find.ExecuteReaderAsync(ct);
-            if (await r.ReadAsync(ct))
-                return (r.GetInt32(0), r.GetByte(1), false);
+            int? matched = null;
+            byte pillarFound = 0;
+            await using (var r = await find.ExecuteReaderAsync(ct))
+            {
+                if (await r.ReadAsync(ct))
+                {
+                    matched = r.GetInt32(0);
+                    pillarFound = r.GetByte(1);
+                }
+            }
+            if (matched is int exactId)
+            {
+                if (fromAdvisorApi) await SeedAdvisorNameEnAsync(conn, tx, exactId, row.AdvisorName, ct);
+                return (exactId, pillarFound, false);
+            }
         }
 
         // 2. Dedup (alias aprendido / IA): si confirma, reutiliza esa canónica.
@@ -57,13 +72,22 @@ public sealed class SqlWafCatalogStore(ISqlConnectionFactory factory) : IWafCata
             var matchedId = await dedupResolver(conn, tx, row);
             if (matchedId is int mid)
             {
-                await using var pcmd = conn.CreateCommand();
-                pcmd.Transaction = tx;
-                pcmd.CommandText = "SELECT pillar_number FROM dbo.waf_recommendation_canonical WHERE canonical_id = @id";
-                pcmd.Parameters.Add(new SqlParameter("@id", mid));
-                await using var pr = await pcmd.ExecuteReaderAsync(ct);
-                if (await pr.ReadAsync(ct))
-                    return (mid, pr.GetByte(0), false);
+                byte? matchedPillar = null;
+                await using (var pcmd = conn.CreateCommand())
+                {
+                    pcmd.Transaction = tx;
+                    pcmd.CommandText = "SELECT pillar_number FROM dbo.waf_recommendation_canonical WHERE canonical_id = @id";
+                    pcmd.Parameters.Add(new SqlParameter("@id", mid));
+                    await using var pr = await pcmd.ExecuteReaderAsync(ct);
+                    if (await pr.ReadAsync(ct)) matchedPillar = pr.GetByte(0);
+                }
+                if (matchedPillar is byte pillarValue)
+                {
+                    // La canónica pudo nacer en español (Excel/legacy) y recién ahora recibir la fila
+                    // de Advisor: es la única vía por la que esas filas consiguen su original.
+                    if (fromAdvisorApi) await SeedAdvisorNameEnAsync(conn, tx, mid, row.AdvisorName, ct);
+                    return (mid, pillarValue, false);
+                }
             }
         }
 
@@ -75,11 +99,12 @@ public sealed class SqlWafCatalogStore(ISqlConnectionFactory factory) : IWafCata
             INSERT INTO dbo.waf_recommendation_canonical (
                 advisor_name, advisor_category, pillar_number,
                 review_scope_es, benefit_es, client_action_es, bit_action_es,
-                ai_review_status
+                ai_review_status, advisor_name_en
             )
             OUTPUT INSERTED.canonical_id
-            VALUES (@name, @category, @pillar, @scope, @benefit, @clientAction, @bitAction, 'pending')
+            VALUES (@name, @category, @pillar, @scope, @benefit, @clientAction, @bitAction, 'pending', @nameEn)
             """;
+        ins.Parameters.Add(new SqlParameter("@nameEn", fromAdvisorApi ? row.AdvisorName : (object)DBNull.Value));
         ins.Parameters.Add(new SqlParameter("@name", row.AdvisorName));
         ins.Parameters.Add(new SqlParameter("@category", row.AdvisorCategory));
         ins.Parameters.Add(new SqlParameter("@pillar", pillar));
@@ -92,6 +117,28 @@ public sealed class SqlWafCatalogStore(ISqlConnectionFactory factory) : IWafCata
             "Revisar el hallazgo, completar el contexto tecnico y proponer acciones."));
         var newId = (int)(await ins.ExecuteScalarAsync(ct))!;
         return (newId, pillar, true);
+    }
+
+    /// <summary>
+    /// Siembra el título original de Azure Advisor. FIRST-WRITE-WINS (el AND ... IS NULL no es
+    /// opcional): varias filas distintas de Advisor pueden consolidarse en una misma canónica, y
+    /// sobrescribir haría que el texto cambie de un sync a otro según el orden de proceso. Los otros
+    /// títulos del grupo quedan en waf_canonical_alias.
+    /// </summary>
+    private static async Task SeedAdvisorNameEnAsync(
+        SqlConnection conn, SqlTransaction tx, int canonicalId, string advisorName, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(advisorName)) return;
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = """
+            UPDATE dbo.waf_recommendation_canonical
+            SET advisor_name_en = @nameEn, updated_at = SYSUTCDATETIME()
+            WHERE canonical_id = @id AND advisor_name_en IS NULL
+            """;
+        cmd.Parameters.Add(new SqlParameter("@nameEn", advisorName));
+        cmd.Parameters.Add(new SqlParameter("@id", canonicalId));
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     /// <summary>
@@ -495,5 +542,6 @@ public sealed class SqlWafCatalogStore(ISqlConnectionFactory factory) : IWafCata
         AiReviewedBy: r.IsDBNull(19) ? null : r.GetString(19),
         AiReviewedAt: r.IsDBNull(20) ? null : r.GetDateTime(20),
         CreatedAt: r.GetDateTime(21),
-        UpdatedAt: r.GetDateTime(22));
+        UpdatedAt: r.GetDateTime(22),
+        AdvisorNameEn: r.IsDBNull(23) ? null : r.GetString(23));
 }

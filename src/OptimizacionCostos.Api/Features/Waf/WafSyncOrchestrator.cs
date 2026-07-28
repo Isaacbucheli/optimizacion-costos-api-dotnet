@@ -331,7 +331,7 @@ public sealed class WafSyncOrchestrator(
                    is_excluded, exclusion_reason, consolidates_to_id,
                    ai_review_status, ai_decision, ai_confidence, ai_possible_additional_cost,
                    ai_cost_reason, ai_exclusion_reason, ai_duplicate_group_key, ai_raw_model_text,
-                   ai_reviewed_by, ai_reviewed_at, created_at, updated_at
+                   ai_reviewed_by, ai_reviewed_at, created_at, updated_at, advisor_name_en
             FROM dbo.waf_recommendation_canonical
             WHERE canonical_id = @id
             """;
@@ -361,7 +361,8 @@ public sealed class WafSyncOrchestrator(
             AiReviewedBy: r.IsDBNull(19) ? null : r.GetString(19),
             AiReviewedAt: r.IsDBNull(20) ? null : r.GetDateTime(20),
             CreatedAt: r.GetDateTime(21),
-            UpdatedAt: r.GetDateTime(22));
+            UpdatedAt: r.GetDateTime(22),
+            AdvisorNameEn: r.IsDBNull(23) ? null : r.GetString(23));
     }
 
     private static string Truncate(string? value, int max) =>

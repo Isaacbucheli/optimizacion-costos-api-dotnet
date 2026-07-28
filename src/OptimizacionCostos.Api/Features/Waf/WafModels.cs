@@ -13,7 +13,11 @@ public sealed record WafCanonical(
     string? AiReviewStatus, string? AiDecision, decimal? AiConfidence,
     bool? AiPossibleAdditionalCost, string? AiCostReason, string? AiExclusionReason,
     string? AiDuplicateGroupKey, string? AiRawModelText, string? AiReviewedBy, DateTime? AiReviewedAt,
-    DateTime CreatedAt, DateTime UpdatedAt);
+    DateTime CreatedAt, DateTime UpdatedAt,
+    // Título tal cual lo devolvió Azure Advisor (NULL = no hay original conocido). Lo siembra solo la
+    // ingesta con source='advisor'; advisor_name NO sirve para esto porque es la firma de dedup y en
+    // las canónicas de Excel/legacy trae el título en español de la matriz BIT.
+    string? AdvisorNameEn = null);
 
 // Vínculo cliente↔canónica
 public sealed record WafRecommendation(
