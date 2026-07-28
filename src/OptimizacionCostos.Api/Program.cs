@@ -26,6 +26,9 @@ builder.Services.AddControllers().AddJsonOptions(o =>
 
 // Datos y auth
 builder.Services.AddSingleton<ISqlConnectionFactory, SqlConnectionFactory>();
+// Conexión a la BD del tablero de pendientes (Seguimiento CDC): otro servidor, otro dueño del
+// esquema. Si faltan las SQL_*2 la factory queda "no configurada" y solo ese módulo responde 503.
+builder.Services.AddSingleton<ISeguimientoSqlConnectionFactory, SeguimientoSqlConnectionFactory>();
 
 // Capa de integración Azure (B1, fundamento de import/credenciales/suscripciones/optimización/CDC):
 //   - KeyVaultService: guarda/lee/borra client_secret en Key Vault (DefaultAzureCredential).
@@ -114,6 +117,8 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.PolicyCatalog.IPolicy
 // Asignación de consultores (Gestión CDC): personas + asignaciones N:N + reasignación masiva.
 // Schema lazy SIN seed (datos sensibles de clientes reales; repos públicos).
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Consultants.IConsultantsStore, OptimizacionCostos.Api.Features.Consultants.SqlConsultantsStore>();
+// Pendientes y bloqueantes (Gestión CDC): usa la BD del tablero, NO la de la plataforma.
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Pendientes.IPendientesStore, OptimizacionCostos.Api.Features.Pendientes.SqlPendientesStore>();
 builder.Services.AddBitJwtAuth(config);
 
 // Identidad: emisión de JWT (login/bootstrap) + administración de usuarios y asignaciones (B3).
