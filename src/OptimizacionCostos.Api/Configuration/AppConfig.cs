@@ -12,6 +12,14 @@ public sealed class AppConfig
     public string SqlUsername { get; init; } = "";
     public string SqlPassword { get; init; } = "";
 
+    // Segunda BD (SQL_*2): tablero de pendientes/bloqueantes "Seguimiento CDC". Vive en OTRO servidor
+    // Azure SQL y la administra otro sistema (la SWA del tablero, que sigue en uso), así que la app
+    // solo lee y escribe filas: nunca hace DDL. Si faltan, el módulo queda apagado (503), no roto.
+    public string Sql2Server { get; init; } = "";
+    public string Sql2Database { get; init; } = "";
+    public string Sql2Username { get; init; } = "";
+    public string Sql2Password { get; init; } = "";
+
     public string JwtSecret { get; init; } = "";
     public int AuthTokenMinutes { get; init; } = 480;
     // Habilita POST /auth/bootstrap (crear primer admin). Default false (paridad con FastAPI).
@@ -83,6 +91,10 @@ public sealed class AppConfig
             SqlDatabase = Get("SQL_DATABASE"),
             SqlUsername = Get("SQL_USERNAME"),
             SqlPassword = Get("SQL_PASSWORD"),
+            Sql2Server = Get("SQL_SERVER2"),
+            Sql2Database = Get("SQL_DATABASE2"),
+            Sql2Username = Get("SQL_USERNAME2"),
+            Sql2Password = Get("SQL_PASSWORD2"),
             KeyVaultUrl = Get("KEY_VAULT_URL"),
             StorageAccountName = Get("STORAGE_ACCOUNT_NAME"),
             StorageContainerUploads = Get("STORAGE_CONTAINER_UPLOADS", "uploads"),

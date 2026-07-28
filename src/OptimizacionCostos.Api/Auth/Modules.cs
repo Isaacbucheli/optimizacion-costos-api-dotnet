@@ -24,6 +24,10 @@ public static class Modules
     public const string Policies = "policies";
     public const string Consultants = "consultants";
     public const string AccessReview = "access-review";
+    // Tablero de pendientes/bloqueantes: un módulo por área, para que Infra y CDC se puedan
+    // habilitar por separado (decisión del usuario, 2026-07-28).
+    public const string PendientesCdc = "pendientes-cdc";
+    public const string PendientesInfra = "pendientes-infra";
 
     public static readonly IReadOnlyList<ModuleInfo> All =
     [
@@ -39,6 +43,8 @@ public static class Modules
         new(Policies, "Catálogo de políticas", "Gestión CDC"),
         new(Consultants, "Asignación de consultores", "Gestión CDC"),
         new(AccessReview, "Revisión de accesos", "Gestión CDC"),
+        new(PendientesCdc, "Pendientes CDC", "Gestión CDC"),
+        new(PendientesInfra, "Pendientes Infra & SSAA", "Gestión CDC"),
     ];
 
     public static readonly HashSet<string> ValidKeys =
