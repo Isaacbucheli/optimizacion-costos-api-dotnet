@@ -90,10 +90,12 @@ public static class AccessReviewAccountBuilder
             EscrituraServicio: PorClase(AccessReviewRoleClassifier.EscrituraServicio),
             Lectura: PorClase(AccessReviewRoleClassifier.Lectura),
             SinClasificar: efectivas.Count(e => e.RoleClass is null),
-            // A propósito se cuenta sobre las filas crudas, no sobre las efectivas: un Owner heredado
-            // desde root llega reportado bajo las N suscripciones, y "tiene acceso en N suscripciones"
-            // es la lectura correcta (colapsarlo mostraría subs=1 y subestimaría el alcance).
-            Subscriptions: rows.Select(a => a.SubscriptionId).Distinct().Count(),
+            // El alcance, no el número de filas: un Owner heredado desde root llega a las N
+            // suscripciones y "tiene acceso en N suscripciones" es la lectura correcta (contar la fila
+            // colapsada mostraría subs=1 y subestimaría el alcance). Por eso se unen las suscripciones
+            // bajo las que ARM reportó cada asignación, que es lo que preserva la deduplicación.
+            Subscriptions: rows.SelectMany(a => a.SeenInSubscriptions ?? [a.SubscriptionId])
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count(),
             BroadestScopeLevel: broadest,
             Via: via,
             AccountEnabled: rows.Select(a => a.AccountEnabled).FirstOrDefault(v => v is not null),

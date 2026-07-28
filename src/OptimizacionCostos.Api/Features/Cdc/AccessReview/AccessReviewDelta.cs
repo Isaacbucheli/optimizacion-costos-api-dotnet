@@ -102,7 +102,8 @@ public static class AccessReviewDeltaBuilder
             // Primera fila gana: las derivadas de grupo comparten el acceso efectivo.
             map.TryAdd(key, new AccessDeltaItem(
                 key, a.PrincipalObjectId, a.DisplayName, a.PrincipalType, a.RoleName, a.RoleClass,
-                a.ScopeLevel, a.SubscriptionName, AccessReviewEnvironment.Classify(a.SubscriptionName)));
+                a.ScopeLevel, a.SubscriptionName,
+                a.Environment ?? AccessReviewEnvironment.Classify(a.SubscriptionName)));
         }
         return map;
     }

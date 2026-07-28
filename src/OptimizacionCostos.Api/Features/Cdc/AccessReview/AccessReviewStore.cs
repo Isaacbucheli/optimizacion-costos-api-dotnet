@@ -388,6 +388,9 @@ public sealed class SqlAccessReviewStore(ISqlConnectionFactory factory) : IAcces
                     S(r, 12), S(r, 13), B(r, 14), Dt(r, 15), S(r, 16),
                     S(r, 17), B(r, 18) ?? false));
         }
+        // Punto único de lectura: al deduplicar acá, TODO lo que sale del snapshot cuenta lo mismo
+        // (KPIs, tabla, hallazgos, delta, Excel). Ver AccessReviewAssignments para el porqué.
+        var efectivas = AccessReviewAssignments.Distinct(assignments);
 
         var guests = new List<AccessGuestRow>();
         await using (var cmd = conn.CreateCommand())
@@ -417,6 +420,6 @@ public sealed class SqlAccessReviewStore(ISqlConnectionFactory factory) : IAcces
                 gas.Add(new(r.GetString(0), S(r, 1), S(r, 2), S(r, 3), B(r, 4), Dt(r, 5), S(r, 6)));
         }
 
-        return new AccessReviewSnapshot(run, creds, assignments, guests, gas);
+        return new AccessReviewSnapshot(run, creds, efectivas, guests, gas);
     }
 }

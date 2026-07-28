@@ -305,6 +305,10 @@ public sealed class AccessReviewController(
         {
             subscription_id = a.SubscriptionId,
             subscription_name = a.SubscriptionName,
+            // Cuántas suscripciones alcanza este acceso. Una asignación heredada (management group o
+            // root) llega a varias, y nombrar solo aquella bajo la que ARM la reportó es arbitrario:
+            // el front muestra el alcance en vez de una suscripción cualquiera.
+            subscriptions_reached = a.SeenInSubscriptions?.Count ?? 1,
             scope = a.Scope,
             scope_level = a.ScopeLevel,
             role_name = a.RoleName,
@@ -328,7 +332,7 @@ public sealed class AccessReviewController(
             decision_decided_by = DecisionFor(a)?.DecidedBy,
             decision_decided_at = DecisionFor(a)?.DecidedAt,
             decision_runs_since = DecisionFor(a)?.RunsSince,
-            environment = AccessReviewEnvironment.Classify(a.SubscriptionName),
+            environment = a.Environment ?? AccessReviewEnvironment.Classify(a.SubscriptionName),
             is_new = nuevos.Contains(AccessReviewAccessKey.For(a.PrincipalObjectId, a.RoleDefinitionId, a.Scope)),
         }),
         guests = s.Guests.Select(g => new

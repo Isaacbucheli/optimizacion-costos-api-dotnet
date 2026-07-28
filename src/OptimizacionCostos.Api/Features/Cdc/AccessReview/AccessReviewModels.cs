@@ -19,7 +19,17 @@ public sealed record AccessAssignmentRow(
     string PrincipalObjectId, string PrincipalType, string? DisplayName, string? Login,
     string? UserType, string? ViaGroupId, string? ViaGroupName,
     bool? AccountEnabled, DateTimeOffset? LastSignIn, string? MfaStatus,
-    string? RoleClass = null, bool IsCustomRole = false);
+    string? RoleClass = null, bool IsCustomRole = false,
+    /// <summary>Suscripciones bajo las que ARM reportó esta asignación. Lo llena
+    /// <see cref="AccessReviewAssignments.Distinct"/> al colapsar las repeticiones de una asignación
+    /// heredada: más de una significa que el acceso alcanza varias suscripciones, no que existan
+    /// varias asignaciones. Vacío en las filas crudas recién leídas de ARM.</summary>
+    IReadOnlyList<string>? SeenInSubscriptions = null,
+    /// <summary>Ambiente ya resuelto para esta fila. Lo llena
+    /// <see cref="AccessReviewAssignments.Distinct"/>, que es el único lugar que conoce TODAS las
+    /// suscripciones alcanzadas por un acceso heredado. Null en filas crudas: ahí se cae al nombre de
+    /// la suscripción, que para un scope de suscripción o menor es el dato correcto.</summary>
+    string? Environment = null);
 
 public sealed record AccessGuestRow(
     string ObjectId, string? DisplayName, string? Email, string? ExternalDomain,

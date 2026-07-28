@@ -11,6 +11,9 @@ public static class AccessReviewEnvironment
     public const string Produccion = "produccion";
     public const string Preproduccion = "preproduccion";
     public const string Desarrollo = "desarrollo";
+    /// <summary>El acceso está por encima de la suscripción y alcanza suscripciones de más de un
+    /// ambiente. No es "desconocido" (sí se sabe qué alcanza) ni ninguno de los tres en particular.</summary>
+    public const string Transversal = "transversal";
     public const string Desconocido = "desconocido";
 
     // Se compara por token delimitado, no por substring: "PRODUCTOS" contiene "prod" y no es
@@ -61,14 +64,37 @@ public static class AccessReviewEnvironment
 
     public static bool IsProduccion(string environment) => environment == Produccion;
 
-    /// <summary>Solo produccion, preproduccion y desarrollo cuentan como ambiente conocido.</summary>
-    public static bool IsKnown(string environment) => environment != Desconocido;
+    /// <summary>Solo produccion, preproduccion y desarrollo cuentan como ambiente conocido.
+    /// `transversal` NO: describe un acceso que abarca varios, no un ambiente al que pertenece, y la
+    /// regla de segregación compara pertenencias.</summary>
+    public static bool IsKnown(string environment) =>
+        environment is Produccion or Preproduccion or Desarrollo;
+
+    /// <summary>
+    /// Ambiente de un acceso cuyo scope está POR ENCIMA de la suscripción (management group o root).
+    /// Inferirlo del nombre de una suscripción sería arbitrario: ARM reporta la asignación heredada
+    /// una vez por cada suscripción consultada, y al colapsar las repeticiones sobrevive una
+    /// cualquiera. Medido en un cliente real, 98 de 142 filas de ese tipo afirmaban "desarrollo" o
+    /// "preproducción" por el nombre de la suscripción bajo la que ARM las devolvió, cuando el acceso
+    /// está por encima de todas ellas.
+    /// </summary>
+    public static string ForReachedSubscriptions(IEnumerable<string?> subscriptionNames)
+    {
+        var conocidos = subscriptionNames.Select(Classify).Where(IsKnown).Distinct().ToList();
+        return conocidos.Count switch
+        {
+            0 => Desconocido,        // ningún nombre alcanzado se pudo clasificar
+            1 => conocidos[0],       // todo lo que alcanza es del mismo ambiente
+            _ => Transversal,        // cruza ambientes: es la lectura correcta, y la más grave
+        };
+    }
 
     public static string Label(string environment) => environment switch
     {
         Produccion => "Producción",
         Preproduccion => "Preproducción",
         Desarrollo => "Desarrollo",
+        Transversal => "Varios ambientes",
         _ => "Sin identificar",
     };
 }
