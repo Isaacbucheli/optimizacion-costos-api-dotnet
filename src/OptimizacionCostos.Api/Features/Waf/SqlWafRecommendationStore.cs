@@ -226,7 +226,9 @@ public sealed class SqlWafRecommendationStore(ISqlConnectionFactory factory) : I
 
     // ---------- Summary / Sections ----------
 
-    public async Task<WafClientSummary> GetSummaryAsync(int clientId, bool excludeSecurityPillar = false, CancellationToken ct = default)
+    public async Task<WafClientSummary> GetSummaryAsync(
+        int clientId, bool excludeSecurityPillar = false,
+        IReadOnlyList<string>? subscriptions = null, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
         await WafSchema.EnsureWafSchemaAsync(conn, ct);
@@ -234,6 +236,11 @@ public sealed class SqlWafRecommendationStore(ISqlConnectionFactory factory) : I
         // Filtro constante (literal, no viene de input) para omitir el pilar de seguridad si el
         // cliente lo gestiona externamente (Gestión de Vulnerabilidades).
         var secFilter = excludeSecurityPillar ? $" AND c.pillar_number <> {WafConstants.SecurityPillar}" : "";
+        // Filtro por suscripción: la recomendación entra si tiene hallazgo activo en la selección, y
+        // el LEFT JOIN de hallazgos se acota para que el conteo de recursos también responda.
+        var subs = subscriptions ?? [];
+        var subRecFilter = WafSubscriptionFilter.ExistsPredicate("r", subs);
+        var subFindFilter = WafSubscriptionFilter.FindingPredicate("f", subs);
 
         int recommendations = 0, activeRecs = 0, costRecs = 0, activeFindings = 0;
         await using (var counts = conn.CreateCommand())
@@ -246,10 +253,11 @@ public sealed class SqlWafRecommendationStore(ISqlConnectionFactory factory) : I
                     COUNT(DISTINCT CASE WHEN f.status = 'active' AND COALESCE(r.is_dismissed, 0) = 0 THEN f.finding_id END) AS active_findings
                 FROM dbo.waf_recommendation r
                 INNER JOIN dbo.waf_recommendation_canonical c ON c.canonical_id = r.canonical_id
-                LEFT JOIN dbo.waf_resource_finding f ON f.recommendation_id = r.recommendation_id
-                WHERE r.client_id = @clientId{secFilter}
+                LEFT JOIN dbo.waf_resource_finding f ON f.recommendation_id = r.recommendation_id{subFindFilter}
+                WHERE r.client_id = @clientId{secFilter}{subRecFilter}
                 """;
             counts.Parameters.Add(new SqlParameter("@clientId", clientId));
+            WafSubscriptionFilter.AddParameters(counts, subs);
             await using var r = await counts.ExecuteReaderAsync(ct);
             if (await r.ReadAsync(ct))
             {
@@ -288,33 +296,42 @@ public sealed class SqlWafRecommendationStore(ISqlConnectionFactory factory) : I
         return new WafClientSummary(clientId, recommendations, activeRecs, costRecs, activeFindings, latest);
     }
 
-    public async Task<IReadOnlyList<WafSection>> GetSectionsAsync(int clientId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<WafSection>> GetSectionsAsync(
+        int clientId, IReadOnlyList<string>? subscriptions = null, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
         await WafSchema.EnsureWafSchemaAsync(conn, ct);
+
+        // Con filtro por suscripción el total de recursos NO puede salir de r.resource_count (es el
+        // del cliente completo): se cuenta sobre los hallazgos de la selección.
+        var subs = subscriptions ?? [];
+        var subRecFilter = WafSubscriptionFilter.ExistsPredicate("r", subs);
+        var resourceApply = WafSubscriptionFilter.ResourceCountApply("r", subs);
+        var resourceExpr = WafSubscriptionFilter.ResourceCountAggregate("r", subs);
 
         // Datos agregados por pilar; los pilares sin filas quedan en cero al ensamblar.
         var byPillar = new Dictionary<int, (int Total, int Resources, double Avg, int High, int Medium)>();
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = """
+            cmd.CommandText = $"""
                 SELECT
                     c.pillar_number,
                     COUNT(*) AS total_recs,
-                    COALESCE(SUM(r.resource_count), 0) AS total_resources,
+                    COALESCE(SUM({resourceExpr}), 0) AS total_resources,
                     COALESCE(AVG(CAST(COALESCE(t.completion_pct, 0) AS FLOAT)), 0) AS avg_progress,
                     SUM(CASE WHEN r.impact_number = 1 THEN 1 ELSE 0 END) AS high_recs,
                     SUM(CASE WHEN r.impact_number = 2 THEN 1 ELSE 0 END) AS medium_recs
                 FROM dbo.waf_recommendation r
                 INNER JOIN dbo.waf_recommendation_canonical c ON c.canonical_id = r.canonical_id
                 LEFT JOIN dbo.waf_recommendation_tracking t
-                    ON t.client_id = r.client_id AND t.canonical_id = r.canonical_id
+                    ON t.client_id = r.client_id AND t.canonical_id = r.canonical_id{resourceApply}
                 WHERE r.client_id = @clientId
                   AND r.is_active = 1
-                  AND COALESCE(r.is_dismissed, 0) = 0
+                  AND COALESCE(r.is_dismissed, 0) = 0{subRecFilter}
                 GROUP BY c.pillar_number
                 """;
             cmd.Parameters.Add(new SqlParameter("@clientId", clientId));
+            WafSubscriptionFilter.AddParameters(cmd, subs);
             await using var r = await cmd.ExecuteReaderAsync(ct);
             while (await r.ReadAsync(ct))
             {
@@ -328,6 +345,54 @@ public sealed class SqlWafRecommendationStore(ISqlConnectionFactory factory) : I
             }
         }
 
+        return BuildSections(byPillar);
+    }
+
+    public async Task<IReadOnlyList<WafSubscriptionOption>> ListSubscriptionsAsync(
+        int clientId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await WafSchema.EnsureWafSchemaAsync(conn, ct);
+
+        await using var cmd = conn.CreateCommand();
+        // MAX(subscription_name) porque el mismo id puede haber entrado con nombres levemente
+        // distintos entre ingestas; el id es la clave real del filtro.
+        cmd.CommandText = """
+            SELECT
+                f.subscription_id,
+                MAX(f.subscription_name) AS subscription_name,
+                COUNT(DISTINCT r.canonical_id) AS recommendations,
+                COUNT(*) AS resources
+            FROM dbo.waf_resource_finding f
+            INNER JOIN dbo.waf_recommendation r ON r.recommendation_id = f.recommendation_id
+            WHERE r.client_id = @clientId
+              AND r.is_active = 1
+              AND COALESCE(r.is_dismissed, 0) = 0
+              AND f.status = 'active'
+              AND f.subscription_id IS NOT NULL
+              AND LTRIM(RTRIM(f.subscription_id)) <> ''
+            GROUP BY f.subscription_id
+            ORDER BY COUNT(DISTINCT r.canonical_id) DESC, MAX(f.subscription_name)
+            """;
+        cmd.Parameters.Add(new SqlParameter("@clientId", clientId));
+
+        var items = new List<WafSubscriptionOption>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+        {
+            var id = r.GetString(0);
+            items.Add(new WafSubscriptionOption(
+                SubscriptionId: id,
+                SubscriptionName: r.IsDBNull(1) || r.GetString(1).Length == 0 ? id : r.GetString(1),
+                Recommendations: r.GetInt32(2),
+                Resources: r.GetInt32(3)));
+        }
+        return items;
+    }
+
+    private static IReadOnlyList<WafSection> BuildSections(
+        Dictionary<int, (int Total, int Resources, double Avg, int High, int Medium)> byPillar)
+    {
         var sections = new List<WafSection>(5);
         for (var pillar = 1; pillar <= 5; pillar++)
         {

@@ -40,3 +40,13 @@ public sealed record WafSection(
     double AvgProgress,
     int HighRecs,
     int MediumRecs);
+
+/// <summary>
+/// Opción del filtro por suscripción. Sale de los hallazgos activos, no de
+/// client_azure_subscriptions: incluye los placeholders de los clientes migrados del CDC.
+/// </summary>
+public sealed record WafSubscriptionOption(
+    string SubscriptionId,
+    string SubscriptionName,
+    int Recommendations,
+    int Resources);

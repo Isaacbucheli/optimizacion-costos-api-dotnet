@@ -72,13 +72,15 @@ public sealed class WafController(
     /// <summary>GET summary. Port de waf_client_summary.</summary>
     [HttpGet("clients/{clientId:int}/summary")]
     [RequireModule(Modules.Waf)]
-    public async Task<IActionResult> Summary(int clientId, CancellationToken ct)
+    public async Task<IActionResult> Summary(
+        int clientId, [FromQuery] string? subscriptions, CancellationToken ct)
     {
         var guard = await GuardAsync(clientId, ct);
         if (guard is not null) return guard;
 
+        var subs = WafSubscriptionFilter.Parse(subscriptions);
         var (secManaged, _) = await clientStore.GetSecurityManagementAsync(clientId, ct);
-        var s = await recommendations.GetSummaryAsync(clientId, excludeSecurityPillar: secManaged, ct);
+        var s = await recommendations.GetSummaryAsync(clientId, excludeSecurityPillar: secManaged, subscriptions: subs, ct: ct);
         return Ok(new
         {
             client_id = s.ClientId,
@@ -102,14 +104,15 @@ public sealed class WafController(
     /// <summary>GET sections — tarjetas por pilar (siempre 5). Port de waf_client_sections.</summary>
     [HttpGet("clients/{clientId:int}/sections")]
     [RequireModule(Modules.Waf)]
-    public async Task<IActionResult> Sections(int clientId, CancellationToken ct)
+    public async Task<IActionResult> Sections(
+        int clientId, [FromQuery] string? subscriptions, CancellationToken ct)
     {
         var guard = await GuardAsync(clientId, ct);
         if (guard is not null) return guard;
 
         var (managed, note) = await clientStore.GetSecurityManagementAsync(clientId, ct);
         var resolvedNote = string.IsNullOrWhiteSpace(note) ? WafConstants.SecurityManagedDefaultNote : note!;
-        var sections = await recommendations.GetSectionsAsync(clientId, ct);
+        var sections = await recommendations.GetSectionsAsync(clientId, WafSubscriptionFilter.Parse(subscriptions), ct);
         return Ok(sections.Select(x =>
         {
             // El pilar de seguridad gestionado externamente conserva la tarjeta (para el score) pero
@@ -190,16 +193,55 @@ public sealed class WafController(
         }
     }
 
-    /// <summary>GET advisor-score — último snapshot guardado (no consulta ARM). Port de waf_client_advisor_score.</summary>
-    [HttpGet("clients/{clientId:int}/advisor-score")]
+    /// <summary>
+    /// GET subscriptions — opciones del filtro por suscripción, derivadas de los hallazgos activos
+    /// (no de client_azure_subscriptions: los clientes migrados del CDC no figuran ahí).
+    /// </summary>
+    [HttpGet("clients/{clientId:int}/subscriptions")]
     [RequireModule(Modules.Waf)]
-    public async Task<IActionResult> AdvisorScore(int clientId, [FromQuery] bool detail = false, CancellationToken ct = default)
+    public async Task<IActionResult> Subscriptions(int clientId, CancellationToken ct)
     {
         var guard = await GuardAsync(clientId, ct);
         if (guard is not null) return guard;
 
-        var snapshot = await advisorScoreStore.LoadLatestSnapshotAsync(clientId, includeBreakdown: detail, ct);
-        return Ok(snapshot is null ? MissingSnapshotResponse(clientId) : SnapshotToResponse(snapshot, detail));
+        var items = await recommendations.ListSubscriptionsAsync(clientId, ct);
+        return Ok(items.Select(s => new
+        {
+            subscription_id = s.SubscriptionId,
+            subscription_name = s.SubscriptionName,
+            recommendations = s.Recommendations,
+            resources = s.Resources,
+        }));
+    }
+
+    /// <summary>GET advisor-score — último snapshot guardado (no consulta ARM). Port de waf_client_advisor_score.</summary>
+    [HttpGet("clients/{clientId:int}/advisor-score")]
+    [RequireModule(Modules.Waf)]
+    public async Task<IActionResult> AdvisorScore(
+        int clientId, [FromQuery] string? subscriptions, [FromQuery] bool detail = false, CancellationToken ct = default)
+    {
+        var guard = await GuardAsync(clientId, ct);
+        if (guard is not null) return guard;
+
+        // Con filtro hace falta el breakdown por suscripción para poder reponderar.
+        var subs = WafSubscriptionFilter.Parse(subscriptions);
+        var needBreakdown = detail || WafSubscriptionFilter.IsActive(subs);
+        var snapshot = await advisorScoreStore.LoadLatestSnapshotAsync(clientId, includeBreakdown: needBreakdown, ct);
+        if (snapshot is null) return Ok(MissingSnapshotResponse(clientId));
+
+        var response = SnapshotToResponse(snapshot, detail);
+        if (!WafSubscriptionFilter.IsActive(subs)) return Ok(response);
+
+        // Snapshot viejo sin breakdown: se devuelve el global marcado, y la UI avisa que no refleja
+        // el filtro. Preferimos eso antes que un número que no corresponde a la selección.
+        var (pillars, applied) = WafSubscriptionFilter.FilterScores(snapshot.BreakdownJson, subs);
+        response["filter_applied"] = applied;
+        if (applied)
+        {
+            response["pillars"] = pillars.ToDictionary(kv => kv.Key.ToString(), kv => kv.Value);
+            response["subscriptions_scored"] = pillars.Count == 0 ? 0 : subs.Count;
+        }
+        return Ok(response);
     }
 
     /// <summary>GET advisor-score/history — serie histórica del Advisor Score (global + pilares).</summary>
@@ -362,7 +404,8 @@ public sealed class WafController(
     [HttpGet("clients/{clientId:int}/recommendations")]
     [RequireModule(Modules.Waf)]
     public async Task<IActionResult> ListRecommendations(
-        int clientId, [FromQuery] int? pillar, [FromQuery(Name = "active_only")] bool activeOnly = true, CancellationToken ct = default)
+        int clientId, [FromQuery] int? pillar, [FromQuery] string? subscriptions,
+        [FromQuery(Name = "active_only")] bool activeOnly = true, CancellationToken ct = default)
     {
         if (pillar is not null && pillar is < 1 or > 5)
             return BadRequest(new { detail = "Pillar must be between 1 and 5" });
@@ -390,12 +433,26 @@ public sealed class WafController(
             where.Add("c.pillar_number = @pillar");
             cmd.Parameters.Add(new SqlParameter("@pillar", (byte)pillar.Value));
         }
+        // Filtro por suscripción: entra la recomendación con hallazgo activo en la selección, y el
+        // conteo de recursos pasa a ser el de esa selección (no la columna denormalizada).
+        var subs = WafSubscriptionFilter.Parse(subscriptions);
+        if (WafSubscriptionFilter.IsActive(subs))
+        {
+            where.Add($"""
+                EXISTS (SELECT 1 FROM dbo.waf_resource_finding wsf
+                        WHERE wsf.recommendation_id = r.recommendation_id
+                          AND wsf.status = 'active'
+                          AND wsf.subscription_id IN ({WafSubscriptionFilter.ParamNames(subs)}))
+                """);
+            WafSubscriptionFilter.AddParameters(cmd, subs);
+        }
+        var resourceCountExpr = WafSubscriptionFilter.ResourceCountExpr("r", subs);
         cmd.Parameters.Add(new SqlParameter("@userKey", (object?)Email ?? ""));
         cmd.CommandText = $"""
             SELECT
                 r.recommendation_id, r.canonical_id, r.matrix_code,
                 c.pillar_number, c.review_scope_es, c.benefit_es,
-                r.business_impact, r.resource_count, r.is_active,
+                r.business_impact, {resourceCountExpr} AS resource_count, r.is_active,
                 COALESCE(t.completion_pct, 0) AS completion_pct,
                 t.remediation_start_date, t.remediation_end_date, t.projected_bit_effort,
                 r.first_seen_at, r.last_seen_at,
@@ -744,7 +801,8 @@ public sealed class WafController(
     /// <summary>GET export-excel. Port de export_waf_client_excel.</summary>
     [HttpGet("clients/{clientId:int}/export-excel")]
     [RequireModule(Modules.Waf)]
-    public async Task<IActionResult> ExportExcel(int clientId, CancellationToken ct)
+    public async Task<IActionResult> ExportExcel(
+        int clientId, [FromQuery] string? subscriptions, CancellationToken ct)
     {
         var chk = await access.AssertClientAccessAsync(User, clientId, ct);
         if (!chk.Ok) return Translate(chk);
@@ -753,12 +811,16 @@ public sealed class WafController(
         var clientName = await ClientNameAsync(clientId, ct);
         if (clientName is null) return NotFound(new { detail = "Client not found" });
 
+        var subs = WafSubscriptionFilter.Parse(subscriptions);
         var (secManaged, _) = await clientStore.GetSecurityManagementAsync(clientId, ct);
-        var rows = await BuildExportRowsAsync(clientId, secManaged, ct);
+        var rows = await BuildExportRowsAsync(clientId, secManaged, subs, ct);
         var bytes = await excelExporter.ExportAsync(clientId, rows, ct);
 
         var safeName = new string((clientName ?? "").Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray()).Trim('-');
-        var fileName = $"Matriz-Optimizacion-Mejoras-{(safeName.Length > 0 ? safeName : clientId.ToString())}.xlsx";
+        // El sufijo evita confundir un export parcial con la matriz completa. No se escribe nada
+        // dentro del libro: la plantilla tiene un restore delicado que ya se rompió una vez.
+        var subsSuffix = WafSubscriptionFilter.IsActive(subs) ? $"-{subs.Count}-suscripciones" : "";
+        var fileName = $"Matriz-Optimizacion-Mejoras-{(safeName.Length > 0 ? safeName : clientId.ToString())}{subsSuffix}.xlsx";
         return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", fileName);
     }
 
@@ -972,13 +1034,17 @@ public sealed class WafController(
     }
 
     /// <summary>Arma las filas de exportación (canónica + tracking + recursos activos). Port del SELECT de export_waf_client_excel.</summary>
-    private async Task<IReadOnlyList<WafExportRow>> BuildExportRowsAsync(int clientId, bool excludeSecurity, CancellationToken ct)
+    private async Task<IReadOnlyList<WafExportRow>> BuildExportRowsAsync(
+        int clientId, bool excludeSecurity, IReadOnlyList<string> subscriptions, CancellationToken ct)
     {
         await using var conn = await factory.OpenAsync(ct);
         var rows = new List<(int RecId, WafExportRow Row)>();
         // Si la seguridad se gestiona externamente, la sección Seguridad queda vacía (placeholders):
         // se filtran las filas, sin reestructurar la plantilla del Excel.
         var secFilter = excludeSecurity ? $" AND c.pillar_number <> {WafConstants.SecurityPillar}" : "";
+        // El export hereda el filtro de la vista: mismas filas, mismos recursos y mismo conteo.
+        var subFilter = WafSubscriptionFilter.ExistsPredicate("r", subscriptions);
+        var resourceCountExpr = WafSubscriptionFilter.ResourceCountExpr("r", subscriptions);
         await using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = $"""
@@ -986,7 +1052,7 @@ public sealed class WafController(
                     r.recommendation_id, r.canonical_id, r.matrix_code,
                     c.pillar_number, c.review_scope_es, c.benefit_es,
                     c.client_action_es, c.bit_action_es,
-                    r.business_impact, r.impact_number, r.resource_count,
+                    r.business_impact, r.impact_number, {resourceCountExpr} AS resource_count,
                     COALESCE(t.completion_pct, 0) AS completion_pct,
                     t.remediation_start_date, t.projected_bit_effort,
                     t.execution_log, t.priority_override, r.last_seen_at
@@ -996,10 +1062,11 @@ public sealed class WafController(
                     ON t.client_id = r.client_id AND t.canonical_id = r.canonical_id
                 WHERE r.client_id = @cid
                   AND r.is_active = 1
-                  AND COALESCE(r.is_dismissed, 0) = 0{secFilter}
+                  AND COALESCE(r.is_dismissed, 0) = 0{secFilter}{subFilter}
                 ORDER BY c.pillar_number, r.impact_number, c.review_scope_es
                 """;
             cmd.Parameters.Add(new SqlParameter("@cid", clientId));
+            WafSubscriptionFilter.AddParameters(cmd, subscriptions);
             await using var r = await cmd.ExecuteReaderAsync(ct);
             while (await r.ReadAsync(ct))
             {
@@ -1030,12 +1097,16 @@ public sealed class WafController(
         {
             var resources = new List<string>();
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
+            var subResFilter = WafSubscriptionFilter.IsActive(subscriptions)
+                ? $" AND subscription_id IN ({WafSubscriptionFilter.ParamNames(subscriptions)})"
+                : "";
+            cmd.CommandText = $"""
                 SELECT resource_name FROM dbo.waf_resource_finding
-                WHERE recommendation_id = @rid AND status = 'active'
+                WHERE recommendation_id = @rid AND status = 'active'{subResFilter}
                 ORDER BY resource_name
                 """;
             cmd.Parameters.Add(new SqlParameter("@rid", recId));
+            WafSubscriptionFilter.AddParameters(cmd, subscriptions);
             await using var rr = await cmd.ExecuteReaderAsync(ct);
             while (await rr.ReadAsync(ct))
                 if (!rr.IsDBNull(0)) resources.Add(rr.GetString(0));
@@ -1140,7 +1211,7 @@ public sealed class WafController(
         tracking_updates = item.TrackingUpdates,
     };
 
-    private static object SnapshotToResponse(WafAdvisorScoreSnapshot s, bool includeBreakdown)
+    private static Dictionary<string, object?> SnapshotToResponse(WafAdvisorScoreSnapshot s, bool includeBreakdown)
     {
         var pillars = new Dictionary<string, decimal>();
         if (s.ScoreP1 is decimal p1) pillars["1"] = Math.Round(p1, 2);

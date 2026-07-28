@@ -48,11 +48,22 @@ public interface IWafRecommendationStore
     Task MarkReadAsync(int clientId, int canonicalId, string userKey, CancellationToken ct = default);
 
     /// <summary>Resumen de la matriz del cliente (totales + última ingestión). Port de waf_client_summary.
-    /// Si excludeSecurityPillar, los conteos omiten el pilar de seguridad (gestión externa).</summary>
-    Task<WafClientSummary> GetSummaryAsync(int clientId, bool excludeSecurityPillar = false, CancellationToken ct = default);
+    /// Si excludeSecurityPillar, los conteos omiten el pilar de seguridad (gestión externa).
+    /// subscriptions vacío = sin filtro (comportamiento histórico).</summary>
+    Task<WafClientSummary> GetSummaryAsync(
+        int clientId, bool excludeSecurityPillar = false,
+        IReadOnlyList<string>? subscriptions = null, CancellationToken ct = default);
 
     /// <summary>Tarjetas por pilar (siempre las 5). Port de waf_client_sections.</summary>
-    Task<IReadOnlyList<WafSection>> GetSectionsAsync(int clientId, CancellationToken ct = default);
+    Task<IReadOnlyList<WafSection>> GetSectionsAsync(
+        int clientId, IReadOnlyList<string>? subscriptions = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// Suscripciones del cliente **derivadas de los hallazgos activos**, con su conteo de
+    /// recomendaciones y recursos. No sale de client_azure_subscriptions a propósito: los clientes
+    /// migrados del CDC traen placeholders que no cruzan contra esa tabla y quedarían inalcanzables.
+    /// </summary>
+    Task<IReadOnlyList<WafSubscriptionOption>> ListSubscriptionsAsync(int clientId, CancellationToken ct = default);
 
     /// <summary>
     /// Recalcula resource_count (findings activos) e is_active (0 si descartada o sin recursos) de
