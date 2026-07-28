@@ -401,7 +401,7 @@ public sealed class WafController(
                 r.first_seen_at, r.last_seen_at,
                 CASE WHEN r.first_seen_at > (SELECT baseline_at FROM dbo.waf_feature_baseline WHERE feature = 'new_badge')
                           AND rr.read_at IS NULL THEN 1 ELSE 0 END AS is_new,
-                r.source
+                r.source, c.advisor_name_en
             FROM dbo.waf_recommendation r
             INNER JOIN dbo.waf_recommendation_canonical c ON c.canonical_id = r.canonical_id
             LEFT JOIN dbo.waf_recommendation_tracking t
@@ -435,6 +435,7 @@ public sealed class WafController(
                 last_seen_at = rd.GetDateTime(14),
                 is_new = rd.GetInt32(15) == 1,
                 source = rd.IsDBNull(16) ? null : rd.GetString(16),
+                advisor_name_en = rd.IsDBNull(17) ? null : rd.GetString(17),
             });
         }
         return Ok(rows);
@@ -536,6 +537,7 @@ public sealed class WafController(
             matrix_code = rec.MatrixCode,
             pillar_number = canonical?.PillarNumber,
             review_scope_es = canonical?.ReviewScopeEs,
+            advisor_name_en = canonical?.AdvisorNameEn,
             benefit_es = canonical?.BenefitEs,
             client_action_es = canonical?.ClientActionEs,
             bit_action_es = canonical?.BitActionEs,

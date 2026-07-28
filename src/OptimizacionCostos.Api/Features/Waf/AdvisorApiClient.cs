@@ -562,6 +562,9 @@ public sealed partial class AdvisorApiClient(
             response?.Dispose();
             using var req = new HttpRequestMessage(method, url);
             req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            // Fija el idioma: ARM localiza shortDescription/label según Accept-Language y el texto que
+            // se guarda en advisor_name_en tiene que ser el inglés del portal, no el locale del host.
+            req.Headers.AcceptLanguage.Add(new StringWithQualityHeaderValue("en-us"));
             response = await http.SendAsync(req, ct);
             var code = (int)response.StatusCode;
             if (code is not (429 or 500 or 502 or 503 or 504) || attempt >= maxRetries)

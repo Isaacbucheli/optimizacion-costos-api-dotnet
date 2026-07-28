@@ -18,11 +18,14 @@ public interface IWafCatalogStore
     /// resolver de dedup (alias/IA) y, si no hay match, crea una canónica nueva con
     /// ai_review_status='pending'. Port fiel de _get_or_create_canonical. Participa en la
     /// transacción de ingesta. Devuelve el id, su pilar y si se creó.
+    ///
+    /// <paramref name="source"/> es el origen de la ingesta ('advisor' | 'csv' | 'excel'): solo
+    /// 'advisor' (la API ARM, que responde en inglés) puede sembrar advisor_name_en.
     /// </summary>
     Task<(int CanonicalId, byte Pillar, bool Created)> GetOrCreateCanonicalAsync(
         SqlConnection conn, SqlTransaction tx, AdvisorRow row,
         Func<SqlConnection, SqlTransaction, AdvisorRow, Task<int?>>? dedupResolver,
-        CancellationToken ct);
+        string source, CancellationToken ct);
 
     /// <summary>Lee una canónica por id (abre conexión propia). Null si no existe.</summary>
     Task<WafCanonical?> GetCanonicalAsync(int canonicalId, CancellationToken ct = default);

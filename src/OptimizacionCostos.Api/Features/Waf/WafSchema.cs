@@ -68,6 +68,7 @@ public static class WafSchema
         IF COL_LENGTH('dbo.waf_recommendation_canonical', 'ai_duplicate_group_key') IS NULL ALTER TABLE dbo.waf_recommendation_canonical ADD ai_duplicate_group_key NVARCHAR(200) NULL;
         IF COL_LENGTH('dbo.waf_recommendation_canonical', 'ai_raw_model_text') IS NULL ALTER TABLE dbo.waf_recommendation_canonical ADD ai_raw_model_text NVARCHAR(4000) NULL;
         IF COL_LENGTH('dbo.waf_recommendation_canonical', 'ai_reviewed_by') IS NULL ALTER TABLE dbo.waf_recommendation_canonical ADD ai_reviewed_by NVARCHAR(255) NULL;
+        IF COL_LENGTH('dbo.waf_recommendation_canonical', 'advisor_name_en') IS NULL ALTER TABLE dbo.waf_recommendation_canonical ADD advisor_name_en NVARCHAR(500) NULL;
         """,
         // 2. recommendation
         """
@@ -310,5 +311,50 @@ public static class WafSchema
         IF NOT EXISTS (SELECT 1 FROM dbo.waf_feature_baseline WHERE feature = 'new_badge')
             INSERT INTO dbo.waf_feature_baseline (feature, baseline_at) VALUES ('new_badge', SYSUTCDATETIME());
         """,
+        // 15. backfill único de advisor_name_en (título original de Azure Advisor).
+        // Corre una sola vez: EnsureWafSchemaAsync se ejecuta en cada request, así que el marcador
+        // en waf_feature_baseline es lo que evita repetirlo. De aquí en adelante lo puebla la ingesta.
+        // Filtro de idioma: advisor_name solo es el string de Azure cuando la canónica nació del sync;
+        // las que vienen de Excel/migración legacy tienen ahí el título en español de la matriz BIT.
+        $"""
+        IF NOT EXISTS (SELECT 1 FROM dbo.waf_feature_baseline WHERE feature = 'advisor_name_en_backfill')
+        BEGIN
+            UPDATE c SET c.advisor_name_en = c.advisor_name
+            FROM dbo.waf_recommendation_canonical c
+            WHERE c.advisor_name_en IS NULL
+              AND EXISTS (
+                    SELECT 1 FROM dbo.waf_recommendation r
+                    WHERE r.canonical_id = c.canonical_id AND r.source = 'advisor')
+              AND {SqlLooksEnglish("c.advisor_name")};
+
+            UPDATE c SET c.advisor_name_en = a.advisor_name
+            FROM dbo.waf_recommendation_canonical c
+            CROSS APPLY (
+                SELECT TOP 1 x.advisor_name
+                FROM dbo.waf_canonical_alias x
+                WHERE x.canonical_id = c.canonical_id AND {SqlLooksEnglish("x.advisor_name")}
+                ORDER BY x.alias_id
+            ) a
+            WHERE c.advisor_name_en IS NULL;
+
+            INSERT INTO dbo.waf_feature_baseline (feature, baseline_at)
+            VALUES ('advisor_name_en_backfill', SYSUTCDATETIME());
+        END
+        """,
     ];
+
+    /// <summary>
+    /// Heurística determinista "el texto NO parece español", para el backfill de advisor_name_en.
+    /// Acentos con collation binaria (si la BD es accent-insensitive, 'á' matchearía 'a') + stopwords.
+    /// Es conservadora a propósito: lo que descarte queda en NULL y el próximo sync lo llena.
+    /// </summary>
+    private static string SqlLooksEnglish(string column) =>
+        $"""
+        (
+            {column} COLLATE Latin1_General_BIN NOT LIKE N'%[áéíóúñÁÉÍÓÚÑ]%'
+            AND {column} NOT LIKE N'% de %' AND {column} NOT LIKE N'% para %'
+            AND {column} NOT LIKE N'% los %' AND {column} NOT LIKE N'% las %'
+            AND {column} NOT LIKE N'% en %' AND {column} NOT LIKE N'% con %'
+        )
+        """;
 }

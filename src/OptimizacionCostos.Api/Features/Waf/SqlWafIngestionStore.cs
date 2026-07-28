@@ -213,7 +213,7 @@ public sealed partial class SqlWafIngestionStore(
         var newCanonicalIds = new List<int>();
         foreach (var row in rows)
         {
-            var (canonicalId, pillar, created) = await catalog.GetOrCreateCanonicalAsync(conn, tx, row, dedupResolver, ct);
+            var (canonicalId, pillar, created) = await catalog.GetOrCreateCanonicalAsync(conn, tx, row, dedupResolver, source, ct);
             if (created) newCanonicalIds.Add(canonicalId);
             var (recId, recCreated, dismissed) = await UpsertRecommendationAsync(conn, tx, clientId, canonicalId, pillar, row, now, source, ct);
             if (dismissed) continue;
