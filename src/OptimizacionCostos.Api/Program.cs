@@ -13,6 +13,11 @@ using OptimizacionCostos.Api.Features.CostEngine.Pricing;
 using OptimizacionCostos.Api.Features.CostEngine.Scenarios;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Kestrel anuncia "Server: Kestrel" en cada respuesta. Es divulgación de tecnología
+// (ZAP 10036) y no le sirve de nada al cliente.
+builder.WebHost.ConfigureKestrel(o => o.AddServerHeader = false);
+
 var config = AppConfig.FromConfiguration(builder.Configuration);
 builder.Services.AddSingleton(config);
 
@@ -225,6 +230,29 @@ builder.Services.AddSwaggerGen(o =>
 });
 
 var app = builder.Build();
+
+// Cabeceras de seguridad de la API. Va PRIMERO en el pipeline para que salgan también en
+// las respuestas de error (401/403/404/500), que es donde los escáneres suelen encontrarlas
+// ausentes. Se revisan en cualquier respuesta HTTP, no solo en HTML.
+app.Use(async (context, next) =>
+{
+    var headers = context.Response.Headers;
+    headers["X-Content-Type-Options"] = "nosniff";
+    headers["X-Frame-Options"] = "DENY";
+    headers["Referrer-Policy"] = "no-referrer";
+    headers["Cache-Control"] = "no-store";
+    // HSTS a mano en vez de UseHsts(): detrás del proxy de App Service la petición llega a
+    // Kestrel como HTTP, así que Request.IsHttps es false y UseHsts no la emitiría nunca.
+    // Emitirla siempre es seguro porque el navegador ignora la cabecera si no la recibió
+    // sobre TLS, y el TLS lo termina el front end de App Service.
+    headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
+    // La API solo devuelve datos: no hay nada que cargar. Se exceptúa Swagger, que es
+    // HTML+JS+CSS y una CSP estricta lo dejaría en blanco. Cuando Swagger quede cerrado en
+    // producción, esta excepción sobra.
+    if (!context.Request.Path.StartsWithSegments("/swagger"))
+        headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
+    await next();
+});
 
 app.UseSwagger();
 app.UseSwaggerUI();
