@@ -231,6 +231,11 @@ builder.Services.AddSwaggerGen(o =>
 
 var app = builder.Build();
 
+// Swagger publicaba toda la superficie de la API (155 KB de contrato) a cualquiera sin token.
+// Ahora queda cerrado salvo en Development o si se prende SWAGGER_ENABLED a mano. Para
+// comprobar que un deploy quedó vivo usar /health, NO swagger.json.
+var swaggerEnabled = app.Environment.IsDevelopment() || config.SwaggerEnabled;
+
 // Cabeceras de seguridad de la API. Va PRIMERO en el pipeline para que salgan también en
 // las respuestas de error (401/403/404/500), que es donde los escáneres suelen encontrarlas
 // ausentes. Se revisan en cualquier respuesta HTTP, no solo en HTML.
@@ -246,16 +251,19 @@ app.Use(async (context, next) =>
     // Emitirla siempre es seguro porque el navegador ignora la cabecera si no la recibió
     // sobre TLS, y el TLS lo termina el front end de App Service.
     headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains";
-    // La API solo devuelve datos: no hay nada que cargar. Se exceptúa Swagger, que es
-    // HTML+JS+CSS y una CSP estricta lo dejaría en blanco. Cuando Swagger quede cerrado en
-    // producción, esta excepción sobra.
-    if (!context.Request.Path.StartsWithSegments("/swagger"))
+    // La API solo devuelve datos: no hay nada que cargar. La única excepción es Swagger, que es
+    // HTML+JS+CSS y con esta CSP se vería en blanco; la excepción existe solo mientras Swagger
+    // esté habilitado, así que en producción /swagger es un 404 con la CSP estricta puesta.
+    if (!swaggerEnabled || !context.Request.Path.StartsWithSegments("/swagger"))
         headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
     await next();
 });
 
-app.UseSwagger();
-app.UseSwaggerUI();
+if (swaggerEnabled)
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
 // Red de seguridad (R1): sin CORS_ORIGINS en un entorno no-dev, la política CORS no agrega ningún
 // origen y el navegador bloquea TODAS las llamadas del front (SWA) con "Failed to fetch", aunque la

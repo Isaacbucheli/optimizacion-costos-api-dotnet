@@ -25,6 +25,12 @@ public sealed class AppConfig
     // Habilita POST /auth/bootstrap (crear primer admin). Default false (paridad con FastAPI).
     public bool AuthBootstrapEnabled { get; init; }
 
+    // Expone /swagger y /swagger/v1/swagger.json. Default FALSE: en producción publicaban toda la
+    // superficie de la API a cualquiera sin token (hallazgo de la revisión de seguridad). En
+    // Development se habilita solo, sin necesidad del flag; en producción hay que prenderlo a mano
+    // y volver a apagarlo. Para verificar un deploy usar /health, no swagger.json.
+    public bool SwaggerEnabled { get; init; }
+
     // Lista blanca de emails con acceso al módulo Optimización (B6). Vacía = abierto a todos.
     public string[] OptimizationAllowedEmails { get; init; } = [];
 
@@ -102,6 +108,7 @@ public sealed class AppConfig
             JwtSecret = Get("JWT_SECRET"),
             AuthTokenMinutes = int.TryParse(minutesRaw, out var m) ? m : 480,
             AuthBootstrapEnabled = Get("APP_AUTH_BOOTSTRAP_ENABLED").Trim().ToLowerInvariant() is "true" or "1",
+            SwaggerEnabled = Get("SWAGGER_ENABLED").Trim().ToLowerInvariant() is "true" or "1",
             OptimizationAllowedEmails = Get("OPTIMIZATION_ALLOWED_EMAILS")
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             SuperAdminEmails = Get("SUPERADMIN_EMAILS")
