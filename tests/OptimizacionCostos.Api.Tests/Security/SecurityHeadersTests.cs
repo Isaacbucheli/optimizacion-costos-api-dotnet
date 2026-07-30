@@ -12,6 +12,9 @@ namespace OptimizacionCostos.Api.Tests.Security;
 /// Ojo: el banner "Server: Kestrel" (A2) NO se puede comprobar acá porque TestServer no usa
 /// Kestrel; una aserción de ausencia pasaría sola y simularía cobertura. Se verifica contra
 /// la API desplegada.
+///
+/// El caso de Swagger vive aparte, en SwaggerGatingTests, para que ninguna otra prueba dependa
+/// de si el flag está prendido.
 /// </summary>
 public sealed class SecurityHeadersTests : IClassFixture<TestAppFactory>
 {
@@ -59,14 +62,4 @@ public sealed class SecurityHeadersTests : IClassFixture<TestAppFactory>
         AssertCabeceras(res);
     }
 
-    [Fact]
-    public async Task Swagger_queda_sin_CSP_para_no_romper_su_interfaz()
-    {
-        // Swagger es HTML+JS+CSS propio: con `default-src 'none'` se vería en blanco. El resto
-        // de cabeceras sí aplica. La excepción desaparece cuando Swagger se cierre en producción.
-        var res = await _factory.CreateClient().GetAsync("/swagger/index.html");
-
-        Assert.False(res.Headers.Contains("Content-Security-Policy"));
-        Assert.Equal("nosniff", res.Headers.GetValues("X-Content-Type-Options").Single());
-    }
 }

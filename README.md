@@ -33,7 +33,12 @@ Ver [STACK-NUEVO.md](STACK-NUEVO.md) para la forma de la configuración de entor
 
 **Jobs en background** (hosted services): power history, Advisor Score semanal (lease-lock) y generación de informes (cola en proceso).
 
-Contrato JSON en **snake_case** (`JsonNamingPolicy.SnakeCaseLower`); Swagger en `/swagger`.
+Contrato JSON en **snake_case** (`JsonNamingPolicy.SnakeCaseLower`).
+
+**Swagger** (`/swagger` y `/swagger/v1/swagger.json`) está **cerrado fuera de Development**: publicaba
+toda la superficie de la API sin token. Para abrirlo en un entorno desplegado hay que poner
+`SWAGGER_ENABLED=true` a mano y volver a apagarlo. Para comprobar que un deploy quedó vivo, usar
+`/health`.
 
 ## Correr local
 
@@ -49,7 +54,7 @@ Levantar la API (servidor/BD y credenciales van por variables de entorno o user-
 $env:SQL_SERVER="..."; $env:SQL_DATABASE="..."; $env:SQL_USERNAME="..."; $env:SQL_PASSWORD="..."
 $env:JWT_SECRET="..."
 dotnet run --project src/OptimizacionCostos.Api
-# Swagger: http://localhost:5169/swagger
+# Swagger: http://localhost:5169/swagger  (habilitado solo en Development)
 ```
 
 > Sin `KEY_VAULT_URL`/`STORAGE_ACCOUNT_NAME` el núcleo (login, results, scenarios, calculate)
