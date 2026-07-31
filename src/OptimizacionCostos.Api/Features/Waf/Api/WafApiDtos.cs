@@ -78,6 +78,13 @@ public sealed record WafAdvisorScoreRefreshRequest(
     bool IncludeInReports = false);
 
 /// <summary>
+/// Refresh manual del Advisor Score de UN cliente (el de la ruta). A propósito NO lleva client_id:
+/// el cliente sale de la URL y pasa por el control de acceso, para que el body no pueda apuntar a
+/// otro cliente ni disparar el barrido de todos.
+/// </summary>
+public sealed record WafClientAdvisorScoreRefreshRequest(bool IncludeInReports = false);
+
+/// <summary>
 /// Aplicar sugerencia IA (admin PATCH). Port de WafAiSuggestion. La validación cruzada
 /// (decision=exclude ⇒ exclusion_reason) la replica el controller.
 /// </summary>
