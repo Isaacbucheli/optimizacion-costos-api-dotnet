@@ -27,6 +27,8 @@ builder.Services.AddControllers().AddJsonOptions(o =>
     o.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
     o.JsonSerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower;
     o.JsonSerializerOptions.DefaultIgnoreCondition = JsonIgnoreCondition.Never;
+    // Todo timestamp sale como UTC con 'Z'; sin esto el front interpreta la hora UTC como local.
+    o.JsonSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
 });
 
 // Datos y auth

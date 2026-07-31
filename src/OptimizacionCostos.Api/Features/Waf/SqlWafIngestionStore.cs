@@ -1,3 +1,4 @@
+using System.Data;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -203,7 +204,7 @@ public sealed partial class SqlWafIngestionStore(
                 FROM dbo.waf_resource_finding f INNER JOIN dbo.waf_recommendation r ON r.recommendation_id = f.recommendation_id
                 WHERE r.client_id = @cid AND f.status = 'active' AND f.subscription_id <> @manual AND f.subscription_id IN ({string.Join(",", inParams)})
                 """);
-            cmd.Parameters.AddRange([new SqlParameter("@now", now), new SqlParameter("@cid", clientId), new SqlParameter("@manual", WafConstants.ManualSubscriptionId)]);
+            cmd.Parameters.AddRange([Param("@now", now), new SqlParameter("@cid", clientId), new SqlParameter("@manual", WafConstants.ManualSubscriptionId)]);
             for (var i = 0; i < replaceSubscriptionIds.Count; i++) cmd.Parameters.Add(new SqlParameter($"@s{i}", replaceSubscriptionIds[i]));
             await cmd.ExecuteNonQueryAsync(ct);
         }
@@ -229,13 +230,14 @@ public sealed partial class SqlWafIngestionStore(
             WHERE r.client_id = @cid AND f.status = 'resolved' AND f.resolved_at = @now
             """, ("@cid", clientId), ("@now", now));
 
+        // completed_at con hora fresca: reusar @now (capturado al inicio) dejaba Fin < Inicio.
         await Exec(conn, tx, ct, """
             UPDATE dbo.waf_ingestion_run
-            SET status = @status, completed_at = @now, new_recommendations = @nr, new_findings = @nf,
+            SET status = @status, completed_at = @done, new_recommendations = @nr, new_findings = @nf,
                 resolved_findings = @rf, unmapped_recommendations = @warn, subscription_results = @subres, error_message = @err
             WHERE run_id = @id
             """,
-            ("@status", warnings.Count > 0 ? "completed_with_errors" : "completed"), ("@now", now),
+            ("@status", warnings.Count > 0 ? "completed_with_errors" : "completed"), ("@done", DateTime.UtcNow),
             ("@nr", newRecommendations), ("@nf", newFindings), ("@rf", resolvedFindings),
             ("@warn", warnings.Count > 0 ? Trunc(JsonSerializer.Serialize(warnings), 4000) : (object)DBNull.Value),
             ("@subres", subscriptionResults is { Count: > 0 } ? Trunc(JsonSerializer.Serialize(subscriptionResults), 8000) : (object)DBNull.Value),
@@ -252,7 +254,7 @@ public sealed partial class SqlWafIngestionStore(
             "INSERT INTO dbo.waf_ingestion_run (client_id, source_file_name, status, started_at, created_by) OUTPUT INSERTED.run_id VALUES (@cid, @src, 'running', @now, @by)");
         cmd.Parameters.AddRange([
             new SqlParameter("@cid", clientId), new SqlParameter("@src", Trunc(sourceName, 400)),
-            new SqlParameter("@now", DateTime.UtcNow), new SqlParameter("@by", (object?)createdBy ?? DBNull.Value)]);
+            Param("@now", DateTime.UtcNow), new SqlParameter("@by", (object?)createdBy ?? DBNull.Value)]);
         return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
     }
 
@@ -290,7 +292,7 @@ public sealed partial class SqlWafIngestionStore(
             new SqlParameter("@cid", clientId), new SqlParameter("@canon", canonicalId),
             new SqlParameter("@code", MatrixCode(pillar, row.AdvisorName, row.AdvisorCategory)),
             new SqlParameter("@impact", row.BusinessImpact), new SqlParameter("@num", impactNumber),
-            new SqlParameter("@now", now), new SqlParameter("@source", source)]);
+            Param("@now", now), new SqlParameter("@source", source)]);
         return (Convert.ToInt32(await ins.ExecuteScalarAsync(ct)), true, false);
     }
 
@@ -332,7 +334,7 @@ public sealed partial class SqlWafIngestionStore(
             UPDATE dbo.waf_ingestion_run SET status = 'failed', completed_at = @now, error_message = @msg
             WHERE status = 'running' AND started_at < DATEADD(hour, @age, @now)
             """;
-        cmd.Parameters.Add(new SqlParameter("@now", DateTime.UtcNow));
+        cmd.Parameters.Add(Param("@now", DateTime.UtcNow));
         cmd.Parameters.Add(new SqlParameter("@msg", "Run marcado como fallido por exceder la ventana maxima de seguimiento. Puede reintentar Consultar Advisor."));
         cmd.Parameters.Add(new SqlParameter("@age", -Math.Abs(maxAgeHours)));
         return await cmd.ExecuteNonQueryAsync(ct);
@@ -349,17 +351,26 @@ public sealed partial class SqlWafIngestionStore(
         return cmd;
     }
 
+    /// <summary>
+    /// Los DateTime deben viajar como datetime2: la inferencia por defecto (datetime, ticks de
+    /// 1/300 s) hace que "resolved_at = @now" solo matchee cuando el redondeo cae en milisegundos
+    /// exactos (~1 de cada 3 corridas), dejando resolved_findings en 0 el resto de las veces.
+    /// </summary>
+    internal static SqlParameter Param(string name, object value) => value is DateTime dt
+        ? new SqlParameter(name, SqlDbType.DateTime2) { Value = dt }
+        : new SqlParameter(name, value);
+
     private static async Task Exec(SqlConnection conn, SqlTransaction tx, CancellationToken ct, string sql, params (string Name, object Value)[] ps)
     {
         await using var cmd = NewCmd(conn, tx, sql);
-        foreach (var (n, v) in ps) cmd.Parameters.Add(new SqlParameter(n, v));
+        foreach (var (n, v) in ps) cmd.Parameters.Add(Param(n, v));
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
     private static async Task<int> ScalarInt(SqlConnection conn, SqlTransaction tx, CancellationToken ct, string sql, params (string Name, object Value)[] ps)
     {
         await using var cmd = NewCmd(conn, tx, sql);
-        foreach (var (n, v) in ps) cmd.Parameters.Add(new SqlParameter(n, v));
+        foreach (var (n, v) in ps) cmd.Parameters.Add(Param(n, v));
         return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
     }
 }
