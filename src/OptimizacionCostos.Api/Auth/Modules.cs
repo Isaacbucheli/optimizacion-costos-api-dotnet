@@ -19,6 +19,7 @@ public static class Modules
     public const string WafIngestions = "waf-ingestions";
     public const string WafCost = "waf-cost";
     public const string Report = "report";
+    public const string Boletin = "boletin";
     public const string Reservations = "reservations";
     public const string Alerts = "alerts";
     public const string Policies = "policies";
@@ -38,6 +39,7 @@ public static class Modules
         new(WafIngestions, "Historial de ingestas", "Matriz mejoras Azure"),
         new(WafCost, "Costo referencial Azure", "Matriz mejoras Azure"),
         new(Report, "Informe de gestión mensual", "Informes"),
+        new(Boletin, "Boletín Azure", "Informes"),
         new(Reservations, "Reservas por vencer", "Gestión CDC"),
         new(Alerts, "Catálogo de alertas", "Gestión CDC"),
         new(Policies, "Catálogo de políticas", "Gestión CDC"),
