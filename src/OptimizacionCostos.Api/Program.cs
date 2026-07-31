@@ -97,6 +97,10 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.IRightSi
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.IOptimizationService, OptimizacionCostos.Api.Features.Optimization.OptimizationService>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.IOptimizationExcelExporter, OptimizacionCostos.Api.Features.Optimization.OptimizationExcelExporter>();
 
+// Boletín Azure (Fase 1): retiros/deprecaciones vía Advisor + Service Health, sin costos.
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinService,
+    OptimizacionCostos.Api.Features.Boletin.BoletinService>();
+
 // Módulo WAF (B7). Schema lazy en cada store. Reusa IChatCompletionClient, IAzureCredentialFactory,
 // IAnalysisAccess, ICostResultsQuery, ISqlConnectionFactory ya registrados.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafCatalogStore, OptimizacionCostos.Api.Features.Waf.SqlWafCatalogStore>();
