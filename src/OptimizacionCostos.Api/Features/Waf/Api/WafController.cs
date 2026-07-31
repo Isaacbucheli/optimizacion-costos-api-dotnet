@@ -24,6 +24,7 @@ public sealed class WafController(
     IWafCatalogStore catalog,
     IWafIngestionStore ingestionStore,
     IAdvisorScoreStore advisorScoreStore,
+    IAdvisorScoreService advisorScore,
     IWafCuratorService curator,
     IWafTranslationService translation,
     IWafExcelExporter excelExporter,
@@ -708,6 +709,52 @@ public sealed class WafController(
             : AdvisorSyncJobResponse(job, false));
     }
 
+    /// <summary>
+    /// POST advisor-score/refresh — refresca el snapshot del Advisor Score de ESTE cliente.
+    /// Hermano por-cliente de /waf/admin/advisor-score/refresh (que sigue siendo admin-only y es
+    /// el único que puede barrer todos los clientes). Aquí el cliente viene de la ruta y pasa por
+    /// GuardAsync, así que un consultor con "Editar" en Recomendaciones solo puede refrescar los
+    /// clientes que tiene asignados.
+    /// </summary>
+    [HttpPost("clients/{clientId:int}/advisor-score/refresh")]
+    [RequireModule(Modules.Waf, ModuleAccess.Edit)]
+    public async Task<IActionResult> RefreshClientAdvisorScore(
+        int clientId, [FromBody] WafClientAdvisorScoreRefreshRequest? payload, CancellationToken ct)
+    {
+        var guard = await GuardAsync(clientId, ct);
+        if (guard is not null) return guard;
+
+        payload ??= new WafClientAdvisorScoreRefreshRequest();
+        try
+        {
+            var snapshot = await advisorScore.RefreshClientAsync(
+                clientId, snapshotDate: null, source: "manual", includeInReports: payload.IncludeInReports, ct);
+
+            // Mismas claves que el endpoint admin: el front reusa un solo tipo de respuesta.
+            return Ok(new
+            {
+                message = "Advisor Score actualizado",
+                clients_total = 1,
+                clients_refreshed = 1,
+                clients_failed = 0,
+                results = new[] { ScoreSnapshotSummary(snapshot) },
+            });
+        }
+        catch (ArgumentException ex) // cliente inexistente (port de ValueError → 404)
+        {
+            return NotFound(new { detail = ex.Message });
+        }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("not found", StringComparison.OrdinalIgnoreCase))
+        {
+            return NotFound(new { detail = ex.Message });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Advisor Score refresh por cliente falló client_id={Cid}", clientId);
+            return Problem(statusCode: 500, detail: $"Advisor Score refresh failed: {ex.GetType().Name}");
+        }
+    }
+
     /// <summary>POST consolidate-duplicates (admin/consultor). Port de consolidate_waf_duplicates.</summary>
     [HttpPost("clients/{clientId:int}/consolidate-duplicates")]
     [RequireModule(Modules.Waf, ModuleAccess.Edit)]
@@ -1253,6 +1300,16 @@ public sealed class WafController(
         captured_at = (string?)null,
         stale = true,
         message = "Advisor Score pendiente de refresh programado.",
+    };
+
+    /// <summary>Resumen del snapshot refrescado; mismas claves que SnapshotSummary del controller admin.</summary>
+    private static object ScoreSnapshotSummary(WafAdvisorScoreSnapshot? s) => s is null ? new { } : new
+    {
+        client_id = s.ClientId,
+        status = s.Status,
+        snapshot_date = s.SnapshotDate.ToString("yyyy-MM-dd"),
+        captured_at = s.CapturedAt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ"),
+        subscriptions_scored = s.SubscriptionsScored,
     };
 
     private static object AdvisorSyncJobResponse(WafAdvisorSyncJobStatus job, bool created) => new
