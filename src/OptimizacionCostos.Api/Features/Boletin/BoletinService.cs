@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.AzureIntegration;
@@ -38,6 +39,11 @@ public sealed class BoletinService(
             var rows = new List<RetirementRow>();
             var advisorCount = 0; var healthCount = 0; var subsScanned = 0;
             var errors = new List<object>();
+            // Rastreo por fuente para la reconciliación (Finding 1): una credencial caída excluye
+            // ambas fuentes de sus subs; una query fallida excluye solo esa fuente.
+            var failedCredentials = new HashSet<int>();
+            var advisorFailedCredentials = new HashSet<int>();
+            var healthFailedCredentials = new HashSet<int>();
 
             foreach (var (credentialId, subIds) in groups)
             {
@@ -47,6 +53,7 @@ public sealed class BoletinService(
                 {
                     logger.LogWarning(ex, "boletin sync {Sync}: credencial {Cred} no disponible", syncId, credentialId);
                     errors.Add(new { source = "credential", credential_id = credentialId, error = ex.GetType().Name });
+                    failedCredentials.Add(credentialId);
                     continue;
                 }
 
@@ -62,6 +69,7 @@ public sealed class BoletinService(
                 {
                     logger.LogWarning(ex, "boletin sync {Sync}: advisor falló credencial {Cred}", syncId, credentialId);
                     errors.Add(new { source = "advisor", credential_id = credentialId, error = ex.GetType().Name });
+                    advisorFailedCredentials.Add(credentialId);
                 }
 
                 try
@@ -76,22 +84,28 @@ public sealed class BoletinService(
                 {
                     logger.LogWarning(ex, "boletin sync {Sync}: service health falló credencial {Cred}", syncId, credentialId);
                     errors.Add(new { source = "service_health", credential_id = credentialId, error = ex.GetType().Name });
+                    healthFailedCredentials.Add(credentialId);
                 }
 
                 subsScanned += subIds.Count;
             }
 
+            var successfulBySource = BoletinSyncPlan.SuccessfulSubscriptionsBySource(
+                groups, failedCredentials, advisorFailedCredentials, healthFailedCredentials);
+            var (status, errorJson) = BoletinSyncPlan.DetermineOutcome(errors);
+
             await using (var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct))
             {
                 foreach (var row in rows) await UpsertAsync(conn, tx, clientId, row, ct);
-                await ReconcileAsync(conn, tx, clientId, syncStart, ct);
-                await FinalizeSyncAsync(conn, tx, syncId, subsScanned, advisorCount, healthCount, ct);
+                foreach (var (source, subs) in successfulBySource)
+                    await ReconcileAsync(conn, tx, clientId, syncStart, source, subs, ct);
+                await FinalizeSyncAsync(conn, tx, syncId, subsScanned, advisorCount, healthCount, status, errorJson, ct);
                 await tx.CommitAsync(ct);
             }
 
             return new Dictionary<string, object?>
             {
-                ["sync_id"] = syncId, ["status"] = "completed",
+                ["sync_id"] = syncId, ["status"] = status,
                 ["subscriptions_scanned"] = subsScanned,
                 ["advisor_items"] = advisorCount, ["health_items"] = healthCount,
                 ["errors"] = errors,
@@ -235,35 +249,48 @@ public sealed class BoletinService(
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    /// <summary>Lo no visto en este sync pasa a 'resuelto' (no se borra: histórico).</summary>
-    private static async Task ReconcileAsync(SqlConnection conn, SqlTransaction tx, int clientId, DateTime syncStart, CancellationToken ct)
+    /// <summary>Lo no visto en este sync pasa a 'resuelto' (no se borra: histórico). Solo reconcilia
+    /// filas de la FUENTE y las suscripciones cuya query corrió sin error en este sync (ver
+    /// <see cref="BoletinSyncPlan"/>): así una falla transitoria (credencial o query caída) nunca
+    /// "auto-resuelve" avisos vigentes que simplemente no se pudieron consultar. Lista vacía → no-op.</summary>
+    private static async Task ReconcileAsync(SqlConnection conn, SqlTransaction tx, int clientId, DateTime syncStart,
+        string source, IReadOnlyList<string> successfulSubscriptionIds, CancellationToken ct)
     {
+        if (successfulSubscriptionIds.Count == 0) return; // nada exitoso en esta fuente: no toca nada
+
+        var inParams = successfulSubscriptionIds.Select((_, i) => $"@s{i}").ToList();
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
-        cmd.CommandText = """
+        cmd.CommandText = $"""
             UPDATE dbo.boletin_retirement
             SET status = 'resuelto', resolved_at = SYSUTCDATETIME()
             WHERE client_id = @cid AND status = 'vigente' AND last_seen_at < @start
+              AND source = @source AND subscription_id IN ({string.Join(",", inParams)})
             """;
         cmd.Parameters.Add(new SqlParameter("@cid", clientId));
         cmd.Parameters.Add(new SqlParameter("@start", syncStart));
+        cmd.Parameters.Add(new SqlParameter("@source", source));
+        for (var i = 0; i < successfulSubscriptionIds.Count; i++)
+            cmd.Parameters.Add(new SqlParameter($"@s{i}", successfulSubscriptionIds[i]));
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
     private static async Task FinalizeSyncAsync(SqlConnection conn, SqlTransaction tx, int syncId,
-        int subs, int advisorItems, int healthItems, CancellationToken ct)
+        int subs, int advisorItems, int healthItems, string status, string? error, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
-            UPDATE dbo.boletin_sync SET status = 'completed', finished_at = SYSUTCDATETIME(),
-              subscriptions_scanned = @subs, advisor_items = @adv, health_items = @hea
+            UPDATE dbo.boletin_sync SET status = @status, finished_at = SYSUTCDATETIME(),
+              subscriptions_scanned = @subs, advisor_items = @adv, health_items = @hea, error = @err
             WHERE id = @id
             """;
         cmd.Parameters.Add(new SqlParameter("@id", syncId));
         cmd.Parameters.Add(new SqlParameter("@subs", subs));
         cmd.Parameters.Add(new SqlParameter("@adv", advisorItems));
         cmd.Parameters.Add(new SqlParameter("@hea", healthItems));
+        cmd.Parameters.Add(new SqlParameter("@status", status));
+        cmd.Parameters.Add(new SqlParameter("@err", Db(error)));
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -322,4 +349,49 @@ public sealed class BoletinService(
             ["error"] = r.IsDBNull(7) ? null : r.GetString(7),
         };
     }
+}
+
+/// <summary>
+/// Lógica pura (sin SQL) de la reconciliación por fuente/suscripción exitosa del sync del Boletín
+/// (Finding 1) y de la decisión de status/error persistido (Finding 2). Separada de
+/// <see cref="BoletinService"/> para poder testearla sin credenciales/BD reales — mismo patrón que
+/// <c>successfulSubscriptions</c> del WAF sync (<see cref="Waf.WafSyncOrchestrator"/>), pero aquí hay
+/// DOS fuentes independientes (advisor / service_health) por credencial.
+/// </summary>
+internal static class BoletinSyncPlan
+{
+    /// <summary>
+    /// Calcula, por fuente, las subscription_id cuya query corrió sin error en este sync. Reglas:
+    /// - Credencial no disponible (no se pudo obtener token): excluye AMBAS fuentes de sus subs.
+    /// - Query de una sola fuente fallida: excluye solo esa fuente (la otra puede seguir exitosa).
+    /// - Sin fallas: todas las subs del grupo son exitosas en ambas fuentes.
+    /// </summary>
+    public static IReadOnlyDictionary<string, IReadOnlyList<string>> SuccessfulSubscriptionsBySource(
+        IReadOnlyDictionary<int, List<string>> groups,
+        IReadOnlySet<int> failedCredentials,
+        IReadOnlySet<int> advisorFailedCredentials,
+        IReadOnlySet<int> healthFailedCredentials)
+    {
+        var advisor = new List<string>();
+        var health = new List<string>();
+
+        foreach (var (credentialId, subIds) in groups)
+        {
+            if (failedCredentials.Contains(credentialId)) continue; // credencial caída: ninguna fuente
+            if (!advisorFailedCredentials.Contains(credentialId)) advisor.AddRange(subIds);
+            if (!healthFailedCredentials.Contains(credentialId)) health.AddRange(subIds);
+        }
+
+        return new Dictionary<string, IReadOnlyList<string>>
+        {
+            [RetirementRow.SourceAdvisor] = advisor,
+            [RetirementRow.SourceServiceHealth] = health,
+        };
+    }
+
+    /// <summary>Decide el status y el error persistido de <c>boletin_sync</c> a partir de los
+    /// errores acumulados en la corrida: sin errores → 'completed'/NULL; con errores parciales
+    /// (aunque hayan fallado todas las credenciales) → 'partial' + JSON de la lista de errores.</summary>
+    public static (string Status, string? ErrorJson) DetermineOutcome(IReadOnlyCollection<object> errors) =>
+        errors.Count == 0 ? ("completed", null) : ("partial", JsonSerializer.Serialize(errors));
 }
