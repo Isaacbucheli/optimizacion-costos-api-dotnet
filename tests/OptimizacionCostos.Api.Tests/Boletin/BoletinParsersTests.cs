@@ -88,4 +88,17 @@ public class BoletinParsersTests
         Assert.NotEqual(Convert.ToHexString(a.Fingerprint(7)), Convert.ToHexString(a.Fingerprint(8)));
         Assert.Equal(32, a.Fingerprint(7).Length);
     }
+
+    /// <summary>Hash dorado: el fingerprint es un contrato PERSISTIDO en dbo.boletin_retirement.
+    /// Este test fija el ORDEN literal de los campos concatenados; si algún día cambia el formato
+    /// interno (a propósito), hay que actualizar este test sabiendo que re-huellea todo lo guardado.</summary>
+    [Fact]
+    public void FingerprintTieneHashDoradoEstable()
+    {
+        var row = new RetirementRow(RetirementRow.SourceAdvisor, "Basic SKU", "sub-1",
+            "/Subs/S/Providers/X/Y", "y", "X/Y", "Basic SKU", null, "t", null, null, null);
+        var esperado = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes("7|advisor|sub-1|Basic SKU|/subs/s/providers/x/y")));
+        Assert.Equal(esperado, Convert.ToHexString(row.Fingerprint(7)));
+    }
 }

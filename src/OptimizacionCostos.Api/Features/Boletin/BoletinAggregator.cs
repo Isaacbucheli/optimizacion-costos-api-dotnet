@@ -9,6 +9,15 @@ public sealed record StoredRetirement(
 /// <summary>Arma la vista del boletín: agrupa por anuncio y calcula KPIs al día de hoy. Puro.</summary>
 public static class BoletinAggregator
 {
+    /// <summary>Excluye avisos de suscripciones que dejaron de estar administradas: siguen en BD
+    /// (histórico) pero no deben aparecer en la vista ni inflar KPIs (impactadas > administradas).</summary>
+    internal static IReadOnlyList<StoredRetirement> FilterToManaged(
+        IReadOnlyList<StoredRetirement> rows, IEnumerable<string> managedSubscriptionIds)
+    {
+        var set = new HashSet<string>(managedSubscriptionIds, StringComparer.OrdinalIgnoreCase);
+        return rows.Where(r => set.Contains(r.SubscriptionId)).ToList();
+    }
+
     public static IReadOnlyDictionary<string, object?> BuildView(
         IReadOnlyList<StoredRetirement> rows, int subscriptionsTotal, DateOnly today)
     {

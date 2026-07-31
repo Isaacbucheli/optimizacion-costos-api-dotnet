@@ -53,4 +53,35 @@ public class BoletinAggregatorTests
         Assert.Equal(new[] { "Pronto", "Tarde", "SIN-FECHA" },
             groups.Select(g => (string?)g["announcement_key"]).ToArray());
     }
+
+    [Fact]
+    public void FilterToManagedExcluyeFilasDeSubsNoAdministradas()
+    {
+        var rows = new List<StoredRetirement>
+        {
+            Fila("advisor", "Basic SKU", "sub-1", "/s/1/ip1", new DateOnly(2025, 9, 30)),
+            Fila("advisor", "Basic SKU", "sub-2", "/s/2/ip2", new DateOnly(2025, 9, 30)),
+            Fila("service_health", "TRACK-1", "sub-3", null, new DateOnly(2026, 9, 30)),
+        };
+
+        // "SUB-2" en mayúsculas para probar OrdinalIgnoreCase; sub-3 no está administrada.
+        var filtered = BoletinAggregator.FilterToManaged(rows, new[] { "sub-1", "SUB-2" });
+
+        Assert.Equal(2, filtered.Count);
+        Assert.DoesNotContain(filtered, r => r.SubscriptionId == "sub-3");
+        Assert.Contains(filtered, r => r.SubscriptionId == "sub-1");
+        Assert.Contains(filtered, r => r.SubscriptionId == "sub-2");
+
+        // Las administradas quedan intactas en la vista y KPIs; TRACK-1 (sub-3) desaparece.
+        var view = BoletinAggregator.BuildView(filtered, subscriptionsTotal: 2, Hoy);
+        var kpis = (IReadOnlyDictionary<string, object?>)view["kpis"]!;
+        var groups = (List<Dictionary<string, object?>>)view["groups"]!;
+
+        Assert.Single(groups);
+        Assert.Equal("Basic SKU", groups[0]["announcement_key"]);
+        Assert.Equal(1, kpis["announcements"]);
+        Assert.Equal(2, kpis["resources"]);
+        Assert.Equal(2, kpis["subscriptions_impacted"]);
+        Assert.Equal(2, kpis["subscriptions_total"]);
+    }
 }

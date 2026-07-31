@@ -124,8 +124,10 @@ public sealed class BoletinService(
         await using var conn = await factory.OpenAsync(ct);
         await EnsureSchemaAsync(conn, ct);
 
-        var subsTotal = (await ManagedSubscriptionsAsync(conn, clientId, ct)).Sum(g => g.Value.Count);
-        var stored = await LoadVigentesAsync(conn, clientId, ct);
+        var managed = await ManagedSubscriptionsAsync(conn, clientId, ct);
+        var subsTotal = managed.Sum(g => g.Value.Count);
+        var stored = BoletinAggregator.FilterToManaged(
+            await LoadVigentesAsync(conn, clientId, ct), managed.Values.SelectMany(subs => subs));
         var view = new Dictionary<string, object?>(
             BoletinAggregator.BuildView(stored, subsTotal, DateOnly.FromDateTime(DateTime.UtcNow)))
         {
@@ -160,7 +162,7 @@ public sealed class BoletinService(
               source NVARCHAR(20) NOT NULL,
               announcement_key NVARCHAR(256) NOT NULL,
               subscription_id NVARCHAR(64) NOT NULL,
-              azure_resource_id NVARCHAR(512) NULL,
+              azure_resource_id NVARCHAR(1024) NULL,
               resource_name NVARCHAR(256) NOT NULL DEFAULT(''),
               resource_type NVARCHAR(256) NOT NULL DEFAULT(''),
               retiring_feature NVARCHAR(256) NOT NULL DEFAULT(''),
@@ -174,6 +176,10 @@ public sealed class BoletinService(
               last_seen_at DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
               resolved_at DATETIME2 NULL,
               CONSTRAINT UX_boletin_retirement UNIQUE(client_id, fingerprint));
+            IF EXISTS (SELECT 1 FROM sys.columns
+                       WHERE object_id = OBJECT_ID('dbo.boletin_retirement')
+                         AND name = 'azure_resource_id' AND max_length = 1024)
+                ALTER TABLE dbo.boletin_retirement ALTER COLUMN azure_resource_id NVARCHAR(1024) NULL;
             """;
         await cmd.ExecuteNonQueryAsync(ct);
     }

@@ -1,7 +1,9 @@
 namespace OptimizacionCostos.Api.Features.Boletin;
 
-/// <summary>KQL de Azure Resource Graph del boletín (fuentes validadas en
-/// docs/2026-07-31-analisis-boletin-recomendaciones-azure.md del repo de trabajo).</summary>
+/// <summary>KQL de Azure Resource Graph del boletín. Fuentes: recomendaciones de Advisor de la
+/// subcategoría "Service Upgrade and Retirement" (ver
+/// learn.microsoft.com/azure/advisor/advisor-how-to-use-service-upgrade-retirement-recommendations)
+/// y eventos de retiro de Service Health, ambos consultados vía Azure Resource Graph.</summary>
 public static class BoletinQueries
 {
     /// <summary>Recomendaciones Advisor "Service Upgrade and Retirement" ligadas a un retiro real
@@ -23,7 +25,10 @@ public static class BoletinQueries
             learnMore = tostring(properties.learnMoreLink)
         """;
 
-    /// <summary>Eventos de retiro de Service Health. Retención ~60 días en Azure: por eso se persisten.</summary>
+    /// <summary>Eventos de retiro de Service Health. Deliberadamente NO filtra
+    /// <c>impactMitigationTime > now()</c>: también se persisten los eventos ya vencidos, porque la
+    /// retención de Service Health es de ~60 días (Azure los retira del feed) y el boletín necesita
+    /// conservar el histórico y clasificarlos como "retirado" en vez de perderlos silenciosamente.</summary>
     public const string ServiceHealthRetirements = """
         servicehealthresources
         | where type =~ 'microsoft.resourcehealth/events'
