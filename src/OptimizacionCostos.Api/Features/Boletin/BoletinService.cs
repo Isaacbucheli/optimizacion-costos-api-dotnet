@@ -46,6 +46,10 @@ public sealed class BoletinService(
             var failedCredentials = new HashSet<int>();
             var advisorFailedCredentials = new HashSet<int>();
             var healthFailedCredentials = new HashSet<int>();
+            // Enriquecimiento de Service Health (ver más abajo): credenciales cuya query de recursos
+            // impactados falló. No excluye la fuente "health" en sí, pero SÍ limita el alcance de su
+            // reconciliación (Finding: enriquecimiento caído no debe auto-resolver resource-level).
+            var healthResourcesFailedCredentials = new HashSet<int>();
 
             foreach (var (credentialId, subIds) in groups)
             {
@@ -91,10 +95,14 @@ public sealed class BoletinService(
 
                 // Enriquecimiento (A1): recursos concretos impactados por los avisos de Service
                 // Health. Best-effort a propósito: si falla, la fuente "health" NO se marca como
-                // fallida (no entra a healthFailedCredentials) — solo se pierde el detalle de
-                // recursos de esta credencial y esos avisos siguen viéndose a nivel de suscripción,
-                // exactamente como antes de A1. No es la fuente de verdad de qué subs se
-                // consultaron con éxito, así que tampoco debe afectar la reconciliación.
+                // fallida (no entra a healthFailedCredentials) — la query base de health pudo ir
+                // bien y esos avisos se siguen viendo a nivel de suscripción, igual que antes de A1.
+                // PERO sí limita el ALCANCE de la reconciliación: sin poder re-consultar qué recursos
+                // siguen impactados, no sabemos si las filas resource-level de un sync anterior
+                // siguen vigentes, así que ReconcileAsync no debe auto-resolverlas — solo las
+                // sub-level (azure_resource_id IS NULL). Por eso esta credencial se registra en
+                // healthResourcesFailedCredentials, que BoletinSyncPlan.HealthReconcileScopes usa
+                // para separar el alcance "completo" del alcance "solo sub-level".
                 try
                 {
                     var nodes = await rg.RunQueryAsync(cred, subIds, BoletinQueries.ServiceHealthImpactedResources, ct);
@@ -105,9 +113,10 @@ public sealed class BoletinService(
                 catch (Exception ex)
                 {
                     logger.LogWarning(ex,
-                        "boletin sync {Sync}: recursos impactados de service health falló credencial {Cred} (enriquecimiento, no afecta la fuente health)",
+                        "boletin sync {Sync}: recursos impactados de service health falló credencial {Cred} (enriquecimiento; limita la reconciliación de health a solo sub-level)",
                         syncId, credentialId);
                     errors.Add(new { source = "service_health_resources", credential_id = credentialId, error = ex.GetType().Name });
+                    healthResourcesFailedCredentials.Add(credentialId);
                 }
 
                 subsScanned += subIds.Count;
@@ -117,13 +126,22 @@ public sealed class BoletinService(
 
             var successfulBySource = BoletinSyncPlan.SuccessfulSubscriptionsBySource(
                 groups, failedCredentials, advisorFailedCredentials, healthFailedCredentials);
+            var healthScopes = BoletinSyncPlan.HealthReconcileScopes(
+                groups, failedCredentials, healthFailedCredentials, healthResourcesFailedCredentials);
             var (status, errorJson) = BoletinSyncPlan.DetermineOutcome(errors);
 
             await using (var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct))
             {
                 foreach (var row in rows) await UpsertAsync(conn, tx, clientId, row, ct);
-                foreach (var (source, subs) in successfulBySource)
-                    await ReconcileAsync(conn, tx, clientId, syncStart, source, subs, ct);
+                await ReconcileAsync(conn, tx, clientId, syncStart,
+                    RetirementRow.SourceAdvisor, successfulBySource[RetirementRow.SourceAdvisor], subLevelOnly: false, ct);
+                // service_health se reconcilia en dos pasadas: alcance completo para las subs con
+                // enriquecimiento OK (igual que antes), y solo sub-level para las subs con base de
+                // health OK pero enriquecimiento caído (no auto-resuelve resource-level ya persistidas).
+                await ReconcileAsync(conn, tx, clientId, syncStart,
+                    RetirementRow.SourceServiceHealth, healthScopes.FullScope, subLevelOnly: false, ct);
+                await ReconcileAsync(conn, tx, clientId, syncStart,
+                    RetirementRow.SourceServiceHealth, healthScopes.SubLevelOnly, subLevelOnly: true, ct);
                 await FinalizeSyncAsync(conn, tx, syncId, subsScanned, advisorCount, healthCount, status, errorJson, ct);
                 await tx.CommitAsync(ct);
             }
@@ -310,13 +328,19 @@ public sealed class BoletinService(
     /// <summary>Lo no visto en este sync pasa a 'resuelto' (no se borra: histórico). Solo reconcilia
     /// filas de la FUENTE y las suscripciones cuya query corrió sin error en este sync (ver
     /// <see cref="BoletinSyncPlan"/>): así una falla transitoria (credencial o query caída) nunca
-    /// "auto-resuelve" avisos vigentes que simplemente no se pudieron consultar. Lista vacía → no-op.</summary>
+    /// "auto-resuelve" avisos vigentes que simplemente no se pudieron consultar. Lista vacía → no-op.
+    /// <paramref name="subLevelOnly"/> restringe además a filas sub-level (azure_resource_id IS
+    /// NULL): lo usa service_health cuando el enriquecimiento de recursos impactados falló para la
+    /// credencial de esa suscripción (ver <see cref="BoletinSyncPlan.HealthReconcileScopes"/>) — no
+    /// sabemos si las filas resource-level de un sync anterior siguen vigentes, así que no se
+    /// tocan. El flag alterna entre dos literales SQL fijos, nunca interpola valores.</summary>
     private static async Task ReconcileAsync(SqlConnection conn, SqlTransaction tx, int clientId, DateTime syncStart,
-        string source, IReadOnlyList<string> successfulSubscriptionIds, CancellationToken ct)
+        string source, IReadOnlyList<string> successfulSubscriptionIds, bool subLevelOnly, CancellationToken ct)
     {
-        if (successfulSubscriptionIds.Count == 0) return; // nada exitoso en esta fuente: no toca nada
+        if (successfulSubscriptionIds.Count == 0) return; // nada exitoso en este alcance: no toca nada
 
         var inParams = successfulSubscriptionIds.Select((_, i) => $"@s{i}").ToList();
+        var scopeClause = subLevelOnly ? "AND azure_resource_id IS NULL" : "";
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
@@ -324,6 +348,7 @@ public sealed class BoletinService(
             SET status = 'resuelto', resolved_at = SYSUTCDATETIME()
             WHERE client_id = @cid AND status = 'vigente' AND last_seen_at < @start
               AND source = @source AND subscription_id IN ({string.Join(",", inParams)})
+              {scopeClause}
             """;
         cmd.Parameters.Add(new SqlParameter("@cid", clientId));
         cmd.Parameters.Add(new SqlParameter("@start", syncStart));
@@ -452,4 +477,43 @@ internal static class BoletinSyncPlan
     /// (aunque hayan fallado todas las credenciales) → 'partial' + JSON de la lista de errores.</summary>
     public static (string Status, string? ErrorJson) DetermineOutcome(IReadOnlyCollection<object> errors) =>
         errors.Count == 0 ? ("completed", null) : ("partial", JsonSerializer.Serialize(errors));
+
+    /// <summary>
+    /// Divide las suscripciones de <c>service_health</c> en dos alcances de reconciliación, según si
+    /// el ENRIQUECIMIENTO (ServiceHealthImpactedResources) corrió sin error para la credencial de esa
+    /// sub. Corrige un caso real: sync N con enriquecimiento OK crea filas resource-level para un
+    /// aviso; sync N+1 la query base de health sigue OK pero el enriquecimiento falla para esa
+    /// credencial → <c>ExpandHealthRows</c> solo re-emite la fila sub-level (no sabe qué recursos
+    /// siguen impactados). Si se reconciliara "todo" igual que antes, las filas resource-level del
+    /// sync N (que no se volvieron a ver) se marcarían 'resuelto' por una falla transitoria de una
+    /// query best-effort, corrompiendo el histórico <c>resolved_at</c>.
+    /// - FullScope: base de health OK + enriquecimiento OK → se reconcilian TODAS las filas de esas
+    ///   subs (sub-level y resource-level), como siempre.
+    /// - SubLevelOnly: base de health OK pero enriquecimiento FALLÓ → se reconcilian SOLO las filas
+    ///   sub-level (azure_resource_id IS NULL); las resource-level no se tocan porque no se sabe si
+    ///   siguen vigentes.
+    /// - Credencial caída o query base de health fallida: la sub queda fuera de AMBOS alcances
+    ///   (misma precedencia que <see cref="SuccessfulSubscriptionsBySource"/>).
+    /// No aplica a <c>advisor</c>: esa fuente no tiene enriquecimiento.
+    /// </summary>
+    public static (IReadOnlyList<string> FullScope, IReadOnlyList<string> SubLevelOnly) HealthReconcileScopes(
+        IReadOnlyDictionary<int, List<string>> groups,
+        IReadOnlySet<int> failedCredentials,
+        IReadOnlySet<int> healthFailedCredentials,
+        IReadOnlySet<int> healthResourcesFailedCredentials)
+    {
+        var full = new List<string>();
+        var subLevelOnly = new List<string>();
+
+        foreach (var (credentialId, subIds) in groups)
+        {
+            if (failedCredentials.Contains(credentialId)) continue; // credencial caída: fuera de ambos
+            if (healthFailedCredentials.Contains(credentialId)) continue; // base de health caída: fuera de ambos
+
+            if (healthResourcesFailedCredentials.Contains(credentialId)) subLevelOnly.AddRange(subIds);
+            else full.AddRange(subIds);
+        }
+
+        return (full, subLevelOnly);
+    }
 }

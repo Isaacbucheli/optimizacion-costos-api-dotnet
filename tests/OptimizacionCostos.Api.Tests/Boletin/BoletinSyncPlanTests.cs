@@ -111,4 +111,68 @@ public class BoletinSyncPlanTests
 
         Assert.Equal("partial", status);
     }
+
+    // -------------------- HealthReconcileScopes --------------------
+
+    [Fact]
+    public void EnriquecimientoFallidoDejaEsasSubsEnScopeSoloSubLevel()
+    {
+        // La credencial 1 obtuvo la base de health OK, pero ServiceHealthImpactedResources
+        // (enriquecimiento) falló para ella. sub-a/sub-b deben reconciliarse SOLO a nivel de
+        // suscripción (azure_resource_id IS NULL): las filas resource-level de un sync anterior no
+        // se tocan porque no se pudo volver a consultar si siguen vigentes.
+        var enriquecimientoFallido = new HashSet<int> { 1 };
+
+        var (full, subLevelOnly) = BoletinSyncPlan.HealthReconcileScopes(
+            Grupos(), Ninguna, Ninguna, enriquecimientoFallido);
+
+        Assert.Equal(["sub-c"], full);
+        Assert.Equal(new[] { "sub-a", "sub-b" }, subLevelOnly.OrderBy(s => s));
+    }
+
+    [Fact]
+    public void EnriquecimientoOkDejaTodasLasSubsEnScopeCompleto()
+    {
+        var (full, subLevelOnly) = BoletinSyncPlan.HealthReconcileScopes(
+            Grupos(), Ninguna, Ninguna, Ninguna);
+
+        Assert.Equal(new[] { "sub-a", "sub-b", "sub-c" }, full.OrderBy(s => s));
+        Assert.Empty(subLevelOnly);
+    }
+
+    [Fact]
+    public void CredencialOHealthBaseCaidaQuedaFueraDeAmbosScopesSinImportarElEnriquecimiento()
+    {
+        // Los sets vacíos por credencial/health caídos ya están cubiertos en
+        // SuccessfulSubscriptionsBySource; acá solo se verifica que HealthReconcileScopes respeta
+        // la misma precedencia y no "recupera" esas subs en subLevelOnly por error.
+        var credencialCaida = new HashSet<int> { 1 };
+        var healthBaseFallida = new HashSet<int> { 2 };
+
+        var (full, subLevelOnly) = BoletinSyncPlan.HealthReconcileScopes(
+            Grupos(), credencialCaida, healthBaseFallida, Ninguna);
+
+        Assert.Empty(full);
+        Assert.Empty(subLevelOnly);
+    }
+
+    [Fact]
+    public void CicloDeDosSyncsEnriquecimientoCaidoNoDejaLaSubEnElScopeCompleto()
+    {
+        // Documenta el ciclo del finding a nivel de la lógica pura: sync N con enriquecimiento OK →
+        // sub-a entra al scope completo (sus filas resource-level se reconcilian normalmente si
+        // dejan de verse). Sync N+1, misma credencial, pero el enriquecimiento falla → sub-a cae a
+        // "solo sub-level": ReconcileAsync ya no puede marcar 'resuelto' las filas resource-level que
+        // vinieron del sync N, porque este sync no sabe si siguen vigentes.
+        var grupos = new Dictionary<int, List<string>> { [1] = ["sub-a"] };
+
+        var syncN = BoletinSyncPlan.HealthReconcileScopes(grupos, Ninguna, Ninguna, Ninguna);
+        Assert.Equal(["sub-a"], syncN.FullScope);
+        Assert.Empty(syncN.SubLevelOnly);
+
+        var enriquecimientoCaidoEnCred1 = new HashSet<int> { 1 };
+        var syncNMasUno = BoletinSyncPlan.HealthReconcileScopes(grupos, Ninguna, Ninguna, enriquecimientoCaidoEnCred1);
+        Assert.Empty(syncNMasUno.FullScope);
+        Assert.Equal(["sub-a"], syncNMasUno.SubLevelOnly);
+    }
 }
