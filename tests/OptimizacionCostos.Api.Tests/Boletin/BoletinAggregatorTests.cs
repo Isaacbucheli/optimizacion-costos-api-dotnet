@@ -84,4 +84,35 @@ public class BoletinAggregatorTests
         Assert.Equal(2, kpis["subscriptions_impacted"]);
         Assert.Equal(2, kpis["subscriptions_total"]);
     }
+
+    // -------------------- BuildSubscriptionsView (A2) --------------------
+
+    [Fact]
+    public void BuildSubscriptionsViewMapeaIdYNombre()
+    {
+        var rows = new List<(string SubscriptionId, string? Name)>
+        {
+            ("sub-1", "Producción"),
+            ("sub-2", "Desarrollo"),
+        };
+
+        var view = BoletinAggregator.BuildSubscriptionsView(rows);
+
+        Assert.Equal(2, view.Count);
+        Assert.Equal("sub-1", view[0]["subscription_id"]);
+        Assert.Equal("Producción", view[0]["name"]);
+        Assert.Equal("sub-2", view[1]["subscription_id"]);
+        Assert.Equal("Desarrollo", view[1]["name"]);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void BuildSubscriptionsViewUsaElIdComoFallbackSiNoHayNombre(string? name)
+    {
+        var view = BoletinAggregator.BuildSubscriptionsView([("sub-1", name)]);
+
+        Assert.Equal("sub-1", view[0]["name"]);
+    }
 }

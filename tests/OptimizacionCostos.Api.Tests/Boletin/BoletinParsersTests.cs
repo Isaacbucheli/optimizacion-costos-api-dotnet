@@ -101,4 +101,109 @@ public class BoletinParsersTests
             System.Text.Encoding.UTF8.GetBytes("7|advisor|sub-1|Basic SKU|/subs/s/providers/x/y")));
         Assert.Equal(esperado, Convert.ToHexString(row.Fingerprint(7)));
     }
+
+    // -------------------- FromHealthImpactedRow (A1) --------------------
+
+    [Fact]
+    public void ParseaFilaDeRecursoImpactadoDeServiceHealthYExtraeTrackingIdDelId()
+    {
+        var row = Row("""
+        {
+          "id": "/subscriptions/sub-2/providers/Microsoft.ResourceHealth/events/ABCD-123/impactedResources/0",
+          "subscriptionId": "sub-2",
+          "targetResourceId": "/subscriptions/sub-2/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1",
+          "targetResourceType": "microsoft.compute/virtualmachines",
+          "resourceName": "vm1"
+        }
+        """);
+
+        var r = BoletinParsers.FromHealthImpactedRow(row);
+
+        Assert.NotNull(r);
+        Assert.Equal("ABCD-123", r!.TrackingId);
+        Assert.Equal("sub-2", r.SubscriptionId);
+        Assert.Equal("/subscriptions/sub-2/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1", r.ResourceId);
+        Assert.Equal("vm1", r.ResourceName);
+        Assert.Equal("microsoft.compute/virtualmachines", r.ResourceType);
+    }
+
+    [Theory]
+    [InlineData("""{ "subscriptionId": "sub-2", "targetResourceId": "/x" }""")] // sin id → sin trackingId
+    [InlineData("""{ "id": "/subscriptions/sub-2/providers/Microsoft.ResourceHealth/events/T/impactedResources/0", "targetResourceId": "/x" }""")] // sin subscriptionId
+    [InlineData("""{ "id": "/subscriptions/sub-2/providers/Microsoft.ResourceHealth/events/T/impactedResources/0", "subscriptionId": "sub-2" }""")] // sin targetResourceId
+    [InlineData("""{ "id": "/subscriptions/sub-2/providers/algo-sin-events", "subscriptionId": "sub-2", "targetResourceId": "/x" }""")] // id sin '/events/'
+    public void RecursoImpactadoSinCampoClaveSeDescarta(string json) =>
+        Assert.Null(BoletinParsers.FromHealthImpactedRow(Row(json)));
+
+    [Fact]
+    public void RecursoImpactadoConResourceNameFaltanteUsaUltimoSegmentoDelResourceId()
+    {
+        // Cobertura defensiva: el nombre exacto de la propiedad "resourceName" no está confirmado
+        // contra datos reales de Azure (ver reporte); si no viene, se deriva del resourceId.
+        var row = Row("""
+        {
+          "id": "/subscriptions/sub-2/providers/Microsoft.ResourceHealth/events/ABCD-123/impactedResources/0",
+          "subscriptionId": "sub-2",
+          "targetResourceId": "/subscriptions/sub-2/resourceGroups/rg/providers/Microsoft.Compute/virtualMachines/vm1"
+        }
+        """);
+
+        var r = BoletinParsers.FromHealthImpactedRow(row);
+
+        Assert.NotNull(r);
+        Assert.Equal("vm1", r!.ResourceName);
+    }
+
+    // -------------------- ExpandHealthRows (A1) --------------------
+
+    private static RetirementRow HealthRow(string trackingId, string subId) => new(
+        RetirementRow.SourceServiceHealth, trackingId, subId, null, "", "", "",
+        new DateOnly(2026, 9, 30), "Título " + trackingId, "resumen", null, null);
+
+    [Fact]
+    public void AvisoConDosRecursosGeneraDosFilasResourceLevelYNingunaSubLevel()
+    {
+        var healthRows = new List<RetirementRow> { HealthRow("TRACK-1", "sub-1") };
+        var impacted = new List<HealthImpactedResource>
+        {
+            new("TRACK-1", "sub-1", "/r/vm1", "vm1", "microsoft.compute/virtualmachines"),
+            new("TRACK-1", "sub-1", "/r/vm2", "vm2", "microsoft.compute/virtualmachines"),
+        };
+
+        var result = BoletinParsers.ExpandHealthRows(healthRows, impacted);
+
+        Assert.Equal(2, result.Count);
+        Assert.All(result, r => Assert.Equal("TRACK-1", r.AnnouncementKey));
+        Assert.All(result, r => Assert.Equal("Título TRACK-1", r.Title)); // conserva título/fecha del aviso
+        Assert.Contains(result, r => r.AzureResourceId == "/r/vm1" && r.ResourceName == "vm1");
+        Assert.Contains(result, r => r.AzureResourceId == "/r/vm2" && r.ResourceName == "vm2");
+    }
+
+    [Fact]
+    public void AvisoSinRecursosMantieneFilaSubLevel()
+    {
+        var healthRows = new List<RetirementRow> { HealthRow("TRACK-2", "sub-1") };
+
+        var result = BoletinParsers.ExpandHealthRows(healthRows, []);
+
+        Assert.Single(result);
+        Assert.Null(result[0].AzureResourceId);
+        Assert.Equal("TRACK-2", result[0].AnnouncementKey);
+    }
+
+    [Fact]
+    public void RecursosDeOtraSuscripcionNoSeCruzan()
+    {
+        var healthRows = new List<RetirementRow> { HealthRow("TRACK-3", "sub-1") };
+        // El recurso pertenece a la MISMA trackingId pero OTRA suscripción: no debe cruzarse.
+        var impacted = new List<HealthImpactedResource>
+        {
+            new("TRACK-3", "sub-2", "/r/vmX", "vmX", "microsoft.compute/virtualmachines"),
+        };
+
+        var result = BoletinParsers.ExpandHealthRows(healthRows, impacted);
+
+        Assert.Single(result);
+        Assert.Null(result[0].AzureResourceId); // sigue siendo la fila sub-level de sub-1
+    }
 }

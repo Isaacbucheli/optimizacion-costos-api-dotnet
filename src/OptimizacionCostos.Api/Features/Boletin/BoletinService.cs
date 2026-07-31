@@ -37,6 +37,8 @@ public sealed class BoletinService(
         try
         {
             var rows = new List<RetirementRow>();
+            var healthRows = new List<RetirementRow>(); // se expanden a nivel de recurso antes de ir a "rows"
+            var healthImpacted = new List<HealthImpactedResource>();
             var advisorCount = 0; var healthCount = 0; var subsScanned = 0;
             var errors = new List<object>();
             // Rastreo por fuente para la reconciliación (Finding 1): una credencial caída excluye
@@ -78,7 +80,7 @@ public sealed class BoletinService(
                     var parsed = nodes.Select(n => BoletinParsers.FromHealthRow(new RgRow(n)))
                                       .Where(r => r is not null).Select(r => r!).ToList();
                     healthCount += parsed.Count;
-                    rows.AddRange(parsed);
+                    healthRows.AddRange(parsed);
                 }
                 catch (Exception ex)
                 {
@@ -87,8 +89,31 @@ public sealed class BoletinService(
                     healthFailedCredentials.Add(credentialId);
                 }
 
+                // Enriquecimiento (A1): recursos concretos impactados por los avisos de Service
+                // Health. Best-effort a propósito: si falla, la fuente "health" NO se marca como
+                // fallida (no entra a healthFailedCredentials) — solo se pierde el detalle de
+                // recursos de esta credencial y esos avisos siguen viéndose a nivel de suscripción,
+                // exactamente como antes de A1. No es la fuente de verdad de qué subs se
+                // consultaron con éxito, así que tampoco debe afectar la reconciliación.
+                try
+                {
+                    var nodes = await rg.RunQueryAsync(cred, subIds, BoletinQueries.ServiceHealthImpactedResources, ct);
+                    var parsed = nodes.Select(n => BoletinParsers.FromHealthImpactedRow(new RgRow(n)))
+                                      .Where(r => r is not null).Select(r => r!).ToList();
+                    healthImpacted.AddRange(parsed);
+                }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex,
+                        "boletin sync {Sync}: recursos impactados de service health falló credencial {Cred} (enriquecimiento, no afecta la fuente health)",
+                        syncId, credentialId);
+                    errors.Add(new { source = "service_health_resources", credential_id = credentialId, error = ex.GetType().Name });
+                }
+
                 subsScanned += subIds.Count;
             }
+
+            rows.AddRange(BoletinParsers.ExpandHealthRows(healthRows, healthImpacted));
 
             var successfulBySource = BoletinSyncPlan.SuccessfulSubscriptionsBySource(
                 groups, failedCredentials, advisorFailedCredentials, healthFailedCredentials);
@@ -128,10 +153,12 @@ public sealed class BoletinService(
         var subsTotal = managed.Sum(g => g.Value.Count);
         var stored = BoletinAggregator.FilterToManaged(
             await LoadVigentesAsync(conn, clientId, ct), managed.Values.SelectMany(subs => subs));
+        var subscriptionNames = await ManagedSubscriptionNamesAsync(conn, clientId, ct);
         var view = new Dictionary<string, object?>(
             BoletinAggregator.BuildView(stored, subsTotal, DateOnly.FromDateTime(DateTime.UtcNow)))
         {
             ["last_sync"] = await LoadLastSyncAsync(conn, clientId, ct),
+            ["subscriptions"] = BoletinAggregator.BuildSubscriptionsView(subscriptionNames),
         };
         return view;
     }
@@ -206,6 +233,31 @@ public sealed class BoletinService(
             list.Add(r.GetString(1));
         }
         return groups;
+    }
+
+    /// <summary>Id + nombre visible de las suscripciones administradas del cliente (A2), para que
+    /// GetAsync exponga <c>subscriptions</c> y el front muestre el nombre en vez del GUID. Mismo
+    /// predicado canónico que <see cref="ManagedSubscriptionsAsync"/> (lectura dedicada porque esa
+    /// devuelve group-by-credencial para el sync, no id+nombre para la vista).
+    /// subscription_name lo siembra el sync ARM (ver SqlClientSubscriptionStore).</summary>
+    private static async Task<IReadOnlyList<(string SubscriptionId, string? Name)>> ManagedSubscriptionNamesAsync(
+        SqlConnection conn, int clientId, CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT s.subscription_id, s.subscription_name
+            FROM dbo.client_azure_subscriptions s
+            INNER JOIN dbo.client_azure_credentials c ON s.credential_id = c.credential_id
+            WHERE s.client_id = @cid AND s.is_active = 1
+              AND COALESCE(s.is_managed, 1) = 1 AND c.is_active = 1
+            ORDER BY s.subscription_name, s.subscription_id
+            """;
+        cmd.Parameters.Add(new SqlParameter("@cid", clientId));
+        var list = new List<(string, string?)>();
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        while (await r.ReadAsync(ct))
+            list.Add((r.GetString(0), r.IsDBNull(1) ? null : r.GetString(1)));
+        return list;
     }
 
     private static async Task<int> CreateSyncAsync(SqlConnection conn, int clientId, string? actor, CancellationToken ct)

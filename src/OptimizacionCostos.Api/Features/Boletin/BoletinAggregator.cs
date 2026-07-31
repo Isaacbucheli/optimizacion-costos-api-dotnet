@@ -72,4 +72,16 @@ public static class BoletinAggregator
             ["groups"] = groups,
         };
     }
+
+    /// <summary>Arma el <c>subscriptions</c> top-level de la vista (A2): id + nombre visible de cada
+    /// suscripción administrada, para que el front muestre el nombre en vez del GUID. Si no hay
+    /// nombre sembrado (sync ARM todavía no corrió, o vino vacío), cae al propio subscription_id
+    /// para no dejar la columna en blanco.</summary>
+    public static IReadOnlyList<Dictionary<string, object?>> BuildSubscriptionsView(
+        IReadOnlyList<(string SubscriptionId, string? Name)> rows) =>
+        rows.Select(r => new Dictionary<string, object?>
+        {
+            ["subscription_id"] = r.SubscriptionId,
+            ["name"] = string.IsNullOrWhiteSpace(r.Name) ? r.SubscriptionId : r.Name,
+        }).ToList();
 }
