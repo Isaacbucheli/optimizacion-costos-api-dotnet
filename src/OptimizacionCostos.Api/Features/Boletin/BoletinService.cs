@@ -400,15 +400,17 @@ public sealed class BoletinService(
               title = @title, summary = @summary,
               recommended_action = @action, learn_more_url = @url,
               resource_name = @rname, resource_type = @rtype,
-              -- Task 5: SIEMPRE se SETea (no solo en el INSERT). Si esta misma fila (mismo
-              -- fingerprint) fue inferida por un detector en un sync anterior (derived = 1) y ahora
-              -- Microsoft la confirma vía enriquecimiento (derived = 0 en @derived), derived BAJA a
-              -- 0: lo confirmado por Microsoft siempre gana sobre lo inferido. Lo inverso (un
-              -- detector "reconfirmando" una fila ya confirmada) no ocurre en la práctica porque
-              -- BuildDerivedRows excluye recursos ya presentes en `rows`, pero si ocurriera, tampoco
-              -- se debe permitir bajar de confirmada a derivada silenciosamente — ver ReconcileAsync
-              -- para cómo se protege esa precedencia también en la reconciliación.
-              derived = @derived
+              -- Task 5: SIEMPRE se SETea (no solo en el INSERT). Dentro de UN MISMO sync, si el
+              -- enriquecimiento y un detector reportan el mismo fingerprint, el orden de `rows`
+              -- hace que la fila confirmada (derived=0) se upsertee después y pise a la inferida
+              -- (0 pisa 1). ENTRE syncs eso no basta: el sync N puede confirmar la fila (derived=0
+              -- persistido) y el sync N+1 puede NO traer el enriquecimiento (falla transitoria o
+              -- Microsoft deja de publicarla) mientras el detector la re-deriva, ejecutando este
+              -- UPDATE con @derived=1 sobre el MISMO fingerprint. El ratchet de abajo cierra ese
+              -- hueco: una vez confirmada por Microsoft, la fila jamás vuelve a "inferido" aunque
+              -- el @derived entrante sea 1; lo inferido SÍ puede subir a confirmado (0 pisa a 1,
+              -- nunca al revés).
+              derived = CASE WHEN derived = 0 THEN 0 ELSE @derived END
             WHERE client_id = @cid AND fingerprint = @fp;
             IF @@ROWCOUNT = 0
             INSERT INTO dbo.boletin_retirement(
