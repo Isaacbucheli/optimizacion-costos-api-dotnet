@@ -212,8 +212,6 @@ public sealed class BoletinController(
 
     // ---- Evaluación de novedades POR CLIENTE (Fase 2 Entrega 3, Task 4) ----
 
-    public sealed record DecidirNovedadClienteRequest(string? Estado, string? PorQue);
-
     [HttpPost("clients/{clientId:int}/novedades/evaluar")]
     [RequireModule(Modules.Boletin, ModuleAccess.Edit)]
     public async Task<IActionResult> EvaluarNovedadesCliente(int clientId, CancellationToken ct)
@@ -225,8 +223,14 @@ public sealed class BoletinController(
             var (evaluadas, candidatas) = await novedadesCliente.EvaluarPendientesAsync(clientId, ct);
             return Ok(new { evaluadas, candidatas });
         }
-        // IA no configurada, o inventario ilegible en TODAS las credenciales administradas: ambos
-        // son "no se puede evaluar ahora mismo" (mensaje del store), nunca un 500 crudo.
+        // Cero suscripciones administradas: problema de CONFIGURACIÓN del cliente, no transitorio
+        // (mismo mapeo que BoletinController.Sync con el sync general del Boletín) → 400.
+        catch (BoletinNoManagedSubscriptionsException ex)
+        {
+            return BadRequest(new { detail = ex.Message });
+        }
+        // IA no configurada, o inventario ilegible en TODAS las credenciales administradas (existiendo
+        // al menos una): ambos son "no se puede evaluar ahora mismo" (mensaje del store), nunca un 500 crudo.
         catch (InvalidOperationException ex)
         {
             return Problem(statusCode: StatusCodes.Status503ServiceUnavailable, detail: ex.Message);
@@ -248,10 +252,10 @@ public sealed class BoletinController(
 
     [HttpPut("novedades-cliente/{id:int}")]
     [RequireModule(Modules.Boletin, ModuleAccess.Edit)]
-    public async Task<IActionResult> DecidirNovedadCliente(int id, [FromBody] DecidirNovedadClienteRequest body, CancellationToken ct)
+    public async Task<IActionResult> DecidirNovedadCliente(int id, [FromBody] JsonElement body, CancellationToken ct)
     {
-        if (body.Estado is null || !NovedadClienteEstados.DecidiblesValidos.Contains(body.Estado))
-            return BadRequest(new { detail = $"estado debe ser uno de: {string.Join(", ", NovedadClienteEstados.DecidiblesValidos)}" });
+        var (estado, porQue, setPorQue, error) = ParseDecidirNovedadCliente(body);
+        if (error is not null) return BadRequest(new { detail = error });
 
         // Verifica pertenencia ANTES de mutar (patrón FindingStateOwner de OptimizationController):
         // el PUT solo recibe el id de la fila, así que primero se resuelve su client_id dueño y
@@ -262,10 +266,33 @@ public sealed class BoletinController(
         if (!chk.Ok) return Translate(chk);
 
         var actor = User.FindFirst("sub")?.Value ?? "";
-        var ok = await novedadesCliente.DecidirAsync(id, ownerClientId.Value, body.Estado, body.PorQue, actor, ct);
+        var ok = await novedadesCliente.DecidirAsync(id, ownerClientId.Value, estado!, porQue, setPorQue, actor, ct);
         return ok
-            ? Ok(new { message = "Decisión registrada", id, estado = body.Estado })
+            ? Ok(new { message = "Decisión registrada", id, estado })
+            // También cubre el id de una fila ya en no_aplica (terminal, ver DecidirAsync): existe
+            // pero DecidirAsync no la muta, así que desde acá se ve idéntico a "no encontrada".
             : NotFound(new { detail = "Novedad de cliente no encontrada" });
+    }
+
+    /// <summary>Body como JsonElement (patrón BuildLifecycleFields/BuildNovedadFields de este mismo
+    /// controller) en vez de un DTO tipado: la diferencia entre "por_que ausente" (se conserva el
+    /// valor actual, típicamente el texto que puso la IA al evaluar) y "por_que presente pero null"
+    /// (se borra explícitamente) solo se puede distinguir inspeccionando qué propiedades trae el JSON
+    /// crudo — un DTO con `string? PorQue` colapsaría ambos casos en null.</summary>
+    internal static (string? Estado, string? PorQue, bool SetPorQue, string? Error) ParseDecidirNovedadCliente(JsonElement body)
+    {
+        if (body.ValueKind != JsonValueKind.Object) return (null, null, false, "Cuerpo inválido");
+
+        string? estado = body.TryGetProperty("estado", out var estadoEl) && estadoEl.ValueKind == JsonValueKind.String
+            ? estadoEl.GetString()
+            : null;
+        if (estado is null || !NovedadClienteEstados.DecidiblesValidos.Contains(estado))
+            return (null, null, false, $"estado debe ser uno de: {string.Join(", ", NovedadClienteEstados.DecidiblesValidos)}");
+
+        var setPorQue = body.TryGetProperty("por_que", out var porQueEl);
+        string? porQue = setPorQue && porQueEl.ValueKind != JsonValueKind.Null ? porQueEl.GetString() : null;
+
+        return (estado, porQue, setPorQue, null);
     }
 
     /// <summary>Shape snake_case exacto pedido para el GET por cliente: `published_at` (no

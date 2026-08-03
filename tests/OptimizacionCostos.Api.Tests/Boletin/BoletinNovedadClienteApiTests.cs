@@ -74,6 +74,23 @@ public sealed class BoletinNovedadClienteApiTests : IClassFixture<BoletinNovedad
     }
 
     [Fact]
+    public async Task Evaluar_con_cero_subs_administradas_devuelve_400()
+    {
+        // Configuración del cliente (nada administrado), no un fallo transitorio de Azure: el
+        // controller debe mapear BoletinNoManagedSubscriptionsException a 400, no al 503 genérico.
+        _factory.Store.ThrowOnEvaluar = new BoletinNoManagedSubscriptionsException();
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        try
+        {
+            var res = await client.PostAsync("/boletin/clients/1/novedades/evaluar", null);
+            Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+            var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("El cliente no tiene suscripciones administradas activas.", body.GetProperty("detail").GetString());
+        }
+        finally { _factory.Store.ThrowOnEvaluar = null; }
+    }
+
+    [Fact]
     public async Task Evaluar_devuelve_evaluadas_y_candidatas()
     {
         _factory.Store.Evaluadas = 3;
@@ -210,6 +227,35 @@ public sealed class BoletinNovedadClienteApiTests : IClassFixture<BoletinNovedad
     }
 
     [Fact]
+    public async Task Put_sobre_fila_no_aplica_devuelve_404_y_no_muta()
+    {
+        // no_aplica (id 4, sembrada por Seed()) es un veredicto terminal de la IA e invisible (el GET
+        // nunca lo lista) — un PUT con ese id adivinado no debe revivirlo. Owner sí existe (client 1,
+        // accesible), así que esto ejercita el guard de DecidirAsync, no el chequeo de acceso.
+        _factory.Store.Seed();
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        var res = await client.PutAsync("/boletin/novedades-cliente/4", Json("{\"estado\":\"aprobada\"}"));
+        Assert.Equal(HttpStatusCode.NotFound, res.StatusCode);
+        Assert.DoesNotContain(_factory.Store.Decisiones, d => d.Id == 4);
+        Assert.Equal("no_aplica", _factory.Store.Rows.Single(r => r.Estado.Id == 4).Estado.Estado);
+    }
+
+    [Fact]
+    public async Task Put_sin_por_que_conserva_el_texto_de_la_ia()
+    {
+        // Revertir la fila 3 (aprobada, por_que="usas 2 App Service" puesto por la IA al evaluar) de
+        // vuelta a pendiente SIN mandar por_que en el body no debe borrarlo.
+        _factory.Store.Seed();
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        var res = await client.PutAsync("/boletin/novedades-cliente/3", Json("{\"estado\":\"pendiente\"}"));
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+
+        var decision = Assert.Single(_factory.Store.Decisiones, d => d.Id == 3);
+        Assert.Equal("pendiente", decision.Estado);
+        Assert.Equal("usas 2 App Service", decision.PorQue);
+    }
+
+    [Fact]
     public async Task Put_de_fila_de_otro_cliente_sin_acceso_devuelve_403_y_no_muta()
     {
         // La fila 2 pertenece al client_id 1: un consultor sin asignación a ese cliente NO debe
@@ -333,10 +379,20 @@ public sealed class BoletinNovedadClienteApiTests : IClassFixture<BoletinNovedad
         public Task<int?> OwnerClientIdAsync(int id, CancellationToken ct = default)
             => Task.FromResult(OwnerByRowId.TryGetValue(id, out var cid) ? (int?)cid : null);
 
-        public Task<bool> DecidirAsync(int id, int clientId, string estado, string? porQue, string actor, CancellationToken ct = default)
+        public Task<bool> DecidirAsync(int id, int clientId, string estado, string? porQue, bool setPorQue, string actor, CancellationToken ct = default)
         {
             if (!OwnerByRowId.TryGetValue(id, out var owner) || owner != clientId) return Task.FromResult(false);
-            Decisiones.Add((id, clientId, estado, porQue, actor));
+            var idx = Rows.FindIndex(r => r.Estado.Id == id);
+            if (idx < 0) return Task.FromResult(false);
+            var (novedad, estadoActual) = Rows[idx];
+            // Espejo del WHERE estado <> 'no_aplica' del store real: ese veredicto de la IA es
+            // terminal, un PUT sobre esa fila no la muta y se ve igual que un id inexistente.
+            if (estadoActual.Estado == NovedadClienteEstados.NoAplica) return Task.FromResult(false);
+            // setPorQue=false conserva el por_que actual (ej. el texto que puso la IA al evaluar) en
+            // vez de pisarlo con null — espejo de la CASE WHEN @setPorQue = 1 del UPDATE real.
+            var porQueFinal = setPorQue ? porQue : estadoActual.PorQue;
+            Rows[idx] = (novedad, estadoActual with { Estado = estado, PorQue = porQueFinal, DecididoPor = actor, DecididoAt = DateTime.UtcNow });
+            Decisiones.Add((id, clientId, estado, porQueFinal, actor));
             return Task.FromResult(true);
         }
     }

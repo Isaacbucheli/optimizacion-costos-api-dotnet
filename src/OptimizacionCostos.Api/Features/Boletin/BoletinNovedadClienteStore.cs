@@ -27,8 +27,13 @@ public interface IBoletinNovedadClienteStore
     /// <summary>Decide el estado final de una fila (aprobada|rechazada|pendiente — nunca no_aplica,
     /// esa la asigna solo la evaluación IA). <paramref name="clientId"/> se re-verifica en el WHERE
     /// (defensa en profundidad además del check de acceso que ya hizo el controller): si la fila no
-    /// pertenece a ese cliente, devuelve false igual que un id inexistente.</summary>
-    Task<bool> DecidirAsync(int id, int clientId, string estado, string? porQue, string actor, CancellationToken ct = default);
+    /// pertenece a ese cliente, devuelve false igual que un id inexistente. Una fila ya en
+    /// <c>no_aplica</c> también devuelve false y NO se muta: ese veredicto de la IA es terminal e
+    /// invisible (el GET nunca lo expone), así que el id no puede haberse obtenido del front — revivirlo
+    /// exigiría una re-evaluación explícita, no un PUT sobre un id adivinado. <paramref name="setPorQue"/>
+    /// distingue "el body trae por_que" (incluso null, se escribe) de "el body no lo incluye" (se
+    /// conserva el valor actual, típicamente el texto que puso la IA al evaluar).</summary>
+    Task<bool> DecidirAsync(int id, int clientId, string estado, string? porQue, bool setPorQue, string actor, CancellationToken ct = default);
 }
 
 /// <summary>Estados posibles de <c>dbo.boletin_novedad_cliente</c>. <c>no_aplica</c> es terminal: solo
@@ -106,8 +111,11 @@ public sealed class BoletinNovedadClienteStore(
         var evaluadas = 0;
         foreach (var (novedadId, estado, porQue) in mapeadas)
         {
-            await InsertResultadoAsync(conn, clientId, novedadId, estado, porQue, ct);
-            evaluadas++;
+            // InsertResultadoAsync devuelve false cuando pierde la carrera de doble evaluación
+            // simultánea (2627 del UNIQUE): esa fila la insertó la otra evaluación, así que NO cuenta
+            // acá como evaluada por esta llamada (evitaba sobreconteo del retorno al caller).
+            if (await InsertResultadoAsync(conn, clientId, novedadId, estado, porQue, ct))
+                evaluadas++;
         }
         return (evaluadas, candidatas.Count);
     }
@@ -152,18 +160,21 @@ public sealed class BoletinNovedadClienteStore(
         return v is null or DBNull ? null : Convert.ToInt32(v);
     }
 
-    public async Task<bool> DecidirAsync(int id, int clientId, string estado, string? porQue, string actor, CancellationToken ct = default)
+    public async Task<bool> DecidirAsync(int id, int clientId, string estado, string? porQue, bool setPorQue, string actor, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
         await EnsureSchemaAsync(conn, ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             UPDATE dbo.boletin_novedad_cliente
-            SET estado = @estado, por_que = @porQue, decidido_por = @actor, decidido_at = SYSUTCDATETIME()
-            WHERE id = @id AND client_id = @cid
+            SET estado = @estado,
+                por_que = CASE WHEN @setPorQue = 1 THEN @porQue ELSE por_que END,
+                decidido_por = @actor, decidido_at = SYSUTCDATETIME()
+            WHERE id = @id AND client_id = @cid AND estado <> 'no_aplica'
             """;
         cmd.Parameters.Add(new SqlParameter("@estado", estado));
         cmd.Parameters.Add(new SqlParameter("@porQue", Db(porQue)));
+        cmd.Parameters.Add(new SqlParameter("@setPorQue", setPorQue));
         cmd.Parameters.Add(new SqlParameter("@actor", Db(actor)));
         cmd.Parameters.Add(new SqlParameter("@id", id));
         cmd.Parameters.Add(new SqlParameter("@cid", clientId));
@@ -173,17 +184,20 @@ public sealed class BoletinNovedadClienteStore(
     // -------------------- inventario --------------------
 
     /// <summary>Suma de <see cref="BoletinQueries.TiposDeRecurso"/> por credencial (subs
-    /// administradas del cliente). Cero credenciales administradas es, a estos efectos, lo mismo que
-    /// "todas cayeron": sin inventario real la IA marcaría todo como no_aplica de forma prematura y
-    /// PERMANENTE (no_aplica es terminal, nunca se re-evalúa) — mejor fallar con un 503 explícito que
-    /// contaminar el catálogo del cliente con veredictos basados en un inventario vacío/inexistente.
+    /// administradas del cliente). Cero credenciales administradas es un problema de CONFIGURACIÓN
+    /// (el cliente no tiene nada administrado, no es un fallo transitorio) — se señaliza igual que
+    /// <see cref="BoletinService.RunSyncAsync"/> con <see cref="BoletinNoManagedSubscriptionsException"/>,
+    /// que el controller mapea a 400. Distinto de "TODAS las credenciales existentes fallaron al
+    /// consultarse" (sí transitorio: Azure caído, permisos revocados) — ese caso sigue siendo
+    /// <see cref="InvalidOperationException"/> → 503, porque sin inventario real la IA marcaría todo
+    /// como no_aplica de forma prematura y PERMANENTE (no_aplica es terminal, nunca se re-evalúa).
     /// Fallo de UNA credencial = warning + se sigue con inventario parcial (la IA es conservadora
-    /// ante info incompleta); solo si TODAS fallan se lanza la excepción.</summary>
+    /// ante info incompleta); solo si TODAS fallan se lanza la excepción transitoria.</summary>
     private async Task<IReadOnlyList<TipoRecurso>> BuildInventarioAsync(
         IReadOnlyDictionary<int, List<string>> groups, int clientId, CancellationToken ct)
     {
         if (groups.Count == 0)
-            throw new InvalidOperationException("No se pudo leer el inventario del cliente.");
+            throw new BoletinNoManagedSubscriptionsException();
 
         var acumulado = new Dictionary<string, int>(StringComparer.Ordinal);
         var fallidas = 0;
@@ -261,7 +275,9 @@ public sealed class BoletinNovedadClienteStore(
         return list;
     }
 
-    private static async Task InsertResultadoAsync(
+    /// <summary>Devuelve false cuando el INSERT pierde la carrera de doble evaluación simultánea (ver
+    /// catch de abajo) — el caller usa el resultado para no sobrecontar `evaluadas`.</summary>
+    private static async Task<bool> InsertResultadoAsync(
         SqlConnection conn, int clientId, int novedadId, string estado, string? porQue, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
@@ -276,12 +292,14 @@ public sealed class BoletinNovedadClienteStore(
         try
         {
             await cmd.ExecuteNonQueryAsync(ct);
+            return true;
         }
         catch (SqlException ex) when (ex.Number == 2627)
         {
             // Carrera de doble evaluación simultánea (mismo patrón que BoletinNovedadStore.IngestAsync):
             // el NOT EXISTS de LoadCandidatasAsync no es atómico y el UNIQUE(novedad_id, client_id)
             // atrapa al segundo INSERT. Duplicado legítimo, no un error.
+            return false;
         }
     }
 
