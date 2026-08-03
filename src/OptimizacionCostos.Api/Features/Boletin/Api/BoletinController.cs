@@ -145,7 +145,7 @@ public sealed class BoletinController(
         try
         {
             var (nuevas, traducidas) = await novedades.IngestAsync(ct);
-            var totalActivas = (await novedades.ListAsync(false, ct)).Count;
+            var totalActivas = await novedades.CountActivasAsync(ct);
             return Ok(new { nuevas, traducidas, total_activas = totalActivas });
         }
         // Cancelación real del cliente (ct la dispara el propio caller, ej. cierra la conexión):

@@ -14,11 +14,15 @@ public interface IBoletinNovedadClienteStore
     /// <summary>Evalúa con IA las novedades activas AÚN SIN evaluación para este cliente.
     /// Devuelve (Evaluadas, Candidatas): Candidatas son SOLO las que quedaron <c>pendiente</c>
     /// (aplica=true, esperan revisión del consultor), no el total del lote evaluado — el toast del
-    /// front dice "N candidata(s) de M evaluada(s)". 0 evaluadas = ya está al día.</summary>
+    /// front dice "N candidata(s) de M evaluada(s)". 0 evaluadas = ya está al día. El avance
+    /// persiste por lotes: si la IA falla o el request se corta a medio camino, lo ya evaluado
+    /// queda insertado y el reintento retoma donde quedó.</summary>
     Task<(int Evaluadas, int Candidatas)> EvaluarPendientesAsync(int clientId, CancellationToken ct = default);
 
     /// <summary>Novedades ya evaluadas y visibles para el cliente: SOLO estado aprobada/pendiente
-    /// (rechazada y no_aplica nunca salen de acá — ver <see cref="NovedadClienteEstados"/>).</summary>
+    /// (rechazada y no_aplica nunca salen de acá — ver <see cref="NovedadClienteEstados"/>) y SOLO
+    /// de novedades globales activas: desactivar una novedad vía PUT es el kill switch y debe
+    /// ocultarla también para clientes ya evaluados, no solo frenar evaluaciones futuras.</summary>
     Task<IReadOnlyList<(NovedadRow Novedad, NovedadClienteRow Estado)>> ListAsync(int clientId, CancellationToken ct = default);
 
     /// <summary>client_id dueño de la fila (o null si no existe). Patrón FindingStateOwner de
@@ -107,24 +111,38 @@ public sealed class BoletinNovedadClienteStore(
         var groups = await ManagedSubscriptionsAsync(conn, clientId, ct);
         var inventario = await BuildInventarioAsync(groups, clientId, ct);
 
-        var evaluaciones = await evaluator.EvaluarAsync(inventario, candidatas, ct);
-        var mapeadas = BoletinNovedadClientePlan.MapEvaluaciones(candidatas, evaluaciones);
-
+        // Evaluar e insertar POR LOTES, no todo-o-nada: el backlog global de novedades solo crece y
+        // un cliente nuevo evalúa la historia completa — si un lote de la IA agota reintentos o el
+        // App Service corta la petición (~230s), lo ya insertado persiste y el reintento retoma
+        // exactamente donde quedó (LoadCandidatasAsync excluye lo ya evaluado con NOT EXISTS).
+        // Tamaño = ChunkSize del evaluador: cada llamada es exactamente una petición a la IA.
         var evaluadas = 0;
         var candidatasNuevas = 0;
-        foreach (var (novedadId, estado, porQue) in mapeadas)
+        for (var i = 0; i < candidatas.Count; i += EvalBatchSize)
         {
-            // InsertResultadoAsync devuelve false cuando pierde la carrera de doble evaluación
-            // simultánea (2627 del UNIQUE): esa fila la insertó la otra evaluación, así que NO cuenta
-            // acá como evaluada por esta llamada (evitaba sobreconteo del retorno al caller).
-            if (await InsertResultadoAsync(conn, clientId, novedadId, estado, porQue, ct))
+            var lote = candidatas.Skip(i).Take(EvalBatchSize).ToList();
+            var evaluaciones = await evaluator.EvaluarAsync(inventario, lote, ct);
+            var mapeadas = BoletinNovedadClientePlan.MapEvaluaciones(lote, evaluaciones);
+
+            foreach (var (novedadId, estado, porQue) in mapeadas)
             {
-                evaluadas++;
-                if (estado == NovedadClienteEstados.Pendiente) candidatasNuevas++;
+                // InsertResultadoAsync devuelve false cuando pierde la carrera de doble evaluación
+                // simultánea (2627 del UNIQUE): esa fila la insertó la otra evaluación, así que NO cuenta
+                // acá como evaluada por esta llamada (evitaba sobreconteo del retorno al caller).
+                if (await InsertResultadoAsync(conn, clientId, novedadId, estado, porQue, ct))
+                {
+                    evaluadas++;
+                    if (estado == NovedadClienteEstados.Pendiente) candidatasNuevas++;
+                }
             }
         }
         return (evaluadas, candidatasNuevas);
     }
+
+    /// <summary>Mismo tamaño que BoletinNovedadEvaluator.ChunkSize a propósito: así cada
+    /// EvaluarAsync de acá es UNA petición a Azure OpenAI y el progreso persiste con esa
+    /// granularidad. Si divergen solo cambia la granularidad del avance, no la corrección.</summary>
+    private const int EvalBatchSize = 10;
 
     public async Task<IReadOnlyList<(NovedadRow Novedad, NovedadClienteRow Estado)>> ListAsync(int clientId, CancellationToken ct = default)
     {
@@ -138,6 +156,7 @@ public sealed class BoletinNovedadClienteStore(
             FROM dbo.boletin_novedad_cliente c
             INNER JOIN dbo.boletin_novedad n ON n.id = c.novedad_id
             WHERE c.client_id = @cid AND c.estado IN ('aprobada', 'pendiente')
+              AND n.is_active = 1
             ORDER BY n.published_at DESC
             """;
         cmd.Parameters.Add(new SqlParameter("@cid", clientId));

@@ -253,6 +253,9 @@ public sealed class BoletinNovedadApiTests : IClassFixture<BoletinNovedadApiTest
         public Task<IReadOnlyList<NovedadRow>> ListAsync(bool includeInactive = false, CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<NovedadRow>>(_rows.Where(r => includeInactive || r.IsActive).ToList());
 
+        public Task<int> CountActivasAsync(CancellationToken ct = default)
+            => Task.FromResult(_rows.Count(r => r.IsActive));
+
         public Task<bool> UpdateAsync(int id, IReadOnlyDictionary<string, object?> fields, CancellationToken ct = default)
         {
             var idx = _rows.FindIndex(r => r.Id == id);

@@ -16,6 +16,9 @@ public interface IBoletinNovedadStore
     /// (best-effort, IA apagada = quedan en EN). Devuelve (Nuevas, Traducidas).</summary>
     Task<(int Nuevas, int Traducidas)> IngestAsync(CancellationToken ct = default);
     Task<IReadOnlyList<NovedadRow>> ListAsync(bool includeInactive = false, CancellationToken ct = default);
+    /// <summary>COUNT(*) de novedades activas — para el total_activas del POST ingestar, que solo
+    /// necesita el número (ListAsync materializa cada descripcion NVARCHAR(MAX) a memoria).</summary>
+    Task<int> CountActivasAsync(CancellationToken ct = default);
     Task<bool> UpdateAsync(int id, IReadOnlyDictionary<string, object?> fields, CancellationToken ct = default);
 }
 
@@ -141,6 +144,15 @@ public sealed class BoletinNovedadStore(
         await using var r = await cmd.ExecuteReaderAsync(ct);
         while (await r.ReadAsync(ct)) list.Add(Map(r));
         return list;
+    }
+
+    public async Task<int> CountActivasAsync(CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM dbo.boletin_novedad WHERE is_active = 1";
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
     }
 
     public async Task<bool> UpdateAsync(int id, IReadOnlyDictionary<string, object?> fields, CancellationToken ct = default)
