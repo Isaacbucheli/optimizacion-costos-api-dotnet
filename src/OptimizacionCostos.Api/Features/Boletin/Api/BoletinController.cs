@@ -282,17 +282,30 @@ public sealed class BoletinController(
     internal static (string? Estado, string? PorQue, bool SetPorQue, string? Error) ParseDecidirNovedadCliente(JsonElement body)
     {
         if (body.ValueKind != JsonValueKind.Object) return (null, null, false, "Cuerpo inválido");
+        try
+        {
+            string? estado = body.TryGetProperty("estado", out var estadoEl) && estadoEl.ValueKind == JsonValueKind.String
+                ? estadoEl.GetString()
+                : null;
+            if (estado is null || !NovedadClienteEstados.DecidiblesValidos.Contains(estado))
+                return (null, null, false, $"estado debe ser uno de: {string.Join(", ", NovedadClienteEstados.DecidiblesValidos)}");
 
-        string? estado = body.TryGetProperty("estado", out var estadoEl) && estadoEl.ValueKind == JsonValueKind.String
-            ? estadoEl.GetString()
-            : null;
-        if (estado is null || !NovedadClienteEstados.DecidiblesValidos.Contains(estado))
-            return (null, null, false, $"estado debe ser uno de: {string.Join(", ", NovedadClienteEstados.DecidiblesValidos)}");
+            // Mismo rechazo de tipos que BuildLifecycleFields/BuildNovedadFields: un por_que numérico
+            // (JSON bien formado) llegaba hasta GetString() y reventaba en 500 crudo.
+            var setPorQue = body.TryGetProperty("por_que", out var porQueEl);
+            if (setPorQue && porQueEl.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+                return (null, null, false, "El campo 'por_que' debe ser texto o null");
+            string? porQue = setPorQue && porQueEl.ValueKind != JsonValueKind.Null ? porQueEl.GetString() : null;
 
-        var setPorQue = body.TryGetProperty("por_que", out var porQueEl);
-        string? porQue = setPorQue && porQueEl.ValueKind != JsonValueKind.Null ? porQueEl.GetString() : null;
-
-        return (estado, porQue, setPorQue, null);
+            return (estado, porQue, setPorQue, null);
+        }
+        // JsonDocument NO valida el UTF-8 de los strings al parsear: lo difiere hasta GetString(),
+        // que lanza InvalidOperationException ante bytes inválidos (cliente con encoding roto).
+        // Cuerpo malformado = 400, nunca un 500 crudo.
+        catch (InvalidOperationException)
+        {
+            return (null, null, false, "Cuerpo inválido");
+        }
     }
 
     /// <summary>Shape snake_case exacto pedido para el GET por cliente: `published_at` (no

@@ -12,7 +12,9 @@ public sealed record NovedadClienteRow(
 public interface IBoletinNovedadClienteStore
 {
     /// <summary>Evalúa con IA las novedades activas AÚN SIN evaluación para este cliente.
-    /// Devuelve (Evaluadas, Candidatas). 0 evaluadas = ya está al día.</summary>
+    /// Devuelve (Evaluadas, Candidatas): Candidatas son SOLO las que quedaron <c>pendiente</c>
+    /// (aplica=true, esperan revisión del consultor), no el total del lote evaluado — el toast del
+    /// front dice "N candidata(s) de M evaluada(s)". 0 evaluadas = ya está al día.</summary>
     Task<(int Evaluadas, int Candidatas)> EvaluarPendientesAsync(int clientId, CancellationToken ct = default);
 
     /// <summary>Novedades ya evaluadas y visibles para el cliente: SOLO estado aprobada/pendiente
@@ -109,15 +111,19 @@ public sealed class BoletinNovedadClienteStore(
         var mapeadas = BoletinNovedadClientePlan.MapEvaluaciones(candidatas, evaluaciones);
 
         var evaluadas = 0;
+        var candidatasNuevas = 0;
         foreach (var (novedadId, estado, porQue) in mapeadas)
         {
             // InsertResultadoAsync devuelve false cuando pierde la carrera de doble evaluación
             // simultánea (2627 del UNIQUE): esa fila la insertó la otra evaluación, así que NO cuenta
             // acá como evaluada por esta llamada (evitaba sobreconteo del retorno al caller).
             if (await InsertResultadoAsync(conn, clientId, novedadId, estado, porQue, ct))
+            {
                 evaluadas++;
+                if (estado == NovedadClienteEstados.Pendiente) candidatasNuevas++;
+            }
         }
-        return (evaluadas, candidatas.Count);
+        return (evaluadas, candidatasNuevas);
     }
 
     public async Task<IReadOnlyList<(NovedadRow Novedad, NovedadClienteRow Estado)>> ListAsync(int clientId, CancellationToken ct = default)

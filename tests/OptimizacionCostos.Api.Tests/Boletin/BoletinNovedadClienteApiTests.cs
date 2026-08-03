@@ -276,6 +276,41 @@ public sealed class BoletinNovedadClienteApiTests : IClassFixture<BoletinNovedad
         Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
     }
 
+    [Fact]
+    public async Task Put_con_por_que_no_string_devuelve_400_y_no_muta()
+    {
+        // Mismo bypass de tipos que ya rechazan BuildLifecycleFields/BuildNovedadFields: un por_que
+        // numérico bien formado llegaba hasta GetString() y reventaba en 500 crudo (cazado en E2E).
+        _factory.Store.Seed();
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        var res = await client.PutAsync("/boletin/novedades-cliente/2", Json("{\"estado\":\"aprobada\",\"por_que\":5}"));
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Contains("por_que", body.GetProperty("detail").GetString());
+        Assert.DoesNotContain(_factory.Store.Decisiones, d => d.Id == 2);
+    }
+
+    [Fact]
+    public async Task Put_con_utf8_invalido_devuelve_400_no_500()
+    {
+        // JsonDocument NO valida el UTF-8 de los strings al parsear: lo difiere hasta GetString(),
+        // que lanza ante bytes inválidos (cliente con encoding cp1252 roto, cazado en E2E con curl).
+        // Cuerpo malformado = 400, nunca 500 crudo.
+        _factory.Store.Seed();
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        var bytes = new List<byte>();
+        bytes.AddRange(Encoding.ASCII.GetBytes("{\"estado\":\"pendiente\",\"por_que\":\"S"));
+        bytes.Add(0xED); // "í" en cp1252: byte de arranque UTF-8 inválido en esta posición
+        bytes.AddRange(Encoding.ASCII.GetBytes(" aplica\"}"));
+        var content = new ByteArrayContent(bytes.ToArray());
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+
+        var res = await client.PutAsync("/boletin/novedades-cliente/2", content);
+
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        Assert.DoesNotContain(_factory.Store.Decisiones, d => d.Id == 2);
+    }
+
     // ---- Fixture: API real en memoria, solo se fake-an auth/acceso y el store de novedades-cliente ----
 
     public sealed class Factory : WebApplicationFactory<Program>
