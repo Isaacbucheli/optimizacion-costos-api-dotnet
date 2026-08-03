@@ -29,6 +29,11 @@ public sealed class SiteRuntimeArmClient(IHttpClientFactory httpFactory, ILogger
     /// <summary>Tope de sitios por lote (evita barrer tenants gigantes; se advierte si se excede).</summary>
     internal const int MaxSites = 300;
 
+    /// <summary>Tope de concurrencia para los GETs config/web: acota la presión sobre ARM y evita
+    /// 429 (throttling), y baja ~300 llamadas secuenciales (5-6 min, excede el timeout de ~230s del
+    /// App Service en producción) a decenas de segundos.</summary>
+    internal const int MaxConcurrency = 10;
+
     public async Task<SiteRuntimeArmResult> FetchAsync(TokenCredential credential, IReadOnlyList<WindowsSiteRef> sites, CancellationToken ct = default)
     {
         if (sites.Count == 0) return new([], [], 0, false);
@@ -46,31 +51,54 @@ public sealed class SiteRuntimeArmClient(IHttpClientFactory httpFactory, ILogger
         var http = httpFactory.CreateClient();
         http.Timeout = TimeSpan.FromSeconds(60);
 
+        // Concurrencia acotada (SemaphoreSlim) en vez del foreach secuencial: cada task devuelve su
+        // propio resultado (nunca escribe sobre una List compartida) y se agrega recién al final de
+        // Task.WhenAll, así se evita cualquier lock/carrera sobre el acumulador.
+        using var gate = new SemaphoreSlim(MaxConcurrency);
+        var tasks = lote.Select(site => FetchOneAsync(http, token.Token, site, gate, ct)).ToList();
+        var perSite = await Task.WhenAll(tasks);
+
         var result = new List<SiteRuntime>();
         var failed = 0;
-        foreach (var site in lote)
+        foreach (var (runtimes, siteFailed) in perSite)
         {
-            ct.ThrowIfCancellationRequested();
-            try
-            {
-                using var req = new HttpRequestMessage(HttpMethod.Get,
-                    $"{ArmBase}{site.SiteId}/config/web?api-version={ApiVersion}");
-                req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
-                using var res = await http.SendAsync(req, ct);
-                res.EnsureSuccessStatusCode();
-                using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
-                result.AddRange(ParseSiteConfig(site, doc.RootElement));
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception ex)
-            {
-                failed++;
-                logger.LogWarning(ex, "config/web fallo site={Site}", site.SiteName);
-            }
+            result.AddRange(runtimes);
+            if (siteFailed) failed++;
         }
+
         if (failed > 0)
             warnings.Add($"Apps Windows: {failed} de {lote.Count} sitios no respondieron config/web (runtime desconocido para esos sitios).");
         return new(result, warnings, failed, truncated);
+    }
+
+    /// <summary>Un sitio: adquiere el cupo del semáforo, hace el GET config/web y libera el cupo.
+    /// Fallo por sitio = warning contado (Failed=true), jamás aborta el lote — la cancelación real
+    /// sí se propaga (catch de OperationCanceledException primero, re-lanza; Task.WhenAll la agrega
+    /// al AggregateException y el `await` la vuelve a lanzar tal cual al caller).</summary>
+    private async Task<(IReadOnlyList<SiteRuntime> Runtimes, bool Failed)> FetchOneAsync(
+        HttpClient http, string token, WindowsSiteRef site, SemaphoreSlim gate, CancellationToken ct)
+    {
+        await gate.WaitAsync(ct);
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get,
+                $"{ArmBase}{site.SiteId}/config/web?api-version={ApiVersion}");
+            req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using var res = await http.SendAsync(req, ct);
+            res.EnsureSuccessStatusCode();
+            using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync(ct));
+            return (ParseSiteConfig(site, doc.RootElement), false);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "config/web fallo site={Site}", site.SiteName);
+            return ([], true);
+        }
+        finally
+        {
+            gate.Release();
+        }
     }
 
     /// <summary>Puro y testeable: mapea properties de config/web a tokens de runtime normalizados.</summary>

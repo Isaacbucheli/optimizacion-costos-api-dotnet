@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Features.Boletin;
 using OptimizacionCostos.Api.Features.CostEngine.Pricing;
@@ -25,10 +27,12 @@ public class BoletinTranslationServiceTests
         AzureOpenAiApiVersion = "2025-04-01-preview",
     };
 
+    private static ILogger<BoletinTranslationService> Logger() => NullLogger<BoletinTranslationService>.Instance;
+
     [Fact]
     public void SinConfiguracionNoEstaConfigurado()
     {
-        var svc = new BoletinTranslationService(new FakeChat(), new AppConfig());
+        var svc = new BoletinTranslationService(new FakeChat(), new AppConfig(), Logger());
         Assert.False(svc.IsConfigured);
     }
 
@@ -38,7 +42,7 @@ public class BoletinTranslationServiceTests
         var chat = new FakeChat();
         // 2 textos únicos aunque llegan 3 items → una llamada, array de 2.
         chat.Responses.Enqueue("""["Soporte de Node.js 20 termina", "Actualiza tus apps"]""");
-        var svc = new BoletinTranslationService(chat, Configured());
+        var svc = new BoletinTranslationService(chat, Configured(), Logger());
 
         var result = await svc.TranslateToSpanishAsync(
         [
@@ -60,7 +64,7 @@ public class BoletinTranslationServiceTests
     {
         var chat = new FakeChat();
         chat.Responses.Enqueue("```json\n[\"Hola\"]\n```");
-        var svc = new BoletinTranslationService(chat, Configured());
+        var svc = new BoletinTranslationService(chat, Configured(), Logger());
         var result = await svc.TranslateToSpanishAsync([new BoletinTranslationItem("k", "Hello")]);
         Assert.Equal("Hola", result[0].Text);
     }
@@ -72,7 +76,7 @@ public class BoletinTranslationServiceTests
         chat.Responses.Enqueue("""["uno", "dos"]"""); // esperaba 1
         chat.Responses.Enqueue("""["uno", "dos"]""");
         chat.Responses.Enqueue("""["uno", "dos"]""");
-        var svc = new BoletinTranslationService(chat, Configured());
+        var svc = new BoletinTranslationService(chat, Configured(), Logger());
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => svc.TranslateToSpanishAsync([new BoletinTranslationItem("k", "one")]));
         Assert.Equal(3, chat.Calls.Count); // 3 intentos
@@ -82,7 +86,7 @@ public class BoletinTranslationServiceTests
     public async Task ListaVaciaNoLlamaALaIa()
     {
         var chat = new FakeChat();
-        var svc = new BoletinTranslationService(chat, Configured());
+        var svc = new BoletinTranslationService(chat, Configured(), Logger());
         var result = await svc.TranslateToSpanishAsync([]);
         Assert.Empty(result);
         Assert.Empty(chat.Calls);

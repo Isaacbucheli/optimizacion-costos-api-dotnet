@@ -163,7 +163,15 @@ public sealed class BoletinService(
                         // fallo parcial acá (sitios que no respondieron config/web, o lote recortado a
                         // MaxSites) NO lanza excepción — FetchAsync es best-effort por sitio. Por eso se
                         // revisa explícitamente FailedCount/Truncated en vez de confiar solo en el catch.
-                        var winResult = await FetchWindowsRuntimesAsync(cred, subIds, ct);
+                        // Solo interesan los sitios de las subs con AL MENOS un aviso matcheado (Item 1
+                        // fase 2): consultar config/web de sitios en subs sin ningún target es puro
+                        // desperdicio (BuildDerivedRows los descarta después de todos modos), y con hasta
+                        // 300 GETs por lote ese desperdicio es justo lo que empuja el sync sobre el
+                        // timeout del App Service en producción.
+                        var targetSubs = announcementTargets
+                            .Select(x => x.Row.SubscriptionId)
+                            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        var winResult = await FetchWindowsRuntimesAsync(cred, subIds, targetSubs, ct);
                         sites.AddRange(winResult.Sites);
                         foreach (var w in winResult.Warnings)
                             errors.Add(new { source = "inventario", credential_id = credentialId, warning = w });
@@ -179,11 +187,27 @@ public sealed class BoletinService(
                             // visible, nunca un silencio que se confunda con éxito).
                             detectorFailedCredentials.Add(credentialId);
                         }
-                        var existing = rows.Where(r => r.AzureResourceId is not null)
-                            .Select(r => r.AzureResourceId!.ToLowerInvariant())
-                            .ToHashSet(StringComparer.Ordinal);
+                        // La dedup es POR ANUNCIO (Item 2 del review): solo los resource IDs que YA
+                        // están en `rows` bajo ESTE MISMO anuncio (mismo Source+AnnouncementKey) cuentan
+                        // como "existentes". Un `existing` global (todas las filas acumuladas de
+                        // CUALQUIER anuncio) suprimía derivadas legítimas cuando el mismo recurso
+                        // aparecía bajo un anuncio distinto — un mismo sitio puede estar impactado por
+                        // varios retiros a la vez, y cada uno lo debe reportar por separado. El caso que
+                        // el `existing` global pretendía cubrir (no duplicar el enriquecimiento del
+                        // MISMO aviso) ya lo resuelve el orden de upsert + ratchet por fingerprint en
+                        // UpsertAsync — y de todos modos ExpandHealthRows (que puebla las filas
+                        // resource-level confirmadas) corre DESPUÉS de este loop, así que ni siquiera
+                        // estaban en `rows` todavía en este punto.
                         foreach (var (announcement, targets) in announcementTargets)
+                        {
+                            var existing = rows
+                                .Where(r => r.Source == announcement.Source
+                                    && r.AnnouncementKey == announcement.AnnouncementKey
+                                    && r.AzureResourceId is not null)
+                                .Select(r => r.AzureResourceId!.ToLowerInvariant())
+                                .ToHashSet(StringComparer.Ordinal);
                             rows.AddRange(BoletinDetectors.BuildDerivedRows(announcement, targets, sites, existing));
+                        }
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
                     catch (Exception ex)
@@ -267,9 +291,16 @@ public sealed class BoletinService(
     /// <c>detectorFailedCredentials</c> cuando <c>FailedCount &gt; 0</c> o <c>Truncated</c> (ver
     /// RunSyncAsync) — un fallo parcial acá NO lanza excepción, así que sin esto la degradación de
     /// cobertura pasaba desapercibida y HealthReconcileScopes reconciliaba (resolvía) filas derivadas
-    /// que en realidad no se pudieron re-confirmar.</summary>
+    /// que en realidad no se pudieron re-confirmar.
+    /// <paramref name="targetSubscriptionIds"/> (Item 1 fase 2): la query ARG de <c>WindowsSites</c>
+    /// sigue corriendo sobre TODAS las <paramref name="subIds"/> del grupo (una sola llamada, barata),
+    /// pero los <c>refs</c> que de ahí salen se filtran a solo esas subs ANTES de <c>FetchAsync</c> —
+    /// ese es el costoso (hasta 300 GETs config/web por lote); sitios de subs sin ningún aviso
+    /// matcheado nunca producirían una fila derivada (BuildDerivedRows exige misma suscripción que el
+    /// anuncio), así que consultarlos es desperdicio puro.</summary>
     private async Task<SiteRuntimeArmResult> FetchWindowsRuntimesAsync(
-        Azure.Core.TokenCredential cred, IReadOnlyList<string> subIds, CancellationToken ct)
+        Azure.Core.TokenCredential cred, IReadOnlyList<string> subIds,
+        IReadOnlySet<string> targetSubscriptionIds, CancellationToken ct)
     {
         var nodes = await rg.RunQueryAsync(cred, subIds, BoletinQueries.WindowsSites, ct);
         var refs = new List<WindowsSiteRef>();
@@ -279,6 +310,7 @@ public sealed class BoletinService(
             var sub = (row.Str("subscriptionId") ?? "").Trim();
             var id = (row.Str("siteId") ?? "").Trim();
             if (sub.Length == 0 || id.Length == 0) continue;
+            if (!targetSubscriptionIds.Contains(sub)) continue; // sin avisos matcheados en esta sub
             refs.Add(new WindowsSiteRef(sub, id, (row.Str("name") ?? "").Trim()));
         }
         return await siteRuntimes.FetchAsync(cred, refs, ct);

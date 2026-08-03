@@ -19,7 +19,8 @@ public interface IBoletinTranslationService
 
 /// <summary>Espejo en→es de Features/Waf/WafTranslationService (mismo IChatCompletionClient,
 /// mismo chunking y reintentos), con prompt de FIDELIDAD (el boletín no re-redacta a Microsoft).</summary>
-public sealed class BoletinTranslationService(IChatCompletionClient chat, AppConfig config) : IBoletinTranslationService
+public sealed class BoletinTranslationService(
+    IChatCompletionClient chat, AppConfig config, ILogger<BoletinTranslationService> logger) : IBoletinTranslationService
 {
     private const int MaxItemsPerChunk = 100;
     private const int MaxCharsPerChunk = 8000;
@@ -74,6 +75,12 @@ public sealed class BoletinTranslationService(IChatCompletionClient chat, AppCon
         var userJson = JsonSerializer.Serialize(chunk);
         var maxTokens = Math.Clamp(chunk.Sum(t => t.Length) * 2 + 512, 512, 8000);
 
+        // Diagnóstico de fallos (Item 3 del review): antes de este cambio, agotar los reintentos
+        // lanzaba InvalidOperationException SIN la causa original — imposible saber, desde los logs,
+        // si falló por HTTP/auth/timeout de Azure OpenAI o porque la IA respondió con longitud/JSON
+        // incorrecto. `last` guarda la última excepción real (queda null si el fallo fue de
+        // longitud/parse, no de excepción) y cada intento fallido se loguea de inmediato.
+        Exception? last = null;
         for (var attempt = 0; attempt < MaxAttempts; attempt++)
         {
             ct.ThrowIfCancellationRequested();
@@ -83,13 +90,20 @@ public sealed class BoletinTranslationService(IChatCompletionClient chat, AppCon
                 var raw = await Task.Run(() => chat.Complete(BoletinPrompts.TranslateEnToEsSystem, userJson, maxTokens), ct);
                 var parsed = ParseStringArray(raw);
                 if (parsed is not null && parsed.Count == chunk.Count) return parsed;
+                logger.LogWarning(
+                    "traduccion boletin: respuesta invalida en intento {Attempt} de {Max} (longitud/parse incorrecto)",
+                    attempt + 1, MaxAttempts);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch { /* reintento con backoff */ }
+            catch (Exception ex)
+            {
+                last = ex;
+                logger.LogWarning(ex, "traduccion boletin: intento {Attempt} de {Max} fallo", attempt + 1, MaxAttempts);
+            }
             if (attempt < MaxAttempts - 1)
                 await Task.Delay(TimeSpan.FromSeconds(Math.Pow(2, attempt + 1)), ct);
         }
-        throw new InvalidOperationException("No se pudo obtener la traduccion de Azure OpenAI.");
+        throw new InvalidOperationException("No se pudo obtener la traduccion de Azure OpenAI.", last);
     }
 
     /// <summary>Tolera fences ```json ...``` recortando entre el primer '[' y el último ']'.</summary>
