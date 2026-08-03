@@ -64,6 +64,18 @@ public sealed class BoletinNovedadStore(
         foreach (var item in items)
         {
             ct.ThrowIfCancellationRequested();
+            // Guardas defensivas contra cambios de formato del feed (review E3-T2): un guid más
+            // largo que la columna señala un formato distinto al validado (guids numéricos cortos)
+            // y se SALTA con warning; títulos/links largos se truncan para que UNA fila anómala
+            // jamás tumbe el lote entero con un SqlException de truncado (500 crudo).
+            if (item.FeedGuid.Length > 32)
+            {
+                logger.LogWarning("ingesta de novedades: guid inesperado de {Len} chars, item saltado ({Titulo})",
+                    item.FeedGuid.Length, item.Titulo.Length > 60 ? item.Titulo[..60] : item.Titulo);
+                continue;
+            }
+            var titulo = item.Titulo.Length > 512 ? item.Titulo[..512] : item.Titulo;
+            var link = item.Link.Length > 1024 ? item.Link[..1024] : item.Link;
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = """
                 IF NOT EXISTS (SELECT 1 FROM dbo.boletin_novedad WHERE feed_guid = @guid)
@@ -72,9 +84,9 @@ public sealed class BoletinNovedadStore(
                 VALUES (@guid, @titulo, @descripcion, @link, @estado, @categoria, @categoriasJson, @published)
                 """;
             cmd.Parameters.Add(new SqlParameter("@guid", item.FeedGuid));
-            cmd.Parameters.Add(new SqlParameter("@titulo", item.Titulo));
+            cmd.Parameters.Add(new SqlParameter("@titulo", titulo));
             cmd.Parameters.Add(new SqlParameter("@descripcion", item.Descripcion));
-            cmd.Parameters.Add(new SqlParameter("@link", item.Link));
+            cmd.Parameters.Add(new SqlParameter("@link", link));
             cmd.Parameters.Add(new SqlParameter("@estado", item.EstadoFeed));
             cmd.Parameters.Add(new SqlParameter("@categoria", item.CategoriaBit));
             cmd.Parameters.Add(new SqlParameter("@categoriasJson", JsonSerializer.Serialize(item.CategoriasFeed)));
@@ -83,8 +95,17 @@ public sealed class BoletinNovedadStore(
             // SqlWafIngestionStore.Param) — acá no se compara published_at por igualdad, pero insertar
             // con el tipo correcto evita arrastrar el mismo problema si algún día se necesita.
             cmd.Parameters.Add(new SqlParameter("@published", SqlDbType.DateTime2) { Value = item.PublishedAtUtc });
-            var affected = await cmd.ExecuteNonQueryAsync(ct);
-            if (affected > 0) nuevas++;
+            try
+            {
+                var affected = await cmd.ExecuteNonQueryAsync(ct);
+                if (affected > 0) nuevas++;
+            }
+            catch (SqlException ex) when (ex.Number == 2627)
+            {
+                // Carrera de doble ingesta simultánea: el IF NOT EXISTS no es atómico y el UNIQUE
+                // de feed_guid atrapa al segundo INSERT. Es un duplicado legítimo, no un error.
+                logger.LogInformation("ingesta de novedades: guid {Guid} insertado por otra ingesta concurrente", item.FeedGuid);
+            }
         }
 
         // Traducción fiel es (best-effort, patrón BoletinService.TranslatePendingAsync/E1): IA no
