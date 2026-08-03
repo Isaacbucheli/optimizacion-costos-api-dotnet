@@ -26,6 +26,13 @@ public static class LifecycleColumns
         ["clave", "producto", "categoria", "match_field", "match_pattern", "end_of_support", "recomendacion", "learn_more_url", "is_active"];
 }
 
+/// <summary>El UNIQUE(clave) de dbo.boletin_lifecycle cubre también las filas desactivadas: reactivar
+/// una clave que el usuario desactivó por error (o cambió de opinión) es un caso legítimo de undelete,
+/// pero crear una clave que ya está ACTIVA es un duplicado real. CreateAsync distingue ambos casos
+/// antes de tocar la BD y lanza esta excepción solo para el segundo.</summary>
+public sealed class LifecycleClaveDuplicadaException(string clave)
+    : Exception($"Ya existe una entrada activa con la clave '{clave}'.");
+
 /// <summary>Catálogo GLOBAL de lifecycle (fin de soporte de SO y motores de BD) del Boletín.
 /// Seed embebido idempotente por tabla-vacía (NO pisa ediciones del consultor, patrón AlertCatalogSchema).</summary>
 public sealed class BoletinLifecycleStore(ISqlConnectionFactory factory) : IBoletinLifecycleStore
@@ -65,10 +72,63 @@ public sealed class BoletinLifecycleStore(ISqlConnectionFactory factory) : IBole
         return await r.ReadAsync(ct) ? Map(r) : null;
     }
 
+    /// <summary>Resultado puro (sin BD, testeable directo) de decidir qué hacer con una clave que
+    /// llega en un CreateAsync, en función de si ya existe una fila con esa clave y su estado.</summary>
+    internal enum ClaveLookupOutcome { Insert, Undelete, Conflict }
+
+    internal static ClaveLookupOutcome DecideCreateOutcome(bool claveExists, bool existingIsActive) =>
+        !claveExists ? ClaveLookupOutcome.Insert
+        : existingIsActive ? ClaveLookupOutcome.Conflict
+        : ClaveLookupOutcome.Undelete;
+
     public async Task<int> CreateAsync(IReadOnlyDictionary<string, object?> fields, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
         await EnsureSchemaAsync(conn, ct);
+
+        // Desactivar (SoftDeleteAsync) es el flujo normal del producto y arrepentirse debe ser
+        // posible desde el mismo form: si la clave que llega ya existe pero DESACTIVADA, la
+        // resucitamos (undelete) con los datos nuevos en vez de reventar con SqlException 2627
+        // por el UNIQUE(clave), que también cubre las filas inactivas.
+        if (fields.TryGetValue("clave", out var claveObj) && claveObj is string clave && !string.IsNullOrEmpty(clave))
+        {
+            int? existingId = null;
+            var existingIsActive = false;
+            await using (var lookup = conn.CreateCommand())
+            {
+                lookup.CommandText = "SELECT id, is_active FROM dbo.boletin_lifecycle WHERE clave = @clave";
+                lookup.Parameters.Add(new SqlParameter("@clave", clave));
+                await using var r = await lookup.ExecuteReaderAsync(ct);
+                if (await r.ReadAsync(ct))
+                {
+                    existingId = r.GetInt32(0);
+                    existingIsActive = r.GetBoolean(1);
+                }
+            }
+
+            switch (DecideCreateOutcome(existingId.HasValue, existingIsActive))
+            {
+                case ClaveLookupOutcome.Conflict:
+                    throw new LifecycleClaveDuplicadaException(clave);
+                case ClaveLookupOutcome.Undelete:
+                    // is_active se fuerza aparte (siempre 1 en un undelete); excluirlo de updCols
+                    // evita asignarlo dos veces en el mismo SET.
+                    var updCols = fields.Keys.Where(k => LifecycleColumns.Editable.Contains(k) && k != "is_active").ToList();
+                    await using (var update = conn.CreateCommand())
+                    {
+                        update.CommandText = $"""
+                            UPDATE dbo.boletin_lifecycle SET {string.Join(", ", updCols.Select(c => $"{c} = @{c}"))},
+                                   is_active = 1, updated_at = SYSUTCDATETIME()
+                            WHERE id = @id
+                            """;
+                        update.Parameters.Add(new SqlParameter("@id", existingId!.Value));
+                        foreach (var c in updCols) update.Parameters.Add(new SqlParameter("@" + c, Db(fields[c])));
+                        await update.ExecuteNonQueryAsync(ct);
+                    }
+                    return existingId!.Value;
+            }
+        }
+
         var cols = fields.Keys.Where(k => LifecycleColumns.Editable.Contains(k)).ToList();
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = $"""

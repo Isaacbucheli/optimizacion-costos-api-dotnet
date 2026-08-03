@@ -59,8 +59,15 @@ public sealed class BoletinController(
     {
         var (fields, error) = BuildLifecycleFields(body, requireCore: true);
         if (error is not null) return BadRequest(new { detail = error });
-        var id = await lifecycle.CreateAsync(fields, ct);
-        return Ok(new { message = "Entrada creada", id });
+        try
+        {
+            var id = await lifecycle.CreateAsync(fields, ct);
+            return Ok(new { message = "Entrada creada", id });
+        }
+        catch (LifecycleClaveDuplicadaException ex)
+        {
+            return Conflict(new { detail = ex.Message });
+        }
     }
 
     [HttpPut("lifecycle/{id:int}")]
@@ -69,6 +76,7 @@ public sealed class BoletinController(
     {
         var (fields, error) = BuildLifecycleFields(body, requireCore: false);
         if (error is not null) return BadRequest(new { detail = error });
+        if (fields.Count == 0) return BadRequest(new { detail = "Nada que actualizar" });
         return await lifecycle.UpdateAsync(id, fields, ct)
             ? Ok(new { message = "Entrada actualizada", id })
             : NotFound(new { detail = "Entrada no encontrada" });
@@ -81,14 +89,23 @@ public sealed class BoletinController(
             ? Ok(new { message = "Entrada desactivada", id })
             : NotFound(new { detail = "Entrada no encontrada" });
 
-    /// <summary>Semántica exclude_unset + whitelist (patrón AlertCatalogController.BuildFields).</summary>
-    private static (Dictionary<string, object?> Fields, string? Error) BuildLifecycleFields(JsonElement body, bool requireCore)
+    /// <summary>Campos de texto del catálogo: si el JSON manda otro tipo (número/bool) es un intento
+    /// de bypass de validación (ej. mandar end_of_support como epoch numérico), así que se rechaza
+    /// explícito en vez de convertir silenciosamente. is_active queda fuera: sigue aceptando bool.</summary>
+    private static readonly string[] StringColumns =
+        ["clave", "producto", "categoria", "match_field", "match_pattern", "end_of_support", "recomendacion", "learn_more_url"];
+
+    /// <summary>Semántica exclude_unset + whitelist (patrón AlertCatalogController.BuildFields).
+    /// internal: testeado directo (patrón BoletinLifecycleStore.ReadSeedEntries) sin host HTTP.</summary>
+    internal static (Dictionary<string, object?> Fields, string? Error) BuildLifecycleFields(JsonElement body, bool requireCore)
     {
         if (body.ValueKind != JsonValueKind.Object) return ([], "Cuerpo inválido");
         var fields = new Dictionary<string, object?>();
         foreach (var p in body.EnumerateObject())
         {
             if (!LifecycleColumns.Editable.Contains(p.Name)) continue;
+            if (StringColumns.Contains(p.Name) && p.Value.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+                return ([], $"El campo '{p.Name}' debe ser texto");
             fields[p.Name] = p.Value.ValueKind switch
             {
                 JsonValueKind.Null => null,
@@ -106,6 +123,10 @@ public sealed class BoletinController(
             fields["match_pattern"] = pat.Trim().ToLowerInvariant(); // los patrones se comparan en minúsculas
         if (fields.TryGetValue("end_of_support", out var eos) && eos is string d && !DateOnly.TryParse(d, out _))
             return ([], "end_of_support debe ser fecha yyyy-MM-dd");
+        if (fields.TryGetValue("learn_more_url", out var lmu) && lmu is string urlStr && !string.IsNullOrEmpty(urlStr) &&
+            !(Uri.TryCreate(urlStr, UriKind.Absolute, out var parsedUrl) &&
+              (parsedUrl.Scheme == Uri.UriSchemeHttp || parsedUrl.Scheme == Uri.UriSchemeHttps)))
+            return ([], "learn_more_url debe ser una URL http(s) absoluta");
         if (requireCore)
             foreach (var req in new[] { "clave", "producto", "categoria", "match_field", "match_pattern", "end_of_support", "recomendacion" })
                 if (!fields.ContainsKey(req) || fields[req] is null or "")

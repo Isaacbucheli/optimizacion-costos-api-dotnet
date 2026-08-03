@@ -34,4 +34,37 @@ public class BoletinLifecycleStoreTests
         Assert.Contains("match_pattern", LifecycleColumns.Editable);
         Assert.Contains("end_of_support", LifecycleColumns.Editable);
     }
+
+    // ---- CreateAsync: undelete transparente vs conflicto real (sin BD — lógica pura extraída) ----
+
+    [Fact]
+    public void ClaveNueva_decideInsert()
+    {
+        Assert.Equal(
+            BoletinLifecycleStore.ClaveLookupOutcome.Insert,
+            BoletinLifecycleStore.DecideCreateOutcome(claveExists: false, existingIsActive: false));
+    }
+
+    [Fact]
+    public void ClaveExistenteDesactivada_decideUndelete()
+    {
+        Assert.Equal(
+            BoletinLifecycleStore.ClaveLookupOutcome.Undelete,
+            BoletinLifecycleStore.DecideCreateOutcome(claveExists: true, existingIsActive: false));
+    }
+
+    [Fact]
+    public void ClaveExistenteActiva_decideConflict()
+    {
+        Assert.Equal(
+            BoletinLifecycleStore.ClaveLookupOutcome.Conflict,
+            BoletinLifecycleStore.DecideCreateOutcome(claveExists: true, existingIsActive: true));
+    }
+
+    [Fact]
+    public void LifecycleClaveDuplicadaException_tieneElMensajeEsperado()
+    {
+        var ex = new LifecycleClaveDuplicadaException("windows-server-2012");
+        Assert.Equal("Ya existe una entrada activa con la clave 'windows-server-2012'.", ex.Message);
+    }
 }
