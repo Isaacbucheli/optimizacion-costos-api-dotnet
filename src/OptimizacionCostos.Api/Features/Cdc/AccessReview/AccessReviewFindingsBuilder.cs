@@ -71,8 +71,8 @@ public static class AccessReviewFindingsBuilder
 
         // Desglose por tipo de los huérfanos: la acción difiere según qué se borró. Un service
         // principal eliminado es limpieza; un grupo eliminado significa que su gente pudo perder
-        // acceso y hay que revisar si el reemplazo quedó bien. En el E2E: MINSUR 179 SP de 180,
-        // BANCO DELTA 9 grupos de 13.
+        // acceso y hay que revisar si el reemplazo quedó bien. En el E2E real: un cliente con
+        // 179 SP huérfanos de 180, otro con 9 grupos de 13.
         var huerfanasPorTipo = string.Join(", ", cuentasEnRiesgo.Where(a => a.Orphan)
             .GroupBy(a => a.PrincipalType)
             .OrderByDescending(g => g.Count())

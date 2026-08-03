@@ -122,7 +122,7 @@ public class AccessReviewGraphClientTests
     [Fact]
     public async Task GlobalAdmins_por_members_no_pide_select_de_props_de_usuario()
     {
-        // Regresión (bug cazado en E2E Banco Solidario): 'members' es colección de directoryObject;
+        // Regresión (bug cazado en un E2E con tenant real de cliente): 'members' es colección de directoryObject;
         // pedir $select de props de 'user' (userType/accountEnabled/UPN) sin cast da HTTP 400.
         var svc = Build(req =>
         {
