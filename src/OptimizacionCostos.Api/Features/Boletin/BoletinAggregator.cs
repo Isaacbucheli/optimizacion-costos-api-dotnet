@@ -26,8 +26,8 @@ public static class BoletinAggregator
         IReadOnlyList<StoredRetirement> rows, int subscriptionsTotal, DateOnly today)
     {
         // Task 5: separar filas de retiros (advisor/service_health) de fin de soporte (eol)
-        var retiroRows = rows.Where(r => r.Source != "eol").ToList();
-        var eolRows = rows.Where(r => r.Source == "eol").ToList();
+        var retiroRows = rows.Where(r => r.Source != RetirementRow.SourceEol).ToList();
+        var eolRows = rows.Where(r => r.Source == RetirementRow.SourceEol).ToList();
 
         var groups = rows
             .GroupBy(r => (r.Source, r.AnnouncementKey))
@@ -73,7 +73,7 @@ public static class BoletinAggregator
             .ToList();
 
         // KPIs sobre retiros (sin contar eol)
-        var retiroGroups = groups.Where(g => (string?)g["source"] != "eol").ToList();
+        var retiroGroups = groups.Where(g => (string?)g["source"] != RetirementRow.SourceEol).ToList();
         var impactedSubs = retiroRows.Select(r => r.SubscriptionId)
             .Distinct(StringComparer.OrdinalIgnoreCase).Count();
 
@@ -88,7 +88,7 @@ public static class BoletinAggregator
                 ["subscriptions_impacted"] = impactedSubs,
                 ["subscriptions_total"] = subscriptionsTotal,
                 // Task 5: KPIs para fin de soporte
-                ["eol_products"] = groups.Count(g => (string?)g["source"] == "eol"),
+                ["eol_products"] = groups.Count(g => (string?)g["source"] == RetirementRow.SourceEol),
                 ["eol_resources"] = eolRows.Count(r => r.AzureResourceId is not null),
             },
             ["groups"] = groups,
