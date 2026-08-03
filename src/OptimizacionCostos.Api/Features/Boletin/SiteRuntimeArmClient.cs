@@ -6,7 +6,10 @@ namespace OptimizacionCostos.Api.Features.Boletin;
 
 public sealed record WindowsSiteRef(string SubscriptionId, string SiteId, string SiteName);
 
-public sealed record SiteRuntimeArmResult(IReadOnlyList<SiteRuntime> Sites, IReadOnlyList<string> Warnings, int FailedCount);
+/// <summary><c>Truncated</c>: el lote de sitios Windows excedía <see cref="SiteRuntimeArmClient.MaxSites"/>
+/// y se recortó — señal explícita de cobertura incompleta (junto con <c>FailedCount &gt; 0</c>), para
+/// que el caller decida si las filas derivadas de esta credencial son confiables este sync.</summary>
+public sealed record SiteRuntimeArmResult(IReadOnlyList<SiteRuntime> Sites, IReadOnlyList<string> Warnings, int FailedCount, bool Truncated);
 
 public interface ISiteRuntimeArmClient
 {
@@ -28,11 +31,12 @@ public sealed class SiteRuntimeArmClient(IHttpClientFactory httpFactory, ILogger
 
     public async Task<SiteRuntimeArmResult> FetchAsync(TokenCredential credential, IReadOnlyList<WindowsSiteRef> sites, CancellationToken ct = default)
     {
-        if (sites.Count == 0) return new([], [], 0);
+        if (sites.Count == 0) return new([], [], 0, false);
 
         var warnings = new List<string>();
         var lote = sites;
-        if (sites.Count > MaxSites)
+        var truncated = sites.Count > MaxSites;
+        if (truncated)
         {
             warnings.Add($"Apps Windows: {sites.Count} sitios, se consultan solo {MaxSites} (tope por sincronización).");
             lote = sites.Take(MaxSites).ToList();
@@ -66,7 +70,7 @@ public sealed class SiteRuntimeArmClient(IHttpClientFactory httpFactory, ILogger
         }
         if (failed > 0)
             warnings.Add($"Apps Windows: {failed} de {lote.Count} sitios no respondieron config/web (runtime desconocido para esos sitios).");
-        return new(result, warnings, failed);
+        return new(result, warnings, failed, truncated);
     }
 
     /// <summary>Puro y testeable: mapea properties de config/web a tokens de runtime normalizados.</summary>

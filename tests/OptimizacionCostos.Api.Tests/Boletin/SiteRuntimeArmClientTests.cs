@@ -25,6 +25,16 @@ public class SiteRuntimeArmClientTests
     }
 
     [Fact]
+    public void ParseaJavaVersionDeConfigWeb()
+    {
+        var props = Config("""{ "properties": { "javaVersion": "17" } }""");
+        var runtimes = SiteRuntimeArmClient.ParseSiteConfig(
+            new WindowsSiteRef("sub-1", "/subs/sub-1/sites/w1", "w1"), props);
+
+        Assert.Contains(runtimes, r => r.Runtime == "JAVA|17");
+    }
+
+    [Fact]
     public void NetFrameworkV4NoEsDotnetModerno()
     {
         // v4.0 es .NET Framework clásico: no debe reportarse como DOTNET|4.0 (los retiros

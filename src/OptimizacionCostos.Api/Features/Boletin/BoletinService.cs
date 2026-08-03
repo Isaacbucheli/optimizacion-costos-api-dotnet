@@ -60,10 +60,12 @@ public sealed class BoletinService(
             // reconciliación (Finding: enriquecimiento caído no debe auto-resolver resource-level).
             var healthResourcesFailedCredentials = new HashSet<int>();
             // Detectores de inventario (Task 5): credenciales cuya re-consulta de runtimes
-            // (LinuxSiteRuntimes/WindowsSites) falló. Igual que healthResourcesFailedCredentials,
-            // NO excluye la fuente "health", pero limita el alcance de la reconciliación: sin poder
-            // re-consultar el inventario, no se auto-resuelven las filas DERIVADAS de esa sub (ver
-            // BoletinSyncPlan.HealthReconcileScopes).
+            // (LinuxSiteRuntimes/WindowsSites) falló, O cuya cobertura quedó incompleta sin lanzar
+            // excepción (Task 6: WindowsSites es best-effort por sitio vía ARM — FailedCount>0 o
+            // Truncated=true no son un catch, son un resultado parcial "exitoso"). Igual que
+            // healthResourcesFailedCredentials, NO excluye la fuente "health", pero limita el alcance
+            // de la reconciliación: sin el inventario completo, no se auto-resuelven las filas
+            // DERIVADAS de esa sub (ver BoletinSyncPlan.HealthReconcileScopes).
             var detectorFailedCredentials = new HashSet<int>();
 
             foreach (var (credentialId, subIds) in groups)
@@ -157,7 +159,26 @@ public sealed class BoletinService(
                         var siteNodes = await rg.RunQueryAsync(cred, subIds, BoletinQueries.LinuxSiteRuntimes, ct);
                         var sites = siteNodes.Select(n => BoletinDetectors.FromLinuxSiteRow(new RgRow(n)))
                                              .Where(s => s is not null).Select(s => s!).ToList();
-                        sites.AddRange(await FetchWindowsRuntimesAsync(cred, subIds, errors, ct)); // Task 6: runtimes de Windows vía ARM
+                        // Task 6: runtimes de Windows vía ARM. A diferencia de las demás fuentes, un
+                        // fallo parcial acá (sitios que no respondieron config/web, o lote recortado a
+                        // MaxSites) NO lanza excepción — FetchAsync es best-effort por sitio. Por eso se
+                        // revisa explícitamente FailedCount/Truncated en vez de confiar solo en el catch.
+                        var winResult = await FetchWindowsRuntimesAsync(cred, subIds, ct);
+                        sites.AddRange(winResult.Sites);
+                        foreach (var w in winResult.Warnings)
+                            errors.Add(new { source = "inventario", credential_id = credentialId, warning = w });
+                        if (winResult.FailedCount > 0 || winResult.Truncated)
+                        {
+                            // Cobertura Windows incompleta ⇒ las filas derivadas de esta credencial no
+                            // se reconcilian este sync (scope ExcludeDerived, no FullScope): sin el
+                            // lote completo de sitios no sabemos si siguen corriendo el runtime que
+                            // origina la fila derivada. DICTAMEN del controlador: el truncado a
+                            // MaxSites TAMBIÉN degrada (no solo los timeouts por sitio), y el sync
+                            // queda 'partial' a propósito — misma doctrina de transparencia sobre
+                            // cobertura incompleta que el Advisor sync (nextLink roto → estado parcial
+                            // visible, nunca un silencio que se confunda con éxito).
+                            detectorFailedCredentials.Add(credentialId);
+                        }
                         var existing = rows.Where(r => r.AzureResourceId is not null)
                             .Select(r => r.AzureResourceId!.ToLowerInvariant())
                             .ToHashSet(StringComparer.Ordinal);
@@ -240,10 +261,15 @@ public sealed class BoletinService(
         }
     }
 
-    /// <summary>Runtimes de apps Windows del lote (ARM). Sus warnings viajan como errores
-    /// no-fatales de fuente "inventario" para que el consultor los vea.</summary>
-    private async Task<IReadOnlyList<SiteRuntime>> FetchWindowsRuntimesAsync(
-        Azure.Core.TokenCredential cred, IReadOnlyList<string> subIds, List<object> errors, CancellationToken ct)
+    /// <summary>Runtimes de apps Windows del lote (ARM). Devuelve el <see cref="SiteRuntimeArmResult"/>
+    /// completo (no solo <c>Sites</c>) para que el caller decida, con <c>credentialId</c> a mano, si
+    /// la cobertura fue completa: emite los warnings con su <c>credential_id</c> y marca
+    /// <c>detectorFailedCredentials</c> cuando <c>FailedCount &gt; 0</c> o <c>Truncated</c> (ver
+    /// RunSyncAsync) — un fallo parcial acá NO lanza excepción, así que sin esto la degradación de
+    /// cobertura pasaba desapercibida y HealthReconcileScopes reconciliaba (resolvía) filas derivadas
+    /// que en realidad no se pudieron re-confirmar.</summary>
+    private async Task<SiteRuntimeArmResult> FetchWindowsRuntimesAsync(
+        Azure.Core.TokenCredential cred, IReadOnlyList<string> subIds, CancellationToken ct)
     {
         var nodes = await rg.RunQueryAsync(cred, subIds, BoletinQueries.WindowsSites, ct);
         var refs = new List<WindowsSiteRef>();
@@ -255,10 +281,7 @@ public sealed class BoletinService(
             if (sub.Length == 0 || id.Length == 0) continue;
             refs.Add(new WindowsSiteRef(sub, id, (row.Str("name") ?? "").Trim()));
         }
-        var result = await siteRuntimes.FetchAsync(cred, refs, ct);
-        foreach (var w in result.Warnings)
-            errors.Add(new { source = "inventario", warning = w });
-        return result.Sites;
+        return await siteRuntimes.FetchAsync(cred, refs, ct);
     }
 
     public async Task<IReadOnlyDictionary<string, object?>> GetAsync(int clientId, CancellationToken ct = default)
