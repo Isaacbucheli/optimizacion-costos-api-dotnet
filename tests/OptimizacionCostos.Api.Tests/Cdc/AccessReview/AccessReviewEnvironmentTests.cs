@@ -86,7 +86,7 @@ public class AccessReviewEnvironmentTests
     [Fact]
     public void Nombre_mixto_toma_el_ambiente_menos_productivo()
     {
-        // "Aplicaciones - DEV/QAS" es de MINSUR: no es produccion, y entre dev y qas da igual cual
+        // "Aplicaciones - DEV/QAS" no es produccion, y entre dev y qas da igual cual
         // gane siempre que NO sea produccion (es lo que decide el hallazgo de segregacion).
         var r = AccessReviewEnvironment.Classify("Aplicaciones - DEV/QAS");
 
