@@ -16,6 +16,15 @@ public interface IBoletinService
 public sealed class BoletinNoManagedSubscriptionsException()
     : Exception("El cliente no tiene suscripciones administradas activas.");
 
+/// <summary>Alcance de <see cref="BoletinService.ReconcileAsync"/> (Task 5, reemplaza el antiguo
+/// <c>bool subLevelOnly</c> de 2 niveles). <c>Full</c>: reconcilia todo (sub-level, resource-level
+/// confirmadas y derivadas). <c>ExcludeDerived</c>: reconcilia todo MENOS las filas derivadas
+/// (<c>derived = 1</c>) — se usa cuando el detector de inventario no pudo re-consultarse esta vez y
+/// no se sabe si esas filas siguen vigentes. <c>SubLevelOnly</c>: solo filas sin recurso
+/// (<c>azure_resource_id IS NULL</c>) — el más restrictivo, para cuando el enriquecimiento de
+/// Microsoft cayó y ninguna fila resource-level (confirmada o derivada) puede reconfirmarse.</summary>
+internal enum BoletinReconcileMode { Full, ExcludeDerived, SubLevelOnly }
+
 /// <summary>Sync y lectura del Boletín Azure. Patrón del módulo Optimization:
 /// ARG por credencial del cliente + persistencia con reconciliación por fingerprint.</summary>
 public sealed class BoletinService(
@@ -50,6 +59,12 @@ public sealed class BoletinService(
             // impactados falló. No excluye la fuente "health" en sí, pero SÍ limita el alcance de su
             // reconciliación (Finding: enriquecimiento caído no debe auto-resolver resource-level).
             var healthResourcesFailedCredentials = new HashSet<int>();
+            // Detectores de inventario (Task 5): credenciales cuya re-consulta de runtimes
+            // (LinuxSiteRuntimes/WindowsSites) falló. Igual que healthResourcesFailedCredentials,
+            // NO excluye la fuente "health", pero limita el alcance de la reconciliación: sin poder
+            // re-consultar el inventario, no se auto-resuelven las filas DERIVADAS de esa sub (ver
+            // BoletinSyncPlan.HealthReconcileScopes).
+            var detectorFailedCredentials = new HashSet<int>();
 
             foreach (var (credentialId, subIds) in groups)
             {
@@ -78,13 +93,17 @@ public sealed class BoletinService(
                     advisorFailedCredentials.Add(credentialId);
                 }
 
+                // healthAnnouncements queda accesible DESPUÉS del try (no como el `parsed` local de
+                // los otros bloques): el detector de inventario, más abajo en este mismo loop, necesita
+                // los avisos de ESTA credencial para saber contra qué títulos matchear el runtime.
+                var healthAnnouncements = new List<RetirementRow>();
                 try
                 {
                     var nodes = await rg.RunQueryAsync(cred, subIds, BoletinQueries.ServiceHealthRetirements, ct);
-                    var parsed = nodes.Select(n => BoletinParsers.FromHealthRow(new RgRow(n)))
+                    healthAnnouncements = nodes.Select(n => BoletinParsers.FromHealthRow(new RgRow(n)))
                                       .Where(r => r is not null).Select(r => r!).ToList();
-                    healthCount += parsed.Count;
-                    healthRows.AddRange(parsed);
+                    healthCount += healthAnnouncements.Count;
+                    healthRows.AddRange(healthAnnouncements);
                 }
                 catch (Exception ex)
                 {
@@ -119,6 +138,41 @@ public sealed class BoletinService(
                     healthResourcesFailedCredentials.Add(credentialId);
                 }
 
+                // Detectores de inventario (Task 5): para los avisos de Service Health de ESTA
+                // credencial cuyo título matchea un runtime conocido (Node/Python/PHP/PowerShell/
+                // Java/.NET — ver BoletinDetectors.MatchAnnouncement), re-consulta el inventario de
+                // sitios y deriva filas resource-level para los que corren ese runtime. Solo entra
+                // acá si algún título matcheó (evita 2 queries ARG extra por credencial cuando no
+                // hace falta). Best-effort: si falla, NO se marca "service_health" como fallida (los
+                // avisos ya se vieron bien) — solo se registra en detectorFailedCredentials para que
+                // HealthReconcileScopes no auto-resuelva las filas derivadas de esta sub.
+                var announcementTargets = healthAnnouncements
+                    .Select(h => (Row: h, Targets: BoletinDetectors.MatchAnnouncement(h.Title)))
+                    .Where(x => x.Targets.Count > 0)
+                    .ToList();
+                if (announcementTargets.Count > 0)
+                {
+                    try
+                    {
+                        var siteNodes = await rg.RunQueryAsync(cred, subIds, BoletinQueries.LinuxSiteRuntimes, ct);
+                        var sites = siteNodes.Select(n => BoletinDetectors.FromLinuxSiteRow(new RgRow(n)))
+                                             .Where(s => s is not null).Select(s => s!).ToList();
+                        sites.AddRange(await FetchWindowsRuntimesAsync(cred, subIds, errors, ct)); // Task 6; hasta entonces devuelve []
+                        var existing = rows.Where(r => r.AzureResourceId is not null)
+                            .Select(r => r.AzureResourceId!.ToLowerInvariant())
+                            .ToHashSet(StringComparer.Ordinal);
+                        foreach (var (announcement, targets) in announcementTargets)
+                            rows.AddRange(BoletinDetectors.BuildDerivedRows(announcement, targets, sites, existing));
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "boletin sync {Sync}: detector de inventario fallo credencial {Cred}", syncId, credentialId);
+                        detectorFailedCredentials.Add(credentialId);
+                        errors.Add(new { source = "inventario", credential_id = credentialId, error = ex.GetType().Name });
+                    }
+                }
+
                 subsScanned += subIds.Count;
             }
 
@@ -127,20 +181,25 @@ public sealed class BoletinService(
             var successfulBySource = BoletinSyncPlan.SuccessfulSubscriptionsBySource(
                 groups, failedCredentials, advisorFailedCredentials, healthFailedCredentials);
             var healthScopes = BoletinSyncPlan.HealthReconcileScopes(
-                groups, failedCredentials, healthFailedCredentials, healthResourcesFailedCredentials);
+                groups, failedCredentials, healthFailedCredentials, healthResourcesFailedCredentials, detectorFailedCredentials);
 
             await using (var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct))
             {
                 foreach (var row in rows) await UpsertAsync(conn, tx, clientId, row, ct);
                 await ReconcileAsync(conn, tx, clientId, syncStart,
-                    RetirementRow.SourceAdvisor, successfulBySource[RetirementRow.SourceAdvisor], subLevelOnly: false, ct);
-                // service_health se reconcilia en dos pasadas: alcance completo para las subs con
-                // enriquecimiento OK (igual que antes), y solo sub-level para las subs con base de
-                // health OK pero enriquecimiento caído (no auto-resuelve resource-level ya persistidas).
+                    RetirementRow.SourceAdvisor, successfulBySource[RetirementRow.SourceAdvisor], BoletinReconcileMode.Full, ct);
+                // service_health se reconcilia en TRES pasadas (Task 5 amplía de 2 a 3 niveles), cada
+                // una con el alcance más amplio que su falla permite (ver HealthReconcileScopes):
+                // Full para subs con enriquecimiento Y detector OK (como siempre); ExcludeDerived
+                // para subs con enriquecimiento OK pero detector de inventario caído (no auto-resuelve
+                // derivadas); SubLevelOnly para subs con enriquecimiento caído (no toca ninguna fila
+                // resource-level, confirmada o derivada). Las tres son no-op si su lista viene vacía.
                 await ReconcileAsync(conn, tx, clientId, syncStart,
-                    RetirementRow.SourceServiceHealth, healthScopes.FullScope, subLevelOnly: false, ct);
+                    RetirementRow.SourceServiceHealth, healthScopes.FullScope, BoletinReconcileMode.Full, ct);
                 await ReconcileAsync(conn, tx, clientId, syncStart,
-                    RetirementRow.SourceServiceHealth, healthScopes.SubLevelOnly, subLevelOnly: true, ct);
+                    RetirementRow.SourceServiceHealth, healthScopes.ExcludeDerived, BoletinReconcileMode.ExcludeDerived, ct);
+                await ReconcileAsync(conn, tx, clientId, syncStart,
+                    RetirementRow.SourceServiceHealth, healthScopes.SubLevelOnly, BoletinReconcileMode.SubLevelOnly, ct);
                 // Solo counts: el status/error final se decide después de la traducción (ver abajo),
                 // así que finished_at/status/error NO se tocan acá — la fila queda 'running' hasta entonces.
                 await FinalizeSyncCountsAsync(conn, tx, syncId, subsScanned, advisorCount, healthCount, ct);
@@ -180,6 +239,14 @@ public sealed class BoletinService(
             throw;
         }
     }
+
+    // Task 6: runtimes de apps Windows vía ARM (el runtime no está en Resource Graph, ver el
+    // comentario de BoletinQueries.WindowsSites — se resuelve con un ARM client dedicado,
+    // SiteRuntimeArmClient, todavía no implementado). Stub compilable: esta task (5) entrega
+    // detectores funcionales solo para Linux; Windows llega en Task 6 sin tocar este call site.
+    private static Task<IReadOnlyList<SiteRuntime>> FetchWindowsRuntimesAsync(
+        Azure.Core.TokenCredential cred, IReadOnlyList<string> subIds, List<object> errors, CancellationToken ct) =>
+        Task.FromResult<IReadOnlyList<SiteRuntime>>([]);
 
     public async Task<IReadOnlyDictionary<string, object?>> GetAsync(int clientId, CancellationToken ct = default)
     {
@@ -249,6 +316,11 @@ public sealed class BoletinService(
                   title_es NVARCHAR(512) NULL,
                   summary_es NVARCHAR(MAX) NULL,
                   recommended_action_es NVARCHAR(MAX) NULL;
+            -- Task 5: distingue filas confirmadas por Microsoft (derived = 0, default) de las
+            -- inferidas por los detectores de inventario del BIT (derived = 1). Ver UpsertAsync:
+            -- lo confirmado por Microsoft en un sync posterior siempre gana sobre lo inferido.
+            IF COL_LENGTH('dbo.boletin_retirement', 'derived') IS NULL
+                ALTER TABLE dbo.boletin_retirement ADD derived BIT NOT NULL DEFAULT(0);
             """;
         await cmd.ExecuteNonQueryAsync(ct);
     }
@@ -327,15 +399,24 @@ public sealed class BoletinService(
               recommended_action_es = CASE WHEN ISNULL(recommended_action, N'') <> ISNULL(@action, N'') THEN NULL ELSE recommended_action_es END,
               title = @title, summary = @summary,
               recommended_action = @action, learn_more_url = @url,
-              resource_name = @rname, resource_type = @rtype
+              resource_name = @rname, resource_type = @rtype,
+              -- Task 5: SIEMPRE se SETea (no solo en el INSERT). Si esta misma fila (mismo
+              -- fingerprint) fue inferida por un detector en un sync anterior (derived = 1) y ahora
+              -- Microsoft la confirma vía enriquecimiento (derived = 0 en @derived), derived BAJA a
+              -- 0: lo confirmado por Microsoft siempre gana sobre lo inferido. Lo inverso (un
+              -- detector "reconfirmando" una fila ya confirmada) no ocurre en la práctica porque
+              -- BuildDerivedRows excluye recursos ya presentes en `rows`, pero si ocurriera, tampoco
+              -- se debe permitir bajar de confirmada a derivada silenciosamente — ver ReconcileAsync
+              -- para cómo se protege esa precedencia también en la reconciliación.
+              derived = @derived
             WHERE client_id = @cid AND fingerprint = @fp;
             IF @@ROWCOUNT = 0
             INSERT INTO dbo.boletin_retirement(
               client_id, fingerprint, source, announcement_key, subscription_id, azure_resource_id,
               resource_name, resource_type, retiring_feature, retirement_date, title, summary,
-              recommended_action, learn_more_url)
+              recommended_action, learn_more_url, derived)
             VALUES (@cid, @fp, @source, @akey, @sub, @resid, @rname, @rtype, @feature, @rdate,
-                    @title, @summary, @action, @url);
+                    @title, @summary, @action, @url, @derived);
             """;
         cmd.Parameters.Add(new SqlParameter("@cid", clientId));
         cmd.Parameters.Add(new SqlParameter("@fp", row.Fingerprint(clientId)));
@@ -351,6 +432,7 @@ public sealed class BoletinService(
         cmd.Parameters.Add(new SqlParameter("@summary", Db(row.Summary)));
         cmd.Parameters.Add(new SqlParameter("@action", Db(row.RecommendedAction)));
         cmd.Parameters.Add(new SqlParameter("@url", Db(row.LearnMoreUrl)));
+        cmd.Parameters.Add(new SqlParameter("@derived", row.Derived));
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -358,18 +440,27 @@ public sealed class BoletinService(
     /// filas de la FUENTE y las suscripciones cuya query corrió sin error en este sync (ver
     /// <see cref="BoletinSyncPlan"/>): así una falla transitoria (credencial o query caída) nunca
     /// "auto-resuelve" avisos vigentes que simplemente no se pudieron consultar. Lista vacía → no-op.
-    /// <paramref name="subLevelOnly"/> restringe además a filas sub-level (azure_resource_id IS
-    /// NULL): lo usa service_health cuando el enriquecimiento de recursos impactados falló para la
-    /// credencial de esa suscripción (ver <see cref="BoletinSyncPlan.HealthReconcileScopes"/>) — no
-    /// sabemos si las filas resource-level de un sync anterior siguen vigentes, así que no se
-    /// tocan. El flag alterna entre dos literales SQL fijos, nunca interpola valores.</summary>
+    /// <paramref name="mode"/> (Task 5, reemplaza el antiguo <c>bool subLevelOnly</c>) restringe el
+    /// alcance según qué pudo re-consultarse en este sync (ver
+    /// <see cref="BoletinSyncPlan.HealthReconcileScopes"/> para la precedencia completa):
+    /// - Full: todas las filas de esas subs (sub-level, resource-level confirmadas y derivadas).
+    /// - ExcludeDerived: todas MENOS las derivadas (derived = 1) — el detector de inventario no
+    ///   pudo re-consultarse, así que no se auto-resuelven filas inferidas por él.
+    /// - SubLevelOnly: solo azure_resource_id IS NULL — el enriquecimiento de Microsoft cayó, no se
+    ///   toca ninguna fila resource-level (ni confirmada ni derivada).
+    /// El SQL de cada modo es un literal fijo (nunca interpola valores del caller).</summary>
     private static async Task ReconcileAsync(SqlConnection conn, SqlTransaction tx, int clientId, DateTime syncStart,
-        string source, IReadOnlyList<string> successfulSubscriptionIds, bool subLevelOnly, CancellationToken ct)
+        string source, IReadOnlyList<string> successfulSubscriptionIds, BoletinReconcileMode mode, CancellationToken ct)
     {
         if (successfulSubscriptionIds.Count == 0) return; // nada exitoso en este alcance: no toca nada
 
         var inParams = successfulSubscriptionIds.Select((_, i) => $"@s{i}").ToList();
-        var scopeClause = subLevelOnly ? "AND azure_resource_id IS NULL" : "";
+        var scopeClause = mode switch
+        {
+            BoletinReconcileMode.ExcludeDerived => "AND (azure_resource_id IS NULL OR derived = 0)",
+            BoletinReconcileMode.SubLevelOnly => "AND azure_resource_id IS NULL",
+            _ => "",
+        };
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = $"""
@@ -488,7 +579,7 @@ public sealed class BoletinService(
             SELECT fingerprint, source, announcement_key, subscription_id, azure_resource_id,
                    resource_name, resource_type, retiring_feature, retirement_date, title,
                    summary, recommended_action, learn_more_url,
-                   title_es, summary_es, recommended_action_es
+                   title_es, summary_es, recommended_action_es, derived
             FROM dbo.boletin_retirement
             WHERE client_id = @cid AND status = 'vigente'
             """;
@@ -504,7 +595,8 @@ public sealed class BoletinService(
                 r.IsDBNull(12) ? null : r.GetString(12),
                 r.IsDBNull(13) ? null : r.GetString(13),
                 r.IsDBNull(14) ? null : r.GetString(14),
-                r.IsDBNull(15) ? null : r.GetString(15)));
+                r.IsDBNull(15) ? null : r.GetString(15),
+                r.GetBoolean(16)));
         return list;
     }
 
@@ -576,41 +668,52 @@ internal static class BoletinSyncPlan
         errors.Count == 0 ? ("completed", null) : ("partial", JsonSerializer.Serialize(errors));
 
     /// <summary>
-    /// Divide las suscripciones de <c>service_health</c> en dos alcances de reconciliación, según si
-    /// el ENRIQUECIMIENTO (ServiceHealthImpactedResources) corrió sin error para la credencial de esa
-    /// sub. Corrige un caso real: sync N con enriquecimiento OK crea filas resource-level para un
-    /// aviso; sync N+1 la query base de health sigue OK pero el enriquecimiento falla para esa
-    /// credencial → <c>ExpandHealthRows</c> solo re-emite la fila sub-level (no sabe qué recursos
-    /// siguen impactados). Si se reconciliara "todo" igual que antes, las filas resource-level del
-    /// sync N (que no se volvieron a ver) se marcarían 'resuelto' por una falla transitoria de una
-    /// query best-effort, corrompiendo el histórico <c>resolved_at</c>.
-    /// - FullScope: base de health OK + enriquecimiento OK → se reconcilian TODAS las filas de esas
-    ///   subs (sub-level y resource-level), como siempre.
-    /// - SubLevelOnly: base de health OK pero enriquecimiento FALLÓ → se reconcilian SOLO las filas
-    ///   sub-level (azure_resource_id IS NULL); las resource-level no se tocan porque no se sabe si
-    ///   siguen vigentes.
-    /// - Credencial caída o query base de health fallida: la sub queda fuera de AMBOS alcances
-    ///   (misma precedencia que <see cref="SuccessfulSubscriptionsBySource"/>).
-    /// No aplica a <c>advisor</c>: esa fuente no tiene enriquecimiento.
+    /// Divide las suscripciones de <c>service_health</c> en TRES alcances de reconciliación (Task 5:
+    /// suma el detector de inventario a la precedencia de <c>SuccessfulSubscriptionsBySource</c>).
+    /// Precedencia, del más restrictivo al más amplio:
+    /// 1. Credencial caída o query base de health fallida → la sub queda fuera de los TRES alcances
+    ///    (misma precedencia que <see cref="SuccessfulSubscriptionsBySource"/>; no aparece ni en
+    ///    FullScope, ni en ExcludeDerived, ni en SubLevelOnly).
+    /// 2. Enriquecimiento (ServiceHealthImpactedResources) caído → SubLevelOnly: ninguna fila
+    ///    resource-level se toca (ni confirmada ni derivada), porque no se sabe si sigue vigente.
+    ///    Corrige un caso real: sync N con enriquecimiento OK crea filas resource-level para un
+    ///    aviso; sync N+1 la base de health sigue OK pero el enriquecimiento falla para esa
+    ///    credencial → <c>ExpandHealthRows</c> solo re-emite la fila sub-level. Si se reconciliara
+    ///    "todo" igual que antes, esas filas resource-level se marcarían 'resuelto' por una falla
+    ///    transitoria de una query best-effort, corrompiendo el histórico <c>resolved_at</c>.
+    /// 3. Enriquecimiento OK pero detector de inventario (LinuxSiteRuntimes/WindowsSites) caído →
+    ///    ExcludeDerived: las filas CONFIRMADAS por Microsoft sí se reconcilian normalmente (el
+    ///    enriquecimiento funcionó), pero las DERIVADAS (inferidas por BIT) no se tocan — sin poder
+    ///    re-consultar el inventario, no sabemos si el sitio sigue existiendo/con ese runtime, así
+    ///    que no se auto-resuelven derivadas por una falla transitoria del detector.
+    /// 4. Todo OK → FullScope: se reconcilian TODAS las filas (sub-level, resource-level confirmadas
+    ///    y derivadas) de esas subs, como antes de Task 5.
+    /// El enriquecimiento manda sobre el detector (2 antes que 3): si ambos cayeron, importa más no
+    /// tocar NINGUNA fila resource-level (ni siquiera las derivadas) que solo proteger las derivadas.
+    /// No aplica a <c>advisor</c>: esa fuente no tiene enriquecimiento ni detectores.
     /// </summary>
-    public static (IReadOnlyList<string> FullScope, IReadOnlyList<string> SubLevelOnly) HealthReconcileScopes(
-        IReadOnlyDictionary<int, List<string>> groups,
-        IReadOnlySet<int> failedCredentials,
-        IReadOnlySet<int> healthFailedCredentials,
-        IReadOnlySet<int> healthResourcesFailedCredentials)
+    public static (IReadOnlyList<string> FullScope, IReadOnlyList<string> ExcludeDerived, IReadOnlyList<string> SubLevelOnly)
+        HealthReconcileScopes(
+            IReadOnlyDictionary<int, List<string>> groups,
+            IReadOnlySet<int> failedCredentials,
+            IReadOnlySet<int> healthFailedCredentials,
+            IReadOnlySet<int> healthResourcesFailedCredentials,
+            IReadOnlySet<int> detectorFailedCredentials)
     {
         var full = new List<string>();
+        var excludeDerived = new List<string>();
         var subLevelOnly = new List<string>();
 
         foreach (var (credentialId, subIds) in groups)
         {
-            if (failedCredentials.Contains(credentialId)) continue; // credencial caída: fuera de ambos
-            if (healthFailedCredentials.Contains(credentialId)) continue; // base de health caída: fuera de ambos
+            if (failedCredentials.Contains(credentialId)) continue; // credencial caída: fuera de los tres
+            if (healthFailedCredentials.Contains(credentialId)) continue; // base de health caída: fuera de los tres
 
-            if (healthResourcesFailedCredentials.Contains(credentialId)) subLevelOnly.AddRange(subIds);
+            if (healthResourcesFailedCredentials.Contains(credentialId)) subLevelOnly.AddRange(subIds); // el más restrictivo
+            else if (detectorFailedCredentials.Contains(credentialId)) excludeDerived.AddRange(subIds);
             else full.AddRange(subIds);
         }
 
-        return (full, subLevelOnly);
+        return (full, excludeDerived, subLevelOnly);
     }
 }

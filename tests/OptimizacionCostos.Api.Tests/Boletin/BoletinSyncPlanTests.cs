@@ -123,36 +123,39 @@ public class BoletinSyncPlanTests
         // se tocan porque no se pudo volver a consultar si siguen vigentes.
         var enriquecimientoFallido = new HashSet<int> { 1 };
 
-        var (full, subLevelOnly) = BoletinSyncPlan.HealthReconcileScopes(
-            Grupos(), Ninguna, Ninguna, enriquecimientoFallido);
+        var (full, excludeDerived, subLevelOnly) = BoletinSyncPlan.HealthReconcileScopes(
+            Grupos(), Ninguna, Ninguna, enriquecimientoFallido, Ninguna);
 
         Assert.Equal(["sub-c"], full);
         Assert.Equal(new[] { "sub-a", "sub-b" }, subLevelOnly.OrderBy(s => s));
+        Assert.Empty(excludeDerived);
     }
 
     [Fact]
     public void EnriquecimientoOkDejaTodasLasSubsEnScopeCompleto()
     {
-        var (full, subLevelOnly) = BoletinSyncPlan.HealthReconcileScopes(
-            Grupos(), Ninguna, Ninguna, Ninguna);
+        var (full, excludeDerived, subLevelOnly) = BoletinSyncPlan.HealthReconcileScopes(
+            Grupos(), Ninguna, Ninguna, Ninguna, Ninguna);
 
         Assert.Equal(new[] { "sub-a", "sub-b", "sub-c" }, full.OrderBy(s => s));
         Assert.Empty(subLevelOnly);
+        Assert.Empty(excludeDerived);
     }
 
     [Fact]
-    public void CredencialOHealthBaseCaidaQuedaFueraDeAmbosScopesSinImportarElEnriquecimiento()
+    public void CredencialOHealthBaseCaidaQuedaFueraDeLosTresScopesSinImportarElEnriquecimiento()
     {
         // Los sets vacíos por credencial/health caídos ya están cubiertos en
         // SuccessfulSubscriptionsBySource; acá solo se verifica que HealthReconcileScopes respeta
-        // la misma precedencia y no "recupera" esas subs en subLevelOnly por error.
+        // la misma precedencia y no "recupera" esas subs en ningún otro alcance por error.
         var credencialCaida = new HashSet<int> { 1 };
         var healthBaseFallida = new HashSet<int> { 2 };
 
-        var (full, subLevelOnly) = BoletinSyncPlan.HealthReconcileScopes(
-            Grupos(), credencialCaida, healthBaseFallida, Ninguna);
+        var (full, excludeDerived, subLevelOnly) = BoletinSyncPlan.HealthReconcileScopes(
+            Grupos(), credencialCaida, healthBaseFallida, Ninguna, Ninguna);
 
         Assert.Empty(full);
+        Assert.Empty(excludeDerived);
         Assert.Empty(subLevelOnly);
     }
 
@@ -166,13 +169,52 @@ public class BoletinSyncPlanTests
         // vinieron del sync N, porque este sync no sabe si siguen vigentes.
         var grupos = new Dictionary<int, List<string>> { [1] = ["sub-a"] };
 
-        var syncN = BoletinSyncPlan.HealthReconcileScopes(grupos, Ninguna, Ninguna, Ninguna);
+        var syncN = BoletinSyncPlan.HealthReconcileScopes(grupos, Ninguna, Ninguna, Ninguna, Ninguna);
         Assert.Equal(["sub-a"], syncN.FullScope);
         Assert.Empty(syncN.SubLevelOnly);
+        Assert.Empty(syncN.ExcludeDerived);
 
         var enriquecimientoCaidoEnCred1 = new HashSet<int> { 1 };
-        var syncNMasUno = BoletinSyncPlan.HealthReconcileScopes(grupos, Ninguna, Ninguna, enriquecimientoCaidoEnCred1);
+        var syncNMasUno = BoletinSyncPlan.HealthReconcileScopes(grupos, Ninguna, Ninguna, enriquecimientoCaidoEnCred1, Ninguna);
         Assert.Empty(syncNMasUno.FullScope);
         Assert.Equal(["sub-a"], syncNMasUno.SubLevelOnly);
+        Assert.Empty(syncNMasUno.ExcludeDerived);
+    }
+
+    // -------------------- HealthReconcileScopes: detector de inventario (Task 5) --------------------
+
+    [Fact]
+    public void DetectorCaidoProtegeDerivadasPeroReconciliaElResto()
+    {
+        // La credencial 1 tuvo el detector de inventario caído (no se pudo re-consultar
+        // LinuxSiteRuntimes/WindowsSites): sus filas DERIVADAS (inferidas por BIT) no se tocan
+        // -por eso ExcludeDerived, no FullScope-, pero las filas confirmadas por Microsoft de esa
+        // misma sub sí se reconcilian normalmente (derived = 0 nunca depende del detector).
+        var groups = new Dictionary<int, List<string>> { [1] = ["sub-1"], [2] = ["sub-2"] };
+        var scopes = BoletinSyncPlan.HealthReconcileScopes(
+            groups, failedCredentials: Ninguna, healthFailedCredentials: Ninguna,
+            healthResourcesFailedCredentials: Ninguna, detectorFailedCredentials: new HashSet<int> { 1 });
+
+        Assert.Contains("sub-2", scopes.FullScope);          // todo OK → alcance completo
+        Assert.Contains("sub-1", scopes.ExcludeDerived);     // detector caído → derivadas intocables
+        Assert.DoesNotContain("sub-1", scopes.FullScope);
+        Assert.Empty(scopes.SubLevelOnly);
+    }
+
+    [Fact]
+    public void EnriquecimientoCaidoSigueMandandoSobreElDetector()
+    {
+        // Si ADEMÁS el enriquecimiento (ServiceHealthImpactedResources) falló para la misma
+        // credencial, gana el alcance más restrictivo (SubLevelOnly): ni las derivadas ni las
+        // resource-level confirmadas se tocan, sin importar que el detector también haya fallado.
+        var groups = new Dictionary<int, List<string>> { [1] = ["sub-1"] };
+        var scopes = BoletinSyncPlan.HealthReconcileScopes(
+            groups, Ninguna, Ninguna,
+            healthResourcesFailedCredentials: new HashSet<int> { 1 },
+            detectorFailedCredentials: new HashSet<int> { 1 });
+
+        Assert.Contains("sub-1", scopes.SubLevelOnly);       // el más restrictivo gana
+        Assert.Empty(scopes.FullScope);
+        Assert.Empty(scopes.ExcludeDerived);
     }
 }

@@ -101,6 +101,23 @@ public class BoletinAggregatorTests
         Assert.Equal(2, kpis["subscriptions_total"]);
     }
 
+    // -------------------- derived (Task 5: detectores de inventario) --------------------
+
+    [Fact]
+    public void ExponeDerivedEnRecursosYConteo()
+    {
+        var normal = Fila("service_health", "T1", "s", "/r/a", null);
+        var derivada = Fila("service_health", "T1", "s", "/r/b", null) with { Derived = true };
+
+        var g = ((List<Dictionary<string, object?>>)BoletinAggregator
+            .BuildView([normal, derivada], 1, new DateOnly(2026, 8, 3))["groups"]!).Single();
+
+        Assert.Equal(2, g["resource_count"]);
+        Assert.Equal(1, g["derived_resource_count"]);
+        var resources = (List<Dictionary<string, object?>>)g["resources"]!;
+        Assert.Equal(1, resources.Count(r => (bool)r["derived"]!));
+    }
+
     // -------------------- BuildSubscriptionsView (A2) --------------------
 
     [Fact]
