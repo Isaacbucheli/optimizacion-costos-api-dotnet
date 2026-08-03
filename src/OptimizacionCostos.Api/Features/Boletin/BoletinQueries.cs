@@ -114,4 +114,10 @@ public static class BoletinQueries
             name,
             sqlImageOffer = tostring(properties.sqlImageOffer)
         """;
+
+    /// <summary>Inventario de tipos de recurso del tenant (T3, evaluador IA de novedades por
+    /// cliente): alias directo de Resource Graph, sin redefinir columnas (`type`/`cantidad` ya
+    /// calzan con <see cref="TipoRecurso"/>) — es el contexto honesto que la IA usa para decidir si
+    /// una novedad aplica: solo puede razonar sobre tipos que el cliente REALMENTE tiene.</summary>
+    public const string TiposDeRecurso = "resources | summarize cantidad = count() by type | order by cantidad desc";
 }
