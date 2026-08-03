@@ -15,7 +15,7 @@ public class BoletinSyncPlanTests
     [Fact]
     public void SinFallasTodasLasSubsQuedanExitosasEnAmbasFuentes()
     {
-        var result = BoletinSyncPlan.SuccessfulSubscriptionsBySource(Grupos(), Ninguna, Ninguna, Ninguna);
+        var result = BoletinSyncPlan.SuccessfulSubscriptionsBySource(Grupos(), Ninguna, Ninguna, Ninguna, Ninguna);
 
         Assert.Equal(new[] { "sub-a", "sub-b", "sub-c" }, result[RetirementRow.SourceAdvisor].OrderBy(s => s));
         Assert.Equal(new[] { "sub-a", "sub-b", "sub-c" }, result[RetirementRow.SourceServiceHealth].OrderBy(s => s));
@@ -28,7 +28,7 @@ public class BoletinSyncPlanTests
         // pero la credencial 2 (sub-c) no se ve afectada.
         var credencialFallida = new HashSet<int> { 1 };
 
-        var result = BoletinSyncPlan.SuccessfulSubscriptionsBySource(Grupos(), credencialFallida, Ninguna, Ninguna);
+        var result = BoletinSyncPlan.SuccessfulSubscriptionsBySource(Grupos(), credencialFallida, Ninguna, Ninguna, Ninguna);
 
         Assert.Equal(["sub-c"], result[RetirementRow.SourceAdvisor]);
         Assert.Equal(["sub-c"], result[RetirementRow.SourceServiceHealth]);
@@ -41,7 +41,7 @@ public class BoletinSyncPlanTests
         // sub-a/sub-b quedan fuera de 'advisor' pero siguen exitosas en 'service_health'.
         var advisorFallido = new HashSet<int> { 1 };
 
-        var result = BoletinSyncPlan.SuccessfulSubscriptionsBySource(Grupos(), Ninguna, advisorFallido, Ninguna);
+        var result = BoletinSyncPlan.SuccessfulSubscriptionsBySource(Grupos(), Ninguna, advisorFallido, Ninguna, Ninguna);
 
         Assert.Equal(["sub-c"], result[RetirementRow.SourceAdvisor]);
         Assert.Equal(new[] { "sub-a", "sub-b", "sub-c" }, result[RetirementRow.SourceServiceHealth].OrderBy(s => s));
@@ -52,7 +52,7 @@ public class BoletinSyncPlanTests
     {
         var healthFallido = new HashSet<int> { 2 };
 
-        var result = BoletinSyncPlan.SuccessfulSubscriptionsBySource(Grupos(), Ninguna, Ninguna, healthFallido);
+        var result = BoletinSyncPlan.SuccessfulSubscriptionsBySource(Grupos(), Ninguna, Ninguna, healthFallido, Ninguna);
 
         Assert.Equal(new[] { "sub-a", "sub-b", "sub-c" }, result[RetirementRow.SourceAdvisor].OrderBy(s => s));
         Assert.Equal(["sub-a", "sub-b"], result[RetirementRow.SourceServiceHealth].OrderBy(s => s));
@@ -65,10 +65,34 @@ public class BoletinSyncPlanTests
         // fuente → ReconcileAsync no debe ejecutarse (lista vacía = no-op) y no se "auto-resuelve" nada.
         var todasFallidas = new HashSet<int> { 1, 2 };
 
-        var result = BoletinSyncPlan.SuccessfulSubscriptionsBySource(Grupos(), todasFallidas, Ninguna, Ninguna);
+        var result = BoletinSyncPlan.SuccessfulSubscriptionsBySource(Grupos(), todasFallidas, Ninguna, Ninguna, Ninguna);
 
         Assert.Empty(result[RetirementRow.SourceAdvisor]);
         Assert.Empty(result[RetirementRow.SourceServiceHealth]);
+    }
+
+    [Fact]
+    public void EolCaidoExcluyeSoloEsaFuente()
+    {
+        var groups = new Dictionary<int, List<string>> { [1] = ["sub-1"], [2] = ["sub-2"] };
+        var vacio = new HashSet<int>();
+        var por = BoletinSyncPlan.SuccessfulSubscriptionsBySource(
+            groups, vacio, vacio, vacio, eolFailedCredentials: new HashSet<int> { 1 });
+
+        Assert.Contains("sub-1", por[RetirementRow.SourceAdvisor]);        // otras fuentes intactas
+        Assert.Contains("sub-1", por[RetirementRow.SourceServiceHealth]);
+        Assert.DoesNotContain("sub-1", por[RetirementRow.SourceEol]);      // eol NO reconcilia sub-1
+        Assert.Contains("sub-2", por[RetirementRow.SourceEol]);
+    }
+
+    [Fact]
+    public void CredencialCaidaExcluyeTambienEol()
+    {
+        var groups = new Dictionary<int, List<string>> { [1] = ["sub-1"] };
+        var vacio = new HashSet<int>();
+        var por = BoletinSyncPlan.SuccessfulSubscriptionsBySource(
+            groups, failedCredentials: new HashSet<int> { 1 }, vacio, vacio, vacio);
+        Assert.Empty(por[RetirementRow.SourceEol]);
     }
 
     [Fact]
