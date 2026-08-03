@@ -29,7 +29,8 @@ internal enum BoletinReconcileMode { Full, ExcludeDerived, SubLevelOnly }
 /// ARG por credencial del cliente + persistencia con reconciliación por fingerprint.</summary>
 public sealed class BoletinService(
     ISqlConnectionFactory factory, IResourceGraphRunner rg, IAzureCredentialFactory credentials,
-    IBoletinTranslationService translation, ISiteRuntimeArmClient siteRuntimes, ILogger<BoletinService> logger) : IBoletinService
+    IBoletinTranslationService translation, ISiteRuntimeArmClient siteRuntimes,
+    IBoletinLifecycleStore lifecycle, ILogger<BoletinService> logger) : IBoletinService
 {
     private static object Db(object? v) => v ?? DBNull.Value; // SqlParameter null → 8178
 
@@ -48,7 +49,7 @@ public sealed class BoletinService(
             var rows = new List<RetirementRow>();
             var healthRows = new List<RetirementRow>(); // se expanden a nivel de recurso antes de ir a "rows"
             var healthImpacted = new List<HealthImpactedResource>();
-            var advisorCount = 0; var healthCount = 0; var subsScanned = 0;
+            var advisorCount = 0; var healthCount = 0; var eolCount = 0; var subsScanned = 0;
             var errors = new List<object>();
             // Rastreo por fuente para la reconciliación (Finding 1): una credencial caída excluye
             // ambas fuentes de sus subs; una query fallida excluye solo esa fuente.
@@ -67,6 +68,32 @@ public sealed class BoletinService(
             // de la reconciliación: sin el inventario completo, no se auto-resuelven las filas
             // DERIVADAS de esa sub (ver BoletinSyncPlan.HealthReconcileScopes).
             var detectorFailedCredentials = new HashSet<int>();
+
+            // Fin de soporte (Task 4, fuente "eol"): catálogo de lifecycle leído UNA sola vez antes
+            // del loop por credencial (best-effort, es global — no cambia por credencial/suscripción).
+            // La decisión de qué hacer con readOk/cantidad de entradas es lógica PURA, ver
+            // BoletinSyncPlan.EolCatalogPlan (extraída para poder testearla sin BD/credenciales
+            // reales): catálogo ilegible ⇒ eol se abstiene por completo (todas las credenciales a
+            // failed); legible pero sin entradas activas ⇒ no se consulta pero SÍ se reconcilia
+            // (un catálogo vacío es un estado conocido, no uno desconocido).
+            IReadOnlyList<LifecycleEntry> lifecycleEntries = [];
+            var readOk = true;
+            try
+            {
+                lifecycleEntries = await lifecycle.ListAsync(includeInactive: false, ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "boletin sync {Sync}: catalogo lifecycle ilegible", syncId);
+                errors.Add(new { source = "fin_de_soporte", error = ex.GetType().Name });
+                readOk = false;
+            }
+            var (eolEnabled, eolPlanFailedCredentials) =
+                BoletinSyncPlan.EolCatalogPlan(readOk, lifecycleEntries.Count, groups.Keys.ToList());
+            // Copia mutable: el bloque por-credencial de abajo sigue agregando fallos individuales
+            // (query de inventario eol caída para ESA credencial) sobre este set inicial.
+            var eolFailedCredentials = new HashSet<int>(eolPlanFailedCredentials);
 
             foreach (var (credentialId, subIds) in groups)
             {
@@ -218,13 +245,40 @@ public sealed class BoletinService(
                     }
                 }
 
+                // Fin de soporte (Task 4): inventario propio (SO por VM + imagen SQL) cruzado contra
+                // el catálogo de lifecycle. Solo corre si el catálogo se pudo leer y tiene entradas
+                // activas (eolEnabled) — sin eso no hay contra qué matchear. Best-effort por
+                // credencial, igual que advisor/service_health: si esta credencial falla, NO apaga
+                // "eol" para las demás, solo la excluye a ELLA de la reconciliación de esa fuente.
+                if (eolEnabled)
+                {
+                    try
+                    {
+                        var vmNodes = await rg.RunQueryAsync(cred, subIds, BoletinQueries.VmOsInventory, ct);
+                        var sqlNodes = await rg.RunQueryAsync(cred, subIds, BoletinQueries.SqlVmImages, ct);
+                        var eolResources = vmNodes.Select(n => BoletinEol.FromVmOsRow(new RgRow(n)))
+                            .Concat(sqlNodes.Select(n => BoletinEol.FromSqlVmRow(new RgRow(n))))
+                            .Where(r => r is not null).Select(r => r!).ToList();
+                        var eolRows = BoletinEol.MatchResources(lifecycleEntries, eolResources);
+                        rows.AddRange(eolRows);
+                        eolCount += eolRows.Count;
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning(ex, "boletin sync {Sync}: inventario eol fallo credencial {Cred}", syncId, credentialId);
+                        eolFailedCredentials.Add(credentialId);
+                        errors.Add(new { source = "fin_de_soporte", credential_id = credentialId, error = ex.GetType().Name });
+                    }
+                }
+
                 subsScanned += subIds.Count;
             }
 
             rows.AddRange(BoletinParsers.ExpandHealthRows(healthRows, healthImpacted));
 
             var successfulBySource = BoletinSyncPlan.SuccessfulSubscriptionsBySource(
-                groups, failedCredentials, advisorFailedCredentials, healthFailedCredentials);
+                groups, failedCredentials, advisorFailedCredentials, healthFailedCredentials, eolFailedCredentials);
             var healthScopes = BoletinSyncPlan.HealthReconcileScopes(
                 groups, failedCredentials, healthFailedCredentials, healthResourcesFailedCredentials, detectorFailedCredentials);
 
@@ -245,6 +299,12 @@ public sealed class BoletinService(
                     RetirementRow.SourceServiceHealth, healthScopes.ExcludeDerived, BoletinReconcileMode.ExcludeDerived, ct);
                 await ReconcileAsync(conn, tx, clientId, syncStart,
                     RetirementRow.SourceServiceHealth, healthScopes.SubLevelOnly, BoletinReconcileMode.SubLevelOnly, ct);
+                // "eol" (Task 4) reconcilia en un solo paso (Full): a diferencia de service_health no
+                // tiene enriquecimiento ni detectores propios, solo credencial caída o catálogo
+                // ilegible la excluyen (ambos ya reflejados en successfulBySource). No-op si viene vacía.
+                var eolScope = successfulBySource[RetirementRow.SourceEol];
+                if (eolScope.Count > 0)
+                    await ReconcileAsync(conn, tx, clientId, syncStart, RetirementRow.SourceEol, eolScope, BoletinReconcileMode.Full, ct);
                 // Solo counts: el status/error final se decide después de la traducción (ver abajo),
                 // así que finished_at/status/error NO se tocan acá — la fila queda 'running' hasta entonces.
                 await FinalizeSyncCountsAsync(conn, tx, syncId, subsScanned, advisorCount, healthCount, ct);
@@ -273,7 +333,7 @@ public sealed class BoletinService(
             {
                 ["sync_id"] = syncId, ["status"] = status,
                 ["subscriptions_scanned"] = subsScanned,
-                ["advisor_items"] = advisorCount, ["health_items"] = healthCount,
+                ["advisor_items"] = advisorCount, ["health_items"] = healthCount, ["eol_items"] = eolCount,
                 ["errors"] = errors,
             };
         }
@@ -604,6 +664,8 @@ public sealed class BoletinService(
                     SELECT DISTINCT {column} FROM dbo.boletin_retirement
                     WHERE client_id = @cid AND status = 'vigente'
                       AND {columnEs} IS NULL AND ISNULL({column}, N'') <> N''
+                      -- El contenido eol es ES-nativo (catálogo BIT): no se traduce.
+                      AND source <> 'eol'
                     """;
                 cmd.Parameters.Add(new SqlParameter("@cid", clientId));
                 await using var r = await cmd.ExecuteReaderAsync(ct);
@@ -702,32 +764,50 @@ public sealed class BoletinService(
 /// </summary>
 internal static class BoletinSyncPlan
 {
+    /// <summary>Decisión del catálogo eol. Ilegible (readOk=false) ⇒ eol se ABSTIENE por completo
+    /// (todas las credenciales a failed: no reconciliar contra un catálogo desconocido). Legible
+    /// pero sin entradas activas ⇒ no se consulta inventario PERO SÍ se reconcilia (desactivar
+    /// entradas del catálogo RESUELVE sus hallazgos — comportamiento de producto, ver plan E2/T7).</summary>
+    internal static (bool RunQueries, IReadOnlySet<int> EolFailedCredentials) EolCatalogPlan(
+        bool readOk, int activeEntries, IReadOnlyCollection<int> credentialIds)
+    {
+        if (!readOk) return (false, credentialIds.ToHashSet());
+        return (activeEntries > 0, new HashSet<int>());
+    }
+
     /// <summary>
     /// Calcula, por fuente, las subscription_id cuya query corrió sin error en este sync. Reglas:
-    /// - Credencial no disponible (no se pudo obtener token): excluye AMBAS fuentes de sus subs.
-    /// - Query de una sola fuente fallida: excluye solo esa fuente (la otra puede seguir exitosa).
-    /// - Sin fallas: todas las subs del grupo son exitosas en ambas fuentes.
+    /// - Credencial no disponible (no se pudo obtener token): excluye TODAS las fuentes de sus subs.
+    /// - Query de una sola fuente fallida: excluye solo esa fuente (las demás pueden seguir exitosas).
+    /// - Sin fallas: todas las subs del grupo son exitosas en las tres fuentes.
+    /// <c>eol</c> (Task 4, fin de soporte por catálogo) es una tercera fuente independiente de
+    /// advisor/service_health: su propio inventario (VmOsInventory/SqlVmImages) puede fallar por
+    /// credencial sin afectar a las otras dos, igual que advisorFailedCredentials/healthFailedCredentials.
     /// </summary>
     public static IReadOnlyDictionary<string, IReadOnlyList<string>> SuccessfulSubscriptionsBySource(
         IReadOnlyDictionary<int, List<string>> groups,
         IReadOnlySet<int> failedCredentials,
         IReadOnlySet<int> advisorFailedCredentials,
-        IReadOnlySet<int> healthFailedCredentials)
+        IReadOnlySet<int> healthFailedCredentials,
+        IReadOnlySet<int> eolFailedCredentials)
     {
         var advisor = new List<string>();
         var health = new List<string>();
+        var eol = new List<string>();
 
         foreach (var (credentialId, subIds) in groups)
         {
             if (failedCredentials.Contains(credentialId)) continue; // credencial caída: ninguna fuente
             if (!advisorFailedCredentials.Contains(credentialId)) advisor.AddRange(subIds);
             if (!healthFailedCredentials.Contains(credentialId)) health.AddRange(subIds);
+            if (!eolFailedCredentials.Contains(credentialId)) eol.AddRange(subIds);
         }
 
         return new Dictionary<string, IReadOnlyList<string>>
         {
             [RetirementRow.SourceAdvisor] = advisor,
             [RetirementRow.SourceServiceHealth] = health,
+            [RetirementRow.SourceEol] = eol,
         };
     }
 

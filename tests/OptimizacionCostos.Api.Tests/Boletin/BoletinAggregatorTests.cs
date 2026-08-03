@@ -101,6 +101,26 @@ public class BoletinAggregatorTests
         Assert.Equal(2, kpis["subscriptions_total"]);
     }
 
+    // -------------------- KPIs separados (Task 5: retiros vs fin de soporte) --------------------
+
+    [Fact]
+    public void LosKpisSeparanRetirosDeFinDeSoporte()
+    {
+        var retiro = Fila("advisor", "Basic SKU", "sub-1", "/r/ip1", new DateOnly(2025, 9, 30));
+        var eol1 = Fila("eol", "windows-server-2012-r2", "sub-1", "/r/vm1", new DateOnly(2023, 10, 10));
+        var eol2 = Fila("eol", "windows-server-2012-r2", "sub-2", "/r/vm2", new DateOnly(2023, 10, 10));
+
+        var view = BoletinAggregator.BuildView([retiro, eol1, eol2], 5, new DateOnly(2026, 8, 3));
+        var kpis = (IReadOnlyDictionary<string, object?>)view["kpis"]!;
+        var groups = (List<Dictionary<string, object?>>)view["groups"]!;
+
+        Assert.Equal(1, kpis["announcements"]);      // solo el retiro (eol NO infla)
+        Assert.Equal(1, kpis["resources"]);
+        Assert.Equal(1, kpis["eol_products"]);       // 1 producto en fin de soporte
+        Assert.Equal(2, kpis["eol_resources"]);      // 2 VMs afectadas
+        Assert.Equal(2, groups.Count);               // los grupos van todos juntos (el front filtra)
+    }
+
     // -------------------- derived (Task 5: detectores de inventario) --------------------
 
     [Fact]

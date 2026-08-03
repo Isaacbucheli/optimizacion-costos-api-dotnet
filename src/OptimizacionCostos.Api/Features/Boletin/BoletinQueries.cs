@@ -88,4 +88,30 @@ public static class BoletinQueries
             name,
             siteKind = tostring(kind)
         """;
+
+    /// <summary>SO por VM. osName/osVersion vienen del instanceView que reporta el AGENTE de la VM
+    /// (validado en vivo 2026-08-03: "Windows Server 2012 R2 Standard", "ubuntu 22.04"; funciona
+    /// también en VMs migradas sin imageReference). VM sin agente/apagada larga → osName vacío
+    /// y se ignora (no inventamos SO).</summary>
+    public const string VmOsInventory = """
+        resources
+        | where type =~ 'microsoft.compute/virtualmachines'
+        | project subscriptionId,
+            vmId = tolower(id),
+            name,
+            osName = tostring(properties.extended.instanceView.osName),
+            osVersion = tostring(properties.extended.instanceView.osVersion)
+        """;
+
+    /// <summary>Imagen SQL de los SQL VMs registrados (validado en vivo: "SQL2012-WS2012R2").
+    /// Solo cubre SQL Server REGISTRADO como SQL VM; instalaciones manuales no registradas no
+    /// aparecen (limitación honesta, documentada en la pestaña).</summary>
+    public const string SqlVmImages = """
+        resources
+        | where type =~ 'microsoft.sqlvirtualmachine/sqlvirtualmachines'
+        | project subscriptionId,
+            sqlVmId = tolower(id),
+            name,
+            sqlImageOffer = tostring(properties.sqlImageOffer)
+        """;
 }

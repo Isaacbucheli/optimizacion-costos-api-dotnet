@@ -105,6 +105,9 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinTrans
 // Runtimes de apps Windows (Task 6): el runtime no está en Resource Graph, se resuelve por ARM.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.ISiteRuntimeArmClient,
     OptimizacionCostos.Api.Features.Boletin.SiteRuntimeArmClient>();
+// Catálogo de lifecycle (Fase 2 Entrega 2): fin de soporte de SO/BD, global (no por cliente). Schema+seed lazy.
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinLifecycleStore,
+    OptimizacionCostos.Api.Features.Boletin.BoletinLifecycleStore>();
 
 // Módulo WAF (B7). Schema lazy en cada store. Reusa IChatCompletionClient, IAzureCredentialFactory,
 // IAnalysisAccess, ICostResultsQuery, ISqlConnectionFactory ya registrados.

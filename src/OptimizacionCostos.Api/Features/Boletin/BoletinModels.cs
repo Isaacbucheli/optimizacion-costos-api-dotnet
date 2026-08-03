@@ -13,6 +13,7 @@ public sealed record RetirementRow(
 {
     public const string SourceAdvisor = "advisor";
     public const string SourceServiceHealth = "service_health";
+    public const string SourceEol = "eol";
 
     /// <summary>SHA256 de "{clientId}|{source}|{subscriptionId}|{clave}|{resourceId.lower}" → 32 bytes.
     /// NOTA: Derived no entra al fingerprint — distingue origen (info de Microsoft vs. inferido de inventario),

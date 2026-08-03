@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.RegularExpressions;
 using OptimizacionCostos.Api.Features.Inventory;
 
 namespace OptimizacionCostos.Api.Features.Boletin;
@@ -12,6 +13,28 @@ public sealed record HealthImpactedResource(
 /// <summary>Convierte filas de las KQL del boletín a RetirementRow. Puro y testeable sin Azure.</summary>
 public static class BoletinParsers
 {
+    private static readonly Regex TitleDateRegex = new(
+        @"\b(?:(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)|(January|February|March|April|May|June|July|August|September|October|November|December)\s+(\d{1,2})),?\s+(\d{4})\b",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>Extrae la PRIMERA fecha del título EN del aviso ("10 November 2026" o "November 10, 2026").
+    /// Los avisos de Service Health traen en ImpactMitigationTime el fin del ADVISORY, que puede diferir
+    /// de la fecha real del retiro anunciada en el título (caso .NET 8: advisory hasta 28-nov-2027,
+    /// retiro real 10-nov-2026). El título manda; ImpactMitigationTime queda como fallback.</summary>
+    public static DateOnly? ExtractDateFromTitle(string? title)
+    {
+        if (string.IsNullOrWhiteSpace(title)) return null;
+        var m = TitleDateRegex.Match(title);
+        if (!m.Success) return null;
+        var dayRaw = m.Groups[1].Success ? m.Groups[1].Value : m.Groups[4].Value;
+        var monthRaw = m.Groups[2].Success ? m.Groups[2].Value : m.Groups[3].Value;
+        var year = int.Parse(m.Groups[5].Value, CultureInfo.InvariantCulture);
+        var day = int.Parse(dayRaw, CultureInfo.InvariantCulture);
+        var month = DateTime.ParseExact(monthRaw, "MMMM", CultureInfo.InvariantCulture).Month;
+        try { return new DateOnly(year, month, day); }
+        catch (ArgumentOutOfRangeException) { return null; } // "31 February 2026" u otra fecha imposible
+    }
+
     public static RetirementRow? FromAdvisorRow(RgRow row)
     {
         var feature = (row.Str("retiringFeature") ?? "").Trim();
@@ -38,6 +61,7 @@ public static class BoletinParsers
         var tracking = (row.Str("trackingId") ?? "").Trim();
         var subId = (row.Str("subscriptionId") ?? "").Trim();
         if (tracking.Length == 0 || subId.Length == 0) return null;
+        var title = (row.Str("title") is { Length: > 0 } t ? t : tracking).Trim();
         return new RetirementRow(
             Source: RetirementRow.SourceServiceHealth,
             AnnouncementKey: tracking,
@@ -46,8 +70,8 @@ public static class BoletinParsers
             ResourceName: "",
             ResourceType: "",
             RetiringFeature: "",
-            RetirementDate: ParseDate(row.Str("impactMitigationTime")),
-            Title: (row.Str("title") is { Length: > 0 } t ? t : tracking).Trim(),
+            RetirementDate: ExtractDateFromTitle(title) ?? ParseDate(row.Str("impactMitigationTime")),
+            Title: title,
             Summary: row.Str("summary"),
             RecommendedAction: null,
             LearnMoreUrl: null);
