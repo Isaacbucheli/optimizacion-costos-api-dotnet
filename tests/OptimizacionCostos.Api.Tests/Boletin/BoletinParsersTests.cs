@@ -206,4 +206,46 @@ public class BoletinParsersTests
         Assert.Single(result);
         Assert.Null(result[0].AzureResourceId); // sigue siendo la fila sub-level de sub-1
     }
+
+    // -------------------- ExtractDateFromTitle (Fase 2) --------------------
+
+    [Theory]
+    [InlineData("End of support notice: Support for .NET 8 ends on 10 November 2026—upgrade your apps to .NET 10", 2026, 11, 10)]
+    [InlineData("Retirement notice: Transition to DCR-based custom log ingestion by 14 September 2026", 2026, 9, 14)]
+    [InlineData("Important notice: Billing for extended support for MySQL begins 1 August 2026", 2026, 8, 1)]
+    [InlineData("Support for Node.js 20 ends on April 30, 2026", 2026, 4, 30)]
+    public void ExtraeLaFechaDelTitulo(string title, int y, int m, int d) =>
+        Assert.Equal(new DateOnly(y, m, d), BoletinParsers.ExtractDateFromTitle(title));
+
+    [Theory]
+    [InlineData("Azure Virtual Desktop (classic) will be retired")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void SinFechaEnElTituloDevuelveNull(string? title) =>
+        Assert.Null(BoletinParsers.ExtractDateFromTitle(title));
+
+    [Fact]
+    public void FromHealthRowPrefiereLaFechaDelTituloSobreImpactMitigation()
+    {
+        var row = Row("""
+        {
+          "subscriptionId": "sub-2",
+          "trackingId": "0RYZ-CKZ",
+          "title": "End of support notice: Support for .NET 8 ends on 10 November 2026—upgrade your apps to .NET 10",
+          "summary": "s",
+          "impactMitigationTime": "2027-11-28T00:00:00Z"
+        }
+        """);
+        var r = BoletinParsers.FromHealthRow(row);
+        Assert.Equal(new DateOnly(2026, 11, 10), r!.RetirementDate); // el título manda; 2027-11-28 era el fin del advisory
+    }
+
+    [Fact]
+    public void FromHealthRowSinFechaEnTituloCaeAImpactMitigation()
+    {
+        var row = Row("""
+        { "subscriptionId": "s", "trackingId": "T", "title": "Some retirement", "impactMitigationTime": "2026-09-30T00:00:00Z" }
+        """);
+        Assert.Equal(new DateOnly(2026, 9, 30), BoletinParsers.FromHealthRow(row)!.RetirementDate);
+    }
 }
