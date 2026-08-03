@@ -9,7 +9,8 @@ public class BoletinAggregatorTests
     private static StoredRetirement Fila(string source, string key, string sub, string? resId,
         DateOnly? fecha, string title = "t") =>
         new("FP-" + key + "-" + (resId ?? "sub"), source, key, sub, resId,
-            resId is null ? "" : "recurso", "Tipo/X", key, fecha, title, null, null, null);
+            resId is null ? "" : "recurso", "Tipo/X", key, fecha, title, null, null, null,
+            null, null, null);
 
     [Fact]
     public void AgrupaPorAnuncioYCuentaRecursos()
@@ -52,6 +53,21 @@ public class BoletinAggregatorTests
 
         Assert.Equal(new[] { "Pronto", "Tarde", "SIN-FECHA" },
             groups.Select(g => (string?)g["announcement_key"]).ToArray());
+    }
+
+    [Fact]
+    public void ExponeTraduccionesDelPrimerRegistroQueLasTenga()
+    {
+        var conEs = Fila("advisor", "Basic SKU", "sub-1", "/s/1/ip1", new DateOnly(2025, 9, 30))
+            with { TitleEs = "Se retira la SKU Básica", RecommendedActionEs = "Migra a Standard" };
+        var sinEs = Fila("advisor", "Basic SKU", "sub-2", "/s/2/ip2", new DateOnly(2025, 9, 30));
+
+        var view = BoletinAggregator.BuildView([sinEs, conEs], 5, new DateOnly(2026, 8, 3));
+        var g = ((List<Dictionary<string, object?>>)view["groups"]!).Single();
+
+        Assert.Equal("Se retira la SKU Básica", g["title_es"]);
+        Assert.Equal("Migra a Standard", g["recommended_action_es"]);
+        Assert.Null(g["summary_es"]);
     }
 
     [Fact]

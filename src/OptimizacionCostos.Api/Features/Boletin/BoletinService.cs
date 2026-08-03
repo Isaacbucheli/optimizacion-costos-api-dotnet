@@ -20,7 +20,7 @@ public sealed class BoletinNoManagedSubscriptionsException()
 /// ARG por credencial del cliente + persistencia con reconciliación por fingerprint.</summary>
 public sealed class BoletinService(
     ISqlConnectionFactory factory, IResourceGraphRunner rg, IAzureCredentialFactory credentials,
-    ILogger<BoletinService> logger) : IBoletinService
+    IBoletinTranslationService translation, ILogger<BoletinService> logger) : IBoletinService
 {
     private static object Db(object? v) => v ?? DBNull.Value; // SqlParameter null → 8178
 
@@ -128,7 +128,6 @@ public sealed class BoletinService(
                 groups, failedCredentials, advisorFailedCredentials, healthFailedCredentials);
             var healthScopes = BoletinSyncPlan.HealthReconcileScopes(
                 groups, failedCredentials, healthFailedCredentials, healthResourcesFailedCredentials);
-            var (status, errorJson) = BoletinSyncPlan.DetermineOutcome(errors);
 
             await using (var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct))
             {
@@ -142,9 +141,29 @@ public sealed class BoletinService(
                     RetirementRow.SourceServiceHealth, healthScopes.FullScope, subLevelOnly: false, ct);
                 await ReconcileAsync(conn, tx, clientId, syncStart,
                     RetirementRow.SourceServiceHealth, healthScopes.SubLevelOnly, subLevelOnly: true, ct);
-                await FinalizeSyncAsync(conn, tx, syncId, subsScanned, advisorCount, healthCount, status, errorJson, ct);
+                // Solo counts: el status/error final se decide después de la traducción (ver abajo),
+                // así que finished_at/status/error NO se tocan acá — la fila queda 'running' hasta entonces.
+                await FinalizeSyncCountsAsync(conn, tx, syncId, subsScanned, advisorCount, healthCount, ct);
                 await tx.CommitAsync(ct);
             }
+
+            // Traducción fiel es (best-effort, FUERA de la transacción: la IA es lenta y ajena a los datos).
+            // IA no configurada = se omite en silencio (el front cae al EN). Configurada y fallando = error visible.
+            if (translation.IsConfigured)
+            {
+                try { await TranslatePendingAsync(conn, clientId, ct); }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+                catch (Exception ex)
+                {
+                    logger.LogWarning(ex, "boletin sync {Sync}: traduccion fallo", syncId);
+                    errors.Add(new { source = "traduccion", error = ex.GetType().Name });
+                }
+            }
+
+            // INVARIANTE: el status persistido SIEMPRE refleja los errores de traducción (por eso
+            // DetermineOutcome corre acá, después del bloque de traducción, y no antes de la tx).
+            var (status, errorJson) = BoletinSyncPlan.DetermineOutcome(errors);
+            await UpdateSyncOutcomeAsync(conn, syncId, status, errorJson, ct);
 
             return new Dictionary<string, object?>
             {
@@ -225,6 +244,11 @@ public sealed class BoletinService(
                        WHERE object_id = OBJECT_ID('dbo.boletin_retirement')
                          AND name = 'azure_resource_id' AND max_length = 1024)
                 ALTER TABLE dbo.boletin_retirement ALTER COLUMN azure_resource_id NVARCHAR(1024) NULL;
+            IF COL_LENGTH('dbo.boletin_retirement', 'title_es') IS NULL
+                ALTER TABLE dbo.boletin_retirement ADD
+                  title_es NVARCHAR(512) NULL,
+                  summary_es NVARCHAR(MAX) NULL,
+                  recommended_action_es NVARCHAR(MAX) NULL;
             """;
         await cmd.ExecuteNonQueryAsync(ct);
     }
@@ -296,7 +320,12 @@ public sealed class BoletinService(
         cmd.CommandText = """
             UPDATE dbo.boletin_retirement SET
               last_seen_at = SYSUTCDATETIME(), status = 'vigente', resolved_at = NULL,
-              retirement_date = @rdate, title = @title, summary = @summary,
+              retirement_date = @rdate,
+              -- El original EN manda: si Azure cambió el texto, la traducción se invalida y se re-traduce.
+              title_es = CASE WHEN title <> @title THEN NULL ELSE title_es END,
+              summary_es = CASE WHEN ISNULL(summary, N'') <> ISNULL(@summary, N'') THEN NULL ELSE summary_es END,
+              recommended_action_es = CASE WHEN ISNULL(recommended_action, N'') <> ISNULL(@action, N'') THEN NULL ELSE recommended_action_es END,
+              title = @title, summary = @summary,
               recommended_action = @action, learn_more_url = @url,
               resource_name = @rname, resource_type = @rtype
             WHERE client_id = @cid AND fingerprint = @fp;
@@ -358,23 +387,87 @@ public sealed class BoletinService(
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    private static async Task FinalizeSyncAsync(SqlConnection conn, SqlTransaction tx, int syncId,
-        int subs, int advisorItems, int healthItems, string status, string? error, CancellationToken ct)
+    /// <summary>Escribe solo los counts dentro de la transacción del sync (status/error/finished_at
+    /// se deciden después, ver <see cref="UpdateSyncOutcomeAsync"/>): la traducción corre fuera de la
+    /// tx y puede aportar sus propios errores al status final.</summary>
+    private static async Task FinalizeSyncCountsAsync(SqlConnection conn, SqlTransaction tx, int syncId,
+        int subs, int advisorItems, int healthItems, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.Transaction = tx;
         cmd.CommandText = """
-            UPDATE dbo.boletin_sync SET status = @status, finished_at = SYSUTCDATETIME(),
-              subscriptions_scanned = @subs, advisor_items = @adv, health_items = @hea, error = @err
+            UPDATE dbo.boletin_sync SET
+              subscriptions_scanned = @subs, advisor_items = @adv, health_items = @hea
             WHERE id = @id
             """;
         cmd.Parameters.Add(new SqlParameter("@id", syncId));
         cmd.Parameters.Add(new SqlParameter("@subs", subs));
         cmd.Parameters.Add(new SqlParameter("@adv", advisorItems));
         cmd.Parameters.Add(new SqlParameter("@hea", healthItems));
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>Cierra el sync (status/error/finished_at) DESPUÉS del intento de traducción, fuera de
+    /// la transacción principal: statement único, no necesita tx propia.</summary>
+    private static async Task UpdateSyncOutcomeAsync(SqlConnection conn, int syncId,
+        string status, string? error, CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dbo.boletin_sync SET status = @status, finished_at = SYSUTCDATETIME(), error = @err
+            WHERE id = @id
+            """;
+        cmd.Parameters.Add(new SqlParameter("@id", syncId));
         cmd.Parameters.Add(new SqlParameter("@status", status));
         cmd.Parameters.Add(new SqlParameter("@err", Db(error)));
         await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    /// <summary>Traduce en lote los textos vigentes sin traducción (title/summary/recommended_action).
+    /// Trabaja por TEXTO DISTINTO (los ~35 anuncios comparten texto entre sus filas de recursos).</summary>
+    private async Task TranslatePendingAsync(SqlConnection conn, int clientId, CancellationToken ct)
+    {
+        // Los nombres de columna vienen de esta tupla constante del propio método, nunca de input de
+        // usuario: no hay riesgo de inyección al interpolarlos en el SQL de abajo.
+        foreach (var (column, columnEs, maxLen) in new[]
+                 {
+                     ("title", "title_es", 512),
+                     ("summary", "summary_es", 0),
+                     ("recommended_action", "recommended_action_es", 0),
+                 })
+        {
+            var pending = new List<string>();
+            await using (var cmd = conn.CreateCommand())
+            {
+                cmd.CommandText = $"""
+                    SELECT DISTINCT {column} FROM dbo.boletin_retirement
+                    WHERE client_id = @cid AND status = 'vigente'
+                      AND {columnEs} IS NULL AND ISNULL({column}, N'') <> N''
+                    """;
+                cmd.Parameters.Add(new SqlParameter("@cid", clientId));
+                await using var r = await cmd.ExecuteReaderAsync(ct);
+                while (await r.ReadAsync(ct)) pending.Add(r.GetString(0));
+            }
+            if (pending.Count == 0) continue;
+
+            var translated = await translation.TranslateToSpanishAsync(
+                pending.Select((t, i) => new BoletinTranslationItem(i.ToString(), t)).ToList(), ct);
+
+            for (var i = 0; i < pending.Count; i++)
+            {
+                var es = translated[i].Text;
+                if (maxLen > 0 && es.Length > maxLen) es = es[..maxLen];
+                await using var upd = conn.CreateCommand();
+                upd.CommandText = $"""
+                    UPDATE dbo.boletin_retirement SET {columnEs} = @es
+                    WHERE client_id = @cid AND {column} = @en AND {columnEs} IS NULL
+                    """;
+                upd.Parameters.Add(new SqlParameter("@cid", clientId));
+                upd.Parameters.Add(new SqlParameter("@en", pending[i]));
+                upd.Parameters.Add(new SqlParameter("@es", es));
+                await upd.ExecuteNonQueryAsync(ct);
+            }
+        }
     }
 
     private static async Task MarkSyncFailedAsync(SqlConnection conn, int syncId, string error, CancellationToken ct)
@@ -394,7 +487,8 @@ public sealed class BoletinService(
         cmd.CommandText = """
             SELECT fingerprint, source, announcement_key, subscription_id, azure_resource_id,
                    resource_name, resource_type, retiring_feature, retirement_date, title,
-                   summary, recommended_action, learn_more_url
+                   summary, recommended_action, learn_more_url,
+                   title_es, summary_es, recommended_action_es
             FROM dbo.boletin_retirement
             WHERE client_id = @cid AND status = 'vigente'
             """;
@@ -407,7 +501,10 @@ public sealed class BoletinService(
                 r.IsDBNull(4) ? null : r.GetString(4), r.GetString(5), r.GetString(6), r.GetString(7),
                 r.IsDBNull(8) ? null : DateOnly.FromDateTime(r.GetDateTime(8)), r.GetString(9),
                 r.IsDBNull(10) ? null : r.GetString(10), r.IsDBNull(11) ? null : r.GetString(11),
-                r.IsDBNull(12) ? null : r.GetString(12)));
+                r.IsDBNull(12) ? null : r.GetString(12),
+                r.IsDBNull(13) ? null : r.GetString(13),
+                r.IsDBNull(14) ? null : r.GetString(14),
+                r.IsDBNull(15) ? null : r.GetString(15)));
         return list;
     }
 

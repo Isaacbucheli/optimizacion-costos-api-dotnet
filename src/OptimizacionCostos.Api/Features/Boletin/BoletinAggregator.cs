@@ -1,10 +1,13 @@
 namespace OptimizacionCostos.Api.Features.Boletin;
 
-/// <summary>Fila leída de dbo.boletin_retirement (solo status='vigente').</summary>
+/// <summary>Fila leída de dbo.boletin_retirement (solo status='vigente'). Los campos *_es son la
+/// traducción fiel del original en inglés (NULL si aún no se tradujo o la IA no está configurada;
+/// el front cae al texto EN en ese caso).</summary>
 public sealed record StoredRetirement(
     string FingerprintHex, string Source, string AnnouncementKey, string SubscriptionId,
     string? AzureResourceId, string ResourceName, string ResourceType, string RetiringFeature,
-    DateOnly? RetirementDate, string Title, string? Summary, string? RecommendedAction, string? LearnMoreUrl);
+    DateOnly? RetirementDate, string Title, string? Summary, string? RecommendedAction, string? LearnMoreUrl,
+    string? TitleEs = null, string? SummaryEs = null, string? RecommendedActionEs = null);
 
 /// <summary>Arma la vista del boletín: agrupa por anuncio y calcula KPIs al día de hoy. Puro.</summary>
 public static class BoletinAggregator
@@ -38,6 +41,9 @@ public static class BoletinAggregator
                     ["recommended_action"] = first.RecommendedAction,
                     ["learn_more_url"] = first.LearnMoreUrl,
                     ["summary"] = first.Summary,
+                    ["title_es"] = g.Select(r => r.TitleEs).FirstOrDefault(t => !string.IsNullOrEmpty(t)),
+                    ["summary_es"] = g.Select(r => r.SummaryEs).FirstOrDefault(t => !string.IsNullOrEmpty(t)),
+                    ["recommended_action_es"] = g.Select(r => r.RecommendedActionEs).FirstOrDefault(t => !string.IsNullOrEmpty(t)),
                     ["resource_count"] = resources.Count,
                     ["subscription_ids"] = g.Select(r => r.SubscriptionId)
                         .Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(s => s, StringComparer.Ordinal).ToArray(),
