@@ -9,7 +9,8 @@ public class BoletinAggregatorTests
     private static StoredRetirement Fila(string source, string key, string sub, string? resId,
         DateOnly? fecha, string title = "t") =>
         new("FP-" + key + "-" + (resId ?? "sub"), source, key, sub, resId,
-            resId is null ? "" : "recurso", "Tipo/X", key, fecha, title, null, null, null);
+            resId is null ? "" : "recurso", "Tipo/X", key, fecha, title, null, null, null,
+            null, null, null);
 
     [Fact]
     public void AgrupaPorAnuncioYCuentaRecursos()
@@ -55,6 +56,21 @@ public class BoletinAggregatorTests
     }
 
     [Fact]
+    public void ExponeTraduccionesDelPrimerRegistroQueLasTenga()
+    {
+        var conEs = Fila("advisor", "Basic SKU", "sub-1", "/s/1/ip1", new DateOnly(2025, 9, 30))
+            with { TitleEs = "Se retira la SKU Básica", RecommendedActionEs = "Migra a Standard" };
+        var sinEs = Fila("advisor", "Basic SKU", "sub-2", "/s/2/ip2", new DateOnly(2025, 9, 30));
+
+        var view = BoletinAggregator.BuildView([sinEs, conEs], 5, new DateOnly(2026, 8, 3));
+        var g = ((List<Dictionary<string, object?>>)view["groups"]!).Single();
+
+        Assert.Equal("Se retira la SKU Básica", g["title_es"]);
+        Assert.Equal("Migra a Standard", g["recommended_action_es"]);
+        Assert.Null(g["summary_es"]);
+    }
+
+    [Fact]
     public void FilterToManagedExcluyeFilasDeSubsNoAdministradas()
     {
         var rows = new List<StoredRetirement>
@@ -83,6 +99,23 @@ public class BoletinAggregatorTests
         Assert.Equal(2, kpis["resources"]);
         Assert.Equal(2, kpis["subscriptions_impacted"]);
         Assert.Equal(2, kpis["subscriptions_total"]);
+    }
+
+    // -------------------- derived (Task 5: detectores de inventario) --------------------
+
+    [Fact]
+    public void ExponeDerivedEnRecursosYConteo()
+    {
+        var normal = Fila("service_health", "T1", "s", "/r/a", null);
+        var derivada = Fila("service_health", "T1", "s", "/r/b", null) with { Derived = true };
+
+        var g = ((List<Dictionary<string, object?>>)BoletinAggregator
+            .BuildView([normal, derivada], 1, new DateOnly(2026, 8, 3))["groups"]!).Single();
+
+        Assert.Equal(2, g["resource_count"]);
+        Assert.Equal(1, g["derived_resource_count"]);
+        var resources = (List<Dictionary<string, object?>>)g["resources"]!;
+        Assert.Equal(1, resources.Count(r => (bool)r["derived"]!));
     }
 
     // -------------------- BuildSubscriptionsView (A2) --------------------

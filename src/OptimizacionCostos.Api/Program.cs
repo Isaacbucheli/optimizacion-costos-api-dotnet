@@ -100,6 +100,11 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Optimization.IOptimiz
 // Boletín Azure (Fase 1): retiros/deprecaciones vía Advisor + Service Health, sin costos.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinService,
     OptimizacionCostos.Api.Features.Boletin.BoletinService>();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinTranslationService,
+    OptimizacionCostos.Api.Features.Boletin.BoletinTranslationService>();
+// Runtimes de apps Windows (Task 6): el runtime no está en Resource Graph, se resuelve por ARM.
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.ISiteRuntimeArmClient,
+    OptimizacionCostos.Api.Features.Boletin.SiteRuntimeArmClient>();
 
 // Módulo WAF (B7). Schema lazy en cada store. Reusa IChatCompletionClient, IAzureCredentialFactory,
 // IAnalysisAccess, ICostResultsQuery, ISqlConnectionFactory ya registrados.
