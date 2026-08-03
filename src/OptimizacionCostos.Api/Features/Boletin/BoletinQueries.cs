@@ -63,4 +63,29 @@ public static class BoletinQueries
             targetResourceType = tostring(properties.targetResourceType),
             resourceName = tostring(properties.resourceName)
         """;
+
+    /// <summary>Runtimes de sitios Linux (App Service / Functions). LinuxFxVersion vive en
+    /// siteProperties.properties; validado en vivo contra Resource Graph el 2026-08-01.</summary>
+    public const string LinuxSiteRuntimes = """
+        resources
+        | where type =~ 'microsoft.web/sites'
+        | mv-expand prop = properties.siteProperties.properties
+        | where tostring(prop.name) == 'LinuxFxVersion' and tostring(prop.value) != ''
+        | project subscriptionId,
+            siteId = tolower(id),
+            name,
+            runtime = tostring(prop.value),
+            siteKind = tostring(kind)
+        """;
+
+    /// <summary>Sitios Windows (el runtime NO está en ARG: se resuelve por ARM, ver SiteRuntimeArmClient).</summary>
+    public const string WindowsSites = """
+        resources
+        | where type =~ 'microsoft.web/sites'
+        | where kind !contains 'linux'
+        | project subscriptionId,
+            siteId = tolower(id),
+            name,
+            siteKind = tostring(kind)
+        """;
 }

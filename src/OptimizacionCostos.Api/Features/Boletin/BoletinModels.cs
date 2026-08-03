@@ -8,12 +8,15 @@ namespace OptimizacionCostos.Api.Features.Boletin;
 public sealed record RetirementRow(
     string Source, string AnnouncementKey, string SubscriptionId, string? AzureResourceId,
     string ResourceName, string ResourceType, string RetiringFeature, DateOnly? RetirementDate,
-    string Title, string? Summary, string? RecommendedAction, string? LearnMoreUrl)
+    string Title, string? Summary, string? RecommendedAction, string? LearnMoreUrl,
+    bool Derived = false)
 {
     public const string SourceAdvisor = "advisor";
     public const string SourceServiceHealth = "service_health";
 
-    /// <summary>SHA256 de "{clientId}|{source}|{subscriptionId}|{clave}|{resourceId.lower}" → 32 bytes.</summary>
+    /// <summary>SHA256 de "{clientId}|{source}|{subscriptionId}|{clave}|{resourceId.lower}" → 32 bytes.
+    /// NOTA: Derived no entra al fingerprint — distingue origen (info de Microsoft vs. inferido de inventario),
+    /// nunca afecta la identidad de la fila para deduplicación.</summary>
     public byte[] Fingerprint(int clientId)
     {
         var raw = $"{clientId}|{Source}|{SubscriptionId}|{AnnouncementKey}|{(AzureResourceId ?? "").ToLowerInvariant()}";
