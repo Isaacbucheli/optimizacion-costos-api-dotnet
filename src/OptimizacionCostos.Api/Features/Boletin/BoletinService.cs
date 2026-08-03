@@ -29,7 +29,7 @@ internal enum BoletinReconcileMode { Full, ExcludeDerived, SubLevelOnly }
 /// ARG por credencial del cliente + persistencia con reconciliación por fingerprint.</summary>
 public sealed class BoletinService(
     ISqlConnectionFactory factory, IResourceGraphRunner rg, IAzureCredentialFactory credentials,
-    IBoletinTranslationService translation, ILogger<BoletinService> logger) : IBoletinService
+    IBoletinTranslationService translation, ISiteRuntimeArmClient siteRuntimes, ILogger<BoletinService> logger) : IBoletinService
 {
     private static object Db(object? v) => v ?? DBNull.Value; // SqlParameter null → 8178
 
@@ -157,7 +157,7 @@ public sealed class BoletinService(
                         var siteNodes = await rg.RunQueryAsync(cred, subIds, BoletinQueries.LinuxSiteRuntimes, ct);
                         var sites = siteNodes.Select(n => BoletinDetectors.FromLinuxSiteRow(new RgRow(n)))
                                              .Where(s => s is not null).Select(s => s!).ToList();
-                        sites.AddRange(await FetchWindowsRuntimesAsync(cred, subIds, errors, ct)); // Task 6; hasta entonces devuelve []
+                        sites.AddRange(await FetchWindowsRuntimesAsync(cred, subIds, errors, ct)); // Task 6: runtimes de Windows vía ARM
                         var existing = rows.Where(r => r.AzureResourceId is not null)
                             .Select(r => r.AzureResourceId!.ToLowerInvariant())
                             .ToHashSet(StringComparer.Ordinal);
@@ -240,13 +240,26 @@ public sealed class BoletinService(
         }
     }
 
-    // Task 6: runtimes de apps Windows vía ARM (el runtime no está en Resource Graph, ver el
-    // comentario de BoletinQueries.WindowsSites — se resuelve con un ARM client dedicado,
-    // SiteRuntimeArmClient, todavía no implementado). Stub compilable: esta task (5) entrega
-    // detectores funcionales solo para Linux; Windows llega en Task 6 sin tocar este call site.
-    private static Task<IReadOnlyList<SiteRuntime>> FetchWindowsRuntimesAsync(
-        Azure.Core.TokenCredential cred, IReadOnlyList<string> subIds, List<object> errors, CancellationToken ct) =>
-        Task.FromResult<IReadOnlyList<SiteRuntime>>([]);
+    /// <summary>Runtimes de apps Windows del lote (ARM). Sus warnings viajan como errores
+    /// no-fatales de fuente "inventario" para que el consultor los vea.</summary>
+    private async Task<IReadOnlyList<SiteRuntime>> FetchWindowsRuntimesAsync(
+        Azure.Core.TokenCredential cred, IReadOnlyList<string> subIds, List<object> errors, CancellationToken ct)
+    {
+        var nodes = await rg.RunQueryAsync(cred, subIds, BoletinQueries.WindowsSites, ct);
+        var refs = new List<WindowsSiteRef>();
+        foreach (var n in nodes)
+        {
+            var row = new OptimizacionCostos.Api.Features.Inventory.RgRow(n);
+            var sub = (row.Str("subscriptionId") ?? "").Trim();
+            var id = (row.Str("siteId") ?? "").Trim();
+            if (sub.Length == 0 || id.Length == 0) continue;
+            refs.Add(new WindowsSiteRef(sub, id, (row.Str("name") ?? "").Trim()));
+        }
+        var result = await siteRuntimes.FetchAsync(cred, refs, ct);
+        foreach (var w in result.Warnings)
+            errors.Add(new { source = "inventario", warning = w });
+        return result.Sites;
+    }
 
     public async Task<IReadOnlyDictionary<string, object?>> GetAsync(int clientId, CancellationToken ct = default)
     {
