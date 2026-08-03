@@ -25,6 +25,10 @@ public static class BoletinAggregator
     public static IReadOnlyDictionary<string, object?> BuildView(
         IReadOnlyList<StoredRetirement> rows, int subscriptionsTotal, DateOnly today)
     {
+        // Task 5: separar filas de retiros (advisor/service_health) de fin de soporte (eol)
+        var retiroRows = rows.Where(r => r.Source != "eol").ToList();
+        var eolRows = rows.Where(r => r.Source == "eol").ToList();
+
         var groups = rows
             .GroupBy(r => (r.Source, r.AnnouncementKey))
             .Select(g =>
@@ -68,19 +72,24 @@ public static class BoletinAggregator
             .ThenBy(g => g["retirement_date"] as string, StringComparer.Ordinal)
             .ToList();
 
-        var impactedSubs = rows.Select(r => r.SubscriptionId)
+        // KPIs sobre retiros (sin contar eol)
+        var retiroGroups = groups.Where(g => (string?)g["source"] != "eol").ToList();
+        var impactedSubs = retiroRows.Select(r => r.SubscriptionId)
             .Distinct(StringComparer.OrdinalIgnoreCase).Count();
 
         return new Dictionary<string, object?>
         {
             ["kpis"] = new Dictionary<string, object?>
             {
-                ["announcements"] = groups.Count,
-                ["due_soon"] = groups.Count(g => (string?)g["urgency"] == BoletinUrgency.Proximo),
-                ["already_retired"] = groups.Count(g => (string?)g["urgency"] == BoletinUrgency.Retirado),
-                ["resources"] = rows.Count(r => r.AzureResourceId is not null),
+                ["announcements"] = retiroGroups.Count,
+                ["due_soon"] = retiroGroups.Count(g => (string?)g["urgency"] == BoletinUrgency.Proximo),
+                ["already_retired"] = retiroGroups.Count(g => (string?)g["urgency"] == BoletinUrgency.Retirado),
+                ["resources"] = retiroRows.Count(r => r.AzureResourceId is not null),
                 ["subscriptions_impacted"] = impactedSubs,
                 ["subscriptions_total"] = subscriptionsTotal,
+                // Task 5: KPIs para fin de soporte
+                ["eol_products"] = groups.Count(g => (string?)g["source"] == "eol"),
+                ["eol_resources"] = eolRows.Count(r => r.AzureResourceId is not null),
             },
             ["groups"] = groups,
         };
