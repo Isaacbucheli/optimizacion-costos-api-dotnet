@@ -15,7 +15,8 @@ namespace OptimizacionCostos.Api.Features.Boletin.Api;
 [RequireModule(Modules.Boletin)]
 public sealed class BoletinController(
     IBoletinService svc, IAnalysisAccess access, ILogger<BoletinController> logger,
-    IBoletinLifecycleStore lifecycle, IBoletinNovedadStore novedades) : ControllerBase
+    IBoletinLifecycleStore lifecycle, IBoletinNovedadStore novedades,
+    IBoletinNovedadClienteStore novedadesCliente) : ControllerBase
 {
     [HttpGet("clients/{clientId:int}")]
     public async Task<IActionResult> Get(int clientId, CancellationToken ct)
@@ -208,4 +209,81 @@ public sealed class BoletinController(
         }
         return (fields, null);
     }
+
+    // ---- Evaluación de novedades POR CLIENTE (Fase 2 Entrega 3, Task 4) ----
+
+    public sealed record DecidirNovedadClienteRequest(string? Estado, string? PorQue);
+
+    [HttpPost("clients/{clientId:int}/novedades/evaluar")]
+    [RequireModule(Modules.Boletin, ModuleAccess.Edit)]
+    public async Task<IActionResult> EvaluarNovedadesCliente(int clientId, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+        try
+        {
+            var (evaluadas, candidatas) = await novedadesCliente.EvaluarPendientesAsync(clientId, ct);
+            return Ok(new { evaluadas, candidatas });
+        }
+        // IA no configurada, o inventario ilegible en TODAS las credenciales administradas: ambos
+        // son "no se puede evaluar ahora mismo" (mensaje del store), nunca un 500 crudo.
+        catch (InvalidOperationException ex)
+        {
+            return Problem(statusCode: StatusCodes.Status503ServiceUnavailable, detail: ex.Message);
+        }
+    }
+
+    [HttpGet("clients/{clientId:int}/novedades")]
+    public async Task<IActionResult> ListNovedadesCliente(int clientId, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+        var rows = await novedadesCliente.ListAsync(clientId, ct);
+        return Ok(new
+        {
+            aprobadas = rows.Where(r => r.Estado.Estado == NovedadClienteEstados.Aprobada).Select(NovedadClienteItem).ToList(),
+            pendientes = rows.Where(r => r.Estado.Estado == NovedadClienteEstados.Pendiente).Select(NovedadClienteItem).ToList(),
+        });
+    }
+
+    [HttpPut("novedades-cliente/{id:int}")]
+    [RequireModule(Modules.Boletin, ModuleAccess.Edit)]
+    public async Task<IActionResult> DecidirNovedadCliente(int id, [FromBody] DecidirNovedadClienteRequest body, CancellationToken ct)
+    {
+        if (body.Estado is null || !NovedadClienteEstados.DecidiblesValidos.Contains(body.Estado))
+            return BadRequest(new { detail = $"estado debe ser uno de: {string.Join(", ", NovedadClienteEstados.DecidiblesValidos)}" });
+
+        // Verifica pertenencia ANTES de mutar (patrón FindingStateOwner de OptimizationController):
+        // el PUT solo recibe el id de la fila, así que primero se resuelve su client_id dueño y
+        // recién ahí se valida el acceso del actor a ESE cliente.
+        var ownerClientId = await novedadesCliente.OwnerClientIdAsync(id, ct);
+        if (ownerClientId is null) return NotFound(new { detail = "Novedad de cliente no encontrada" });
+        var chk = await access.AssertClientAccessAsync(User, ownerClientId.Value, ct);
+        if (!chk.Ok) return Translate(chk);
+
+        var actor = User.FindFirst("sub")?.Value ?? "";
+        var ok = await novedadesCliente.DecidirAsync(id, ownerClientId.Value, body.Estado, body.PorQue, actor, ct);
+        return ok
+            ? Ok(new { message = "Decisión registrada", id, estado = body.Estado })
+            : NotFound(new { detail = "Novedad de cliente no encontrada" });
+    }
+
+    /// <summary>Shape snake_case exacto pedido para el GET por cliente: `published_at` (no
+    /// `published_at_utc` como el NovedadRow crudo del GET global) para mantener el contrato simple
+    /// del front.</summary>
+    private static object NovedadClienteItem((NovedadRow Novedad, NovedadClienteRow Estado) r) => new
+    {
+        id = r.Estado.Id,
+        novedad_id = r.Novedad.Id,
+        titulo = r.Novedad.Titulo,
+        titulo_es = r.Novedad.TituloEs,
+        descripcion = r.Novedad.Descripcion,
+        descripcion_es = r.Novedad.DescripcionEs,
+        link = r.Novedad.Link,
+        estado_feed = r.Novedad.EstadoFeed,
+        categoria_bit = r.Novedad.CategoriaBit,
+        published_at = r.Novedad.PublishedAtUtc,
+        por_que = r.Estado.PorQue,
+        estado = r.Estado.Estado,
+    };
 }

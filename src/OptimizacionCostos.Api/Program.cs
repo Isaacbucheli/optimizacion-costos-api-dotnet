@@ -114,6 +114,13 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinLifec
 // disponible; el store fija su propio Timeout (60s) en IngestAsync en vez de configurarlo acá.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinNovedadStore,
     OptimizacionCostos.Api.Features.Boletin.BoletinNovedadStore>();
+// Evaluación IA de novedades POR CLIENTE (Fase 2 Entrega 3, Task 4): reusa IChatCompletionClient
+// (registrado más abajo) para el evaluador (T3, sin wiring hasta ahora) + IAzureCredentialFactory/
+// IResourceGraphRunner (ya registrados arriba) para el inventario del tenant.
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinNovedadEvaluator,
+    OptimizacionCostos.Api.Features.Boletin.BoletinNovedadEvaluator>();
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinNovedadClienteStore,
+    OptimizacionCostos.Api.Features.Boletin.BoletinNovedadClienteStore>();
 
 // Módulo WAF (B7). Schema lazy en cada store. Reusa IChatCompletionClient, IAzureCredentialFactory,
 // IAnalysisAccess, ICostResultsQuery, ISqlConnectionFactory ya registrados.
