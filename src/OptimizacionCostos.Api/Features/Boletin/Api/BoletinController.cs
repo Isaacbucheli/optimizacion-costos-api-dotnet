@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Auth;
@@ -12,7 +13,8 @@ namespace OptimizacionCostos.Api.Features.Boletin.Api;
 [Route("boletin")]
 [RequireModule(Modules.Boletin)]
 public sealed class BoletinController(
-    IBoletinService svc, IAnalysisAccess access, ILogger<BoletinController> logger) : ControllerBase
+    IBoletinService svc, IAnalysisAccess access, ILogger<BoletinController> logger,
+    IBoletinLifecycleStore lifecycle) : ControllerBase
 {
     [HttpGet("clients/{clientId:int}")]
     public async Task<IActionResult> Get(int clientId, CancellationToken ct)
@@ -44,4 +46,70 @@ public sealed class BoletinController(
             new { detail = check.Detail ?? "No tiene acceso a este cliente" }),
         _ => Ok(),
     };
+
+    // ---- Catálogo de lifecycle (fin de soporte) — GLOBAL, no por cliente ----
+
+    [HttpGet("lifecycle")]
+    public async Task<IActionResult> ListLifecycle([FromQuery(Name = "include_inactive")] bool includeInactive, CancellationToken ct)
+        => Ok(await lifecycle.ListAsync(includeInactive, ct));
+
+    [HttpPost("lifecycle")]
+    [RequireModule(Modules.Boletin, ModuleAccess.Edit)]
+    public async Task<IActionResult> CreateLifecycle([FromBody] JsonElement body, CancellationToken ct)
+    {
+        var (fields, error) = BuildLifecycleFields(body, requireCore: true);
+        if (error is not null) return BadRequest(new { detail = error });
+        var id = await lifecycle.CreateAsync(fields, ct);
+        return Ok(new { message = "Entrada creada", id });
+    }
+
+    [HttpPut("lifecycle/{id:int}")]
+    [RequireModule(Modules.Boletin, ModuleAccess.Edit)]
+    public async Task<IActionResult> UpdateLifecycle(int id, [FromBody] JsonElement body, CancellationToken ct)
+    {
+        var (fields, error) = BuildLifecycleFields(body, requireCore: false);
+        if (error is not null) return BadRequest(new { detail = error });
+        return await lifecycle.UpdateAsync(id, fields, ct)
+            ? Ok(new { message = "Entrada actualizada", id })
+            : NotFound(new { detail = "Entrada no encontrada" });
+    }
+
+    [HttpDelete("lifecycle/{id:int}")]
+    [RequireModule(Modules.Boletin, ModuleAccess.Edit)]
+    public async Task<IActionResult> DeleteLifecycle(int id, CancellationToken ct)
+        => await lifecycle.SoftDeleteAsync(id, ct)
+            ? Ok(new { message = "Entrada desactivada", id })
+            : NotFound(new { detail = "Entrada no encontrada" });
+
+    /// <summary>Semántica exclude_unset + whitelist (patrón AlertCatalogController.BuildFields).</summary>
+    private static (Dictionary<string, object?> Fields, string? Error) BuildLifecycleFields(JsonElement body, bool requireCore)
+    {
+        if (body.ValueKind != JsonValueKind.Object) return ([], "Cuerpo inválido");
+        var fields = new Dictionary<string, object?>();
+        foreach (var p in body.EnumerateObject())
+        {
+            if (!LifecycleColumns.Editable.Contains(p.Name)) continue;
+            fields[p.Name] = p.Value.ValueKind switch
+            {
+                JsonValueKind.Null => null,
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Number => p.Value.GetDouble(),
+                _ => p.Value.GetString(),
+            };
+        }
+        if (fields.TryGetValue("categoria", out var cat) && cat is string c && c != "so" && c != "bd")
+            return ([], "categoria debe ser 'so' o 'bd'");
+        if (fields.TryGetValue("match_field", out var mf) && mf is string f && f != "os_name" && f != "sql_image_offer")
+            return ([], "match_field debe ser 'os_name' o 'sql_image_offer'");
+        if (fields.TryGetValue("match_pattern", out var mp) && mp is string pat)
+            fields["match_pattern"] = pat.Trim().ToLowerInvariant(); // los patrones se comparan en minúsculas
+        if (fields.TryGetValue("end_of_support", out var eos) && eos is string d && !DateOnly.TryParse(d, out _))
+            return ([], "end_of_support debe ser fecha yyyy-MM-dd");
+        if (requireCore)
+            foreach (var req in new[] { "clave", "producto", "categoria", "match_field", "match_pattern", "end_of_support", "recomendacion" })
+                if (!fields.ContainsKey(req) || fields[req] is null or "")
+                    return ([], $"Falta el campo obligatorio '{req}'");
+        return (fields, null);
+    }
 }
