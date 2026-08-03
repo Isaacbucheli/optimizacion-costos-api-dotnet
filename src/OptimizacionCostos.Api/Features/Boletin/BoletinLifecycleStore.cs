@@ -141,16 +141,26 @@ public sealed class BoletinLifecycleStore(ISqlConnectionFactory factory) : IBole
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    /// <summary>Todo-o-nada: el COUNT y TODOS los INSERTs del seed corren en UNA sola transacción.
+    /// Sin esto, un fallo a mitad del loop (ej. conexión caída tras el INSERT #10 de N) deja el
+    /// catálogo con COUNT&gt;0 pero INCOMPLETO — el guard de arriba nunca lo vuelve a sembrar (no
+    /// está vacío), y el sync del Boletín lo trata como si fuera el catálogo completo: las entradas
+    /// que faltaron simplemente nunca matchean contra el inventario, sin error ni aviso visible
+    /// (under-match silencioso). Un catálogo parcial es peor que uno vacío: uno vacío al menos se
+    /// reintenta en la próxima lectura.</summary>
     private static async Task SeedIfEmptyAsync(SqlConnection conn, CancellationToken ct)
     {
+        await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct);
         await using (var count = conn.CreateCommand())
         {
+            count.Transaction = tx;
             count.CommandText = "SELECT COUNT(1) FROM dbo.boletin_lifecycle";
-            if ((int)(await count.ExecuteScalarAsync(ct))! > 0) return;
+            if ((int)(await count.ExecuteScalarAsync(ct))! > 0) { await tx.CommitAsync(ct); return; }
         }
         foreach (var e in ReadSeedEntries())
         {
             await using var cmd = conn.CreateCommand();
+            cmd.Transaction = tx;
             cmd.CommandText = """
                 INSERT INTO dbo.boletin_lifecycle
                   (clave, producto, categoria, match_field, match_pattern, end_of_support, recomendacion, learn_more_url)
@@ -166,6 +176,7 @@ public sealed class BoletinLifecycleStore(ISqlConnectionFactory factory) : IBole
             cmd.Parameters.Add(new SqlParameter("@url", Db(e.LearnMoreUrl)));
             await cmd.ExecuteNonQueryAsync(ct);
         }
+        await tx.CommitAsync(ct);
     }
 
     /// <summary>Lee el seed embebido. Interno + testeable (el JSON es dato de negocio, no decoración).</summary>

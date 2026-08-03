@@ -136,6 +136,32 @@ public class BoletinSyncPlanTests
         Assert.Equal("partial", status);
     }
 
+    // -------------------- EolCatalogPlan --------------------
+
+    [Fact]
+    public void CatalogoIlegibleAbstieneEolPorCompleto()
+    {
+        var (run, failed) = BoletinSyncPlan.EolCatalogPlan(readOk: false, activeEntries: 0, credentialIds: [1, 2]);
+        Assert.False(run);
+        Assert.Equal(new HashSet<int> { 1, 2 }, failed);
+    }
+
+    [Fact]
+    public void CatalogoVacioNoConsultaPeroSiReconcilia()
+    {
+        var (run, failed) = BoletinSyncPlan.EolCatalogPlan(readOk: true, activeEntries: 0, credentialIds: [1]);
+        Assert.False(run);
+        Assert.Empty(failed); // sin failed ⇒ el scope eol queda completo ⇒ reconcile limpia hallazgos
+    }
+
+    [Fact]
+    public void CatalogoConEntradasConsultaYReconcilia()
+    {
+        var (run, failed) = BoletinSyncPlan.EolCatalogPlan(readOk: true, activeEntries: 5, credentialIds: [1]);
+        Assert.True(run);
+        Assert.Empty(failed);
+    }
+
     // -------------------- HealthReconcileScopes --------------------
 
     [Fact]

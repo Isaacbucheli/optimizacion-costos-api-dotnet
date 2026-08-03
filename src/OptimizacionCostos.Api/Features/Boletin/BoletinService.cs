@@ -71,30 +71,29 @@ public sealed class BoletinService(
 
             // Fin de soporte (Task 4, fuente "eol"): catálogo de lifecycle leído UNA sola vez antes
             // del loop por credencial (best-effort, es global — no cambia por credencial/suscripción).
-            // DESVIACIÓN del brief: eolFailedCredentials se puebla SOLO en el catch (catálogo
-            // ilegible), no cuando eolEnabled queda en false por un catálogo legible pero sin
-            // entradas activas. Un catálogo vacío es un estado CONOCIDO (no hay nada que matchear),
-            // así que el sync igual reconcilia "eol" con normalidad (Full, todas las subs exitosas) y
-            // resuelve las filas vigentes que ya no tienen contra qué reconfirmarse — muy distinto de
-            // "no sabemos si el catálogo sigue vigente" (ilegible), que sí debe abstenerse de tocar
-            // nada (ver self-review en task-4-report.md).
+            // La decisión de qué hacer con readOk/cantidad de entradas es lógica PURA, ver
+            // BoletinSyncPlan.EolCatalogPlan (extraída para poder testearla sin BD/credenciales
+            // reales): catálogo ilegible ⇒ eol se abstiene por completo (todas las credenciales a
+            // failed); legible pero sin entradas activas ⇒ no se consulta pero SÍ se reconcilia
+            // (un catálogo vacío es un estado conocido, no uno desconocido).
             IReadOnlyList<LifecycleEntry> lifecycleEntries = [];
-            var eolEnabled = false;
-            var eolFailedCredentials = new HashSet<int>();
+            var readOk = true;
             try
             {
                 lifecycleEntries = await lifecycle.ListAsync(includeInactive: false, ct);
-                eolEnabled = lifecycleEntries.Count > 0;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "boletin sync {Sync}: catalogo lifecycle ilegible", syncId);
                 errors.Add(new { source = "fin_de_soporte", error = ex.GetType().Name });
-                // Catálogo desconocido ⇒ TODAS las credenciales fuera de "eol" este sync (no
-                // reconciliar eol con catálogo desconocido).
-                eolFailedCredentials = groups.Keys.ToHashSet();
+                readOk = false;
             }
+            var (eolEnabled, eolPlanFailedCredentials) =
+                BoletinSyncPlan.EolCatalogPlan(readOk, lifecycleEntries.Count, groups.Keys.ToList());
+            // Copia mutable: el bloque por-credencial de abajo sigue agregando fallos individuales
+            // (query de inventario eol caída para ESA credencial) sobre este set inicial.
+            var eolFailedCredentials = new HashSet<int>(eolPlanFailedCredentials);
 
             foreach (var (credentialId, subIds) in groups)
             {
@@ -765,6 +764,17 @@ public sealed class BoletinService(
 /// </summary>
 internal static class BoletinSyncPlan
 {
+    /// <summary>Decisión del catálogo eol. Ilegible (readOk=false) ⇒ eol se ABSTIENE por completo
+    /// (todas las credenciales a failed: no reconciliar contra un catálogo desconocido). Legible
+    /// pero sin entradas activas ⇒ no se consulta inventario PERO SÍ se reconcilia (desactivar
+    /// entradas del catálogo RESUELVE sus hallazgos — comportamiento de producto, ver plan E2/T7).</summary>
+    internal static (bool RunQueries, IReadOnlySet<int> EolFailedCredentials) EolCatalogPlan(
+        bool readOk, int activeEntries, IReadOnlyCollection<int> credentialIds)
+    {
+        if (!readOk) return (false, credentialIds.ToHashSet());
+        return (activeEntries > 0, new HashSet<int>());
+    }
+
     /// <summary>
     /// Calcula, por fuente, las subscription_id cuya query corrió sin error en este sync. Reglas:
     /// - Credencial no disponible (no se pudo obtener token): excluye TODAS las fuentes de sus subs.
