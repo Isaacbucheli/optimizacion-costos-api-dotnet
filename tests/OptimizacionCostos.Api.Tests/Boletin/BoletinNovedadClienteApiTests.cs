@@ -213,6 +213,24 @@ public sealed class BoletinNovedadClienteApiTests : IClassFixture<BoletinNovedad
     }
 
     [Fact]
+    public async Task Listar_con_recursos_json_corrupto_devuelve_null_sin_reventar()
+    {
+        // recursos_json legado/corrupto en BD jamás tumba el GET (hueco señalado en el review T2):
+        // ParseRecursos atrapa JsonException y el item sale con recursos = null.
+        _factory.Store.Seed();
+        var idx = _factory.Store.Rows.FindIndex(r => r.Estado.Id == 2);
+        _factory.Store.Rows[idx] = (_factory.Store.Rows[idx].Novedad,
+            _factory.Store.Rows[idx].Estado with { RecursosJson = "{esto no es json" });
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+
+        var res = await client.GetAsync("/boletin/clients/1/novedades");
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("pendientes")[0].GetProperty("recursos").ValueKind);
+    }
+
+    [Fact]
     public async Task Listar_trae_ultima_evaluacion_y_feed_actualizado_del_store()
     {
         _factory.Store.Seed();
