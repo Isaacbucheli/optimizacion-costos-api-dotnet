@@ -60,6 +60,10 @@ public static class BoletinPrompts
         - Básate SOLO en el texto provisto de cada anuncio. Si el anuncio NO dice a qué migrar,
           NO inventes un destino: simplemente omite ese anuncio de tu respuesta (es preferible un
           hueco honesto que una ruta inventada).
+        - Cada anuncio se evalúa AISLADO: PROHIBIDO usar el texto de OTROS anuncios del lote (o tu
+          conocimiento general de Azure) para completar el destino de uno — si su propio texto no
+          contiene el "hacia", ese anuncio se omite. Verifica antes de responder que cada "hacia"
+          aparezca literalmente en el titulo, resumen o accion_recomendada de SU anuncio.
         - "desde" = lo que se retira; "hacia" = el destino que el propio anuncio indica; "notas" =
           2-3 frases en español latinoamericano neutro con los pasos/consideraciones que el anuncio
           mencione. Nombres de servicios, SKUs, versiones y fechas se conservan EXACTOS y sin traducir.
