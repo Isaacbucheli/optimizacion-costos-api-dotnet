@@ -25,10 +25,25 @@ public class BoletinMigracionStoreTests
         Assert.Equal(entries.Count, entries.Select(e => e.Clave).Distinct(StringComparer.Ordinal).Count());
     }
 
-    [Theory]
-    [InlineData(false, false, BoletinMigracionStore.ClaveLookupOutcome.Insert)]
-    [InlineData(true, true, BoletinMigracionStore.ClaveLookupOutcome.Conflict)]
-    [InlineData(true, false, BoletinMigracionStore.ClaveLookupOutcome.Undelete)]
-    public void DecideCreateOutcome_distingue_insert_conflicto_undelete(bool exists, bool active, BoletinMigracionStore.ClaveLookupOutcome expected)
-        => Assert.Equal(expected, BoletinMigracionStore.DecideCreateOutcome(exists, active));
+    // ---- DecideCreateOutcome: mismo patrón de BoletinLifecycleStoreTests (Facts, no Theory —
+    // ClaveLookupOutcome es internal; exponerlo como parámetro de un método público de test
+    // (InlineData) viola CS0051 aunque InternalsVisibleTo cubra el acceso al tipo) ----
+
+    [Fact]
+    public void DecideCreateOutcome_claveNueva_decideInsert()
+        => Assert.Equal(
+            BoletinMigracionStore.ClaveLookupOutcome.Insert,
+            BoletinMigracionStore.DecideCreateOutcome(claveExists: false, existingIsActive: false));
+
+    [Fact]
+    public void DecideCreateOutcome_claveExistenteActiva_decideConflict()
+        => Assert.Equal(
+            BoletinMigracionStore.ClaveLookupOutcome.Conflict,
+            BoletinMigracionStore.DecideCreateOutcome(claveExists: true, existingIsActive: true));
+
+    [Fact]
+    public void DecideCreateOutcome_claveExistenteDesactivada_decideUndelete()
+        => Assert.Equal(
+            BoletinMigracionStore.ClaveLookupOutcome.Undelete,
+            BoletinMigracionStore.DecideCreateOutcome(claveExists: true, existingIsActive: false));
 }

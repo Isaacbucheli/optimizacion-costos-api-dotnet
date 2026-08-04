@@ -15,7 +15,7 @@ namespace OptimizacionCostos.Api.Features.Boletin.Api;
 [RequireModule(Modules.Boletin)]
 public sealed class BoletinController(
     IBoletinService svc, IAnalysisAccess access, ILogger<BoletinController> logger,
-    IBoletinLifecycleStore lifecycle, IBoletinNovedadStore novedades,
+    IBoletinLifecycleStore lifecycle, IBoletinMigracionStore migracion, IBoletinNovedadStore novedades,
     IBoletinNovedadClienteStore novedadesCliente) : ControllerBase
 {
     [HttpGet("clients/{clientId:int}")]
@@ -131,6 +131,89 @@ public sealed class BoletinController(
             return ([], "learn_more_url debe ser una URL http(s) absoluta");
         if (requireCore)
             foreach (var req in new[] { "clave", "producto", "categoria", "match_field", "match_pattern", "end_of_support", "recomendacion" })
+                if (!fields.ContainsKey(req) || fields[req] is null or "")
+                    return ([], $"Falta el campo obligatorio '{req}'");
+        return (fields, null);
+    }
+
+    // ---- Catálogo de rutas de migración — GLOBAL, no por cliente (Fase 2 Entrega 4, Task 3) ----
+
+    [HttpGet("migracion")]
+    public async Task<IActionResult> ListMigracion([FromQuery(Name = "include_inactive")] bool includeInactive, CancellationToken ct)
+        => Ok(await migracion.ListAsync(includeInactive, ct));
+
+    [HttpPost("migracion")]
+    [RequireModule(Modules.Boletin, ModuleAccess.Edit)]
+    public async Task<IActionResult> CreateMigracion([FromBody] JsonElement body, CancellationToken ct)
+    {
+        var (fields, error) = BuildMigracionFields(body, requireCore: true);
+        if (error is not null) return BadRequest(new { detail = error });
+        try
+        {
+            var id = await migracion.CreateAsync(fields, ct);
+            return Ok(new { message = "Ruta creada", id });
+        }
+        catch (MigracionClaveDuplicadaException ex)
+        {
+            return Conflict(new { detail = ex.Message });
+        }
+    }
+
+    [HttpPut("migracion/{id:int}")]
+    [RequireModule(Modules.Boletin, ModuleAccess.Edit)]
+    public async Task<IActionResult> UpdateMigracion(int id, [FromBody] JsonElement body, CancellationToken ct)
+    {
+        var (fields, error) = BuildMigracionFields(body, requireCore: false);
+        if (error is not null) return BadRequest(new { detail = error });
+        if (fields.Count == 0) return BadRequest(new { detail = "Nada que actualizar" });
+        return await migracion.UpdateAsync(id, fields, ct)
+            ? Ok(new { message = "Ruta actualizada", id })
+            : NotFound(new { detail = "Ruta no encontrada" });
+    }
+
+    [HttpDelete("migracion/{id:int}")]
+    [RequireModule(Modules.Boletin, ModuleAccess.Edit)]
+    public async Task<IActionResult> DeleteMigracion(int id, CancellationToken ct)
+        => await migracion.SoftDeleteAsync(id, ct)
+            ? Ok(new { message = "Ruta desactivada", id })
+            : NotFound(new { detail = "Ruta no encontrada" });
+
+    /// <summary>Campos de texto del catálogo de migración: mismo criterio anti-bypass de
+    /// StringColumns/BuildLifecycleFields (un número/bool en un campo de texto se rechaza explícito
+    /// en vez de convertirse en silencio). is_active queda fuera: sigue aceptando bool.</summary>
+    private static readonly string[] MigracionStringColumns =
+        ["clave", "desde", "hacia", "notas", "match_pattern", "learn_more_url"];
+
+    /// <summary>Espejo EXACTO de BuildLifecycleFields con las columnas de migración: misma semántica
+    /// exclude_unset + whitelist, misma normalización de match_pattern (trim + minúsculas, porque
+    /// BoletinMigracion.MatchText compara en minúsculas) y misma validación de learn_more_url
+    /// http(s) absoluta. Sin categoria/match_field/end_of_support (esas son propias de lifecycle).</summary>
+    internal static (Dictionary<string, object?> Fields, string? Error) BuildMigracionFields(JsonElement body, bool requireCore)
+    {
+        if (body.ValueKind != JsonValueKind.Object) return ([], "Cuerpo inválido");
+        var fields = new Dictionary<string, object?>();
+        foreach (var p in body.EnumerateObject())
+        {
+            if (!MigracionColumns.Editable.Contains(p.Name)) continue;
+            if (MigracionStringColumns.Contains(p.Name) && p.Value.ValueKind is not (JsonValueKind.String or JsonValueKind.Null))
+                return ([], $"El campo '{p.Name}' debe ser texto");
+            fields[p.Name] = p.Value.ValueKind switch
+            {
+                JsonValueKind.Null => null,
+                JsonValueKind.True => true,
+                JsonValueKind.False => false,
+                JsonValueKind.Number => p.Value.GetDouble(),
+                _ => p.Value.GetString(),
+            };
+        }
+        if (fields.TryGetValue("match_pattern", out var mp) && mp is string pat)
+            fields["match_pattern"] = pat.Trim().ToLowerInvariant(); // los patrones se comparan en minúsculas
+        if (fields.TryGetValue("learn_more_url", out var lmu) && lmu is string urlStr && !string.IsNullOrEmpty(urlStr) &&
+            !(Uri.TryCreate(urlStr, UriKind.Absolute, out var parsedUrl) &&
+              (parsedUrl.Scheme == Uri.UriSchemeHttp || parsedUrl.Scheme == Uri.UriSchemeHttps)))
+            return ([], "learn_more_url debe ser una URL http(s) absoluta");
+        if (requireCore)
+            foreach (var req in new[] { "clave", "desde", "hacia", "notas", "match_pattern" })
                 if (!fields.ContainsKey(req) || fields[req] is null or "")
                     return ([], $"Falta el campo obligatorio '{req}'");
         return (fields, null);

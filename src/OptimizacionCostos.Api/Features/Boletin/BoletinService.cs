@@ -30,7 +30,8 @@ internal enum BoletinReconcileMode { Full, ExcludeDerived, SubLevelOnly }
 public sealed class BoletinService(
     ISqlConnectionFactory factory, IResourceGraphRunner rg, IAzureCredentialFactory credentials,
     IBoletinTranslationService translation, ISiteRuntimeArmClient siteRuntimes,
-    IBoletinLifecycleStore lifecycle, ILogger<BoletinService> logger) : IBoletinService
+    IBoletinLifecycleStore lifecycle, IBoletinMigracionStore migracionStore,
+    ILogger<BoletinService> logger) : IBoletinService
 {
     private static object Db(object? v) => v ?? DBNull.Value; // SqlParameter null → 8178
 
@@ -391,6 +392,8 @@ public sealed class BoletinService(
         {
             ["last_sync"] = await LoadLastSyncAsync(conn, clientId, ct),
             ["subscriptions"] = BoletinAggregator.BuildSubscriptionsView(subscriptionNames),
+            ["migracion"] = BoletinMigracion.BuildSection(
+                stored, await migracionStore.ListAsync(includeInactive: false, ct), DateOnly.FromDateTime(DateTime.UtcNow)),
         };
         return view;
     }
