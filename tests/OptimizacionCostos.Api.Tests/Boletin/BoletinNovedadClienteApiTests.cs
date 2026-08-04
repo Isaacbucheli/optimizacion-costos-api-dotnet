@@ -164,6 +164,85 @@ public sealed class BoletinNovedadClienteApiTests : IClassFixture<BoletinNovedad
     }
 
     [Fact]
+    public async Task Listar_sin_param_no_incluye_la_clave_rechazadas()
+    {
+        _factory.Store.Seed();
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        var res = await client.GetAsync("/boletin/clients/1/novedades");
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(body.TryGetProperty("rechazadas", out _));
+    }
+
+    [Fact]
+    public async Task Listar_con_include_rechazadas_trae_la_fila_rechazada_con_decidido_por()
+    {
+        _factory.Store.Seed();
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        var res = await client.GetAsync("/boletin/clients/1/novedades?include_rechazadas=true");
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.True(body.TryGetProperty("rechazadas", out var rechazadas));
+        var rechazada = Assert.Single(rechazadas.EnumerateArray());
+        Assert.Equal("rechazada", rechazada.GetProperty("estado").GetString());
+        Assert.Equal("consultor@bit.ec", rechazada.GetProperty("decidido_por").GetString());
+        Assert.False(string.IsNullOrEmpty(rechazada.GetProperty("decidido_at").GetString()));
+
+        // El shape de item es uno solo: aprobadas/pendientes siguen presentes igual que sin el param.
+        Assert.Equal(1, body.GetProperty("aprobadas").GetArrayLength());
+        Assert.Equal(1, body.GetProperty("pendientes").GetArrayLength());
+    }
+
+    [Fact]
+    public async Task Listar_expone_recursos_parseado_y_null_cuando_no_hay()
+    {
+        _factory.Store.Seed();
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        var res = await client.GetAsync("/boletin/clients/1/novedades");
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        // La pendiente (id 2) trae recursos sembrados; la aprobada (id 3) no trae.
+        var pendiente = body.GetProperty("pendientes")[0];
+        var recursos = pendiente.GetProperty("recursos");
+        Assert.Equal(JsonValueKind.Array, recursos.ValueKind);
+        Assert.Equal("Microsoft.Compute/virtualMachines", recursos[0].GetProperty("type").GetString());
+        Assert.Equal(3, recursos[0].GetProperty("cantidad").GetInt32());
+
+        var aprobada = body.GetProperty("aprobadas")[0];
+        Assert.Equal(JsonValueKind.Null, aprobada.GetProperty("recursos").ValueKind);
+    }
+
+    [Fact]
+    public async Task Listar_trae_ultima_evaluacion_y_feed_actualizado_del_store()
+    {
+        _factory.Store.Seed();
+        _factory.Store.UltimaEvaluacion = new DateTime(2026, 8, 2, 15, 4, 5, DateTimeKind.Utc);
+        _factory.Store.FeedActualizado = new DateTime(2026, 8, 4, 8, 0, 11, DateTimeKind.Utc);
+        try
+        {
+            var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+            var res = await client.GetAsync("/boletin/clients/1/novedades");
+            var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+            Assert.Equal("2026-08-02T15:04:05Z", body.GetProperty("ultima_evaluacion").GetString());
+            Assert.Equal("2026-08-04T08:00:11Z", body.GetProperty("feed_actualizado").GetString());
+        }
+        finally { _factory.Store.UltimaEvaluacion = null; _factory.Store.FeedActualizado = null; }
+    }
+
+    [Fact]
+    public async Task Listar_sin_metadatos_devuelve_null_en_ambos_campos()
+    {
+        _factory.Store.Seed();
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        var res = await client.GetAsync("/boletin/clients/1/novedades");
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("ultima_evaluacion").ValueKind);
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("feed_actualizado").ValueKind);
+    }
+
+    [Fact]
     public async Task Listar_como_lector_devuelve_200()
     {
         _factory.Store.Seed();
@@ -375,20 +454,25 @@ public sealed class BoletinNovedadClienteApiTests : IClassFixture<BoletinNovedad
         public Exception? ThrowOnEvaluar { get; set; }
         public int Evaluadas { get; set; }
         public int Candidatas { get; set; }
+        public DateTime? UltimaEvaluacion { get; set; }
+        public DateTime? FeedActualizado { get; set; }
         public List<(NovedadRow Novedad, NovedadClienteRow Estado)> Rows { get; } = [];
         public Dictionary<int, int> OwnerByRowId { get; } = new();
         public List<(int Id, int ClientId, string Estado, string? PorQue, string Actor)> Decisiones { get; } = [];
 
-        /// <summary>Semilla: 4 estados posibles para el client_id 1 (id 1 rechazada, id 2 pendiente,
-        /// id 3 aprobada, id 4 no_aplica) — el GET real solo debe devolver la pendiente y la
-        /// aprobada; la rechazada y la no_aplica jamás deben aparecer en la respuesta.</summary>
+        /// <summary>Semilla: 4 estados posibles para el client_id 1 (id 1 rechazada, id 2 pendiente
+        /// con recursos citados, id 3 aprobada, id 4 no_aplica) — el GET real solo devuelve la
+        /// pendiente y la aprobada por defecto; la rechazada solo sale con include_rechazadas=true y
+        /// la no_aplica jamás sale de acá (terminal, invisible siempre).</summary>
         public void Seed()
         {
             Rows.Clear();
             OwnerByRowId.Clear();
             Decisiones.Clear(); // aislamiento entre tests: el Factory/Store es compartido (IClassFixture)
             Rows.Add((Novedad(101, "guid-rechazada", "Novedad rechazada"), new NovedadClienteRow(1, 101, 1, "rechazada", null, "consultor@bit.ec", DateTime.UtcNow)));
-            Rows.Add((Novedad(102, "guid-pendiente", "Novedad pendiente"), new NovedadClienteRow(2, 102, 1, "pendiente", "usas 3 Azure SQL Database", null, null)));
+            Rows.Add((Novedad(102, "guid-pendiente", "Novedad pendiente"), new NovedadClienteRow(
+                2, 102, 1, "pendiente", "usas 3 Azure SQL Database", null, null,
+                "[{\"type\":\"Microsoft.Compute/virtualMachines\",\"cantidad\":3}]")));
             Rows.Add((Novedad(103, "guid-aprobada", "Novedad aprobada"), new NovedadClienteRow(3, 103, 1, "aprobada", "usas 2 App Service", "consultor@bit.ec", DateTime.UtcNow)));
             Rows.Add((Novedad(104, "guid-no-aplica", "Novedad no aplica"), new NovedadClienteRow(4, 104, 1, "no_aplica", null, null, null)));
             foreach (var (_, estado) in Rows) OwnerByRowId[estado.Id] = estado.ClientId;
@@ -405,11 +489,17 @@ public sealed class BoletinNovedadClienteApiTests : IClassFixture<BoletinNovedad
             return Task.FromResult((Evaluadas, Candidatas));
         }
 
-        public Task<IReadOnlyList<(NovedadRow Novedad, NovedadClienteRow Estado)>> ListAsync(int clientId, CancellationToken ct = default)
-            // Espejo del filtro SQL real: solo aprobada/pendiente salen de acá (no_aplica y
-            // rechazada nunca cruzan esta frontera, ni siquiera hacia el controller).
+        public Task<IReadOnlyList<(NovedadRow Novedad, NovedadClienteRow Estado)>> ListAsync(
+            int clientId, bool includeRechazadas = false, CancellationToken ct = default)
+            // Espejo del filtro SQL real: aprobada/pendiente siempre salen de acá, no_aplica nunca
+            // (terminal, invisible siempre) y rechazada solo cuando includeRechazadas=true.
             => Task.FromResult<IReadOnlyList<(NovedadRow, NovedadClienteRow)>>(
-                Rows.Where(r => r.Estado.ClientId == clientId && r.Estado.Estado is "aprobada" or "pendiente").ToList());
+                Rows.Where(r => r.Estado.ClientId == clientId &&
+                    (r.Estado.Estado is "aprobada" or "pendiente" || (includeRechazadas && r.Estado.Estado == "rechazada")))
+                    .ToList());
+
+        public Task<(DateTime? UltimaEvaluacion, DateTime? FeedActualizado)> MetadatosAsync(int clientId, CancellationToken ct = default)
+            => Task.FromResult((UltimaEvaluacion, FeedActualizado));
 
         public Task<int?> OwnerClientIdAsync(int id, CancellationToken ct = default)
             => Task.FromResult(OwnerByRowId.TryGetValue(id, out var cid) ? (int?)cid : null);

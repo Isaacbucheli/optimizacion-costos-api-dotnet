@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.AzureIntegration;
@@ -7,7 +8,7 @@ namespace OptimizacionCostos.Api.Features.Boletin;
 
 public sealed record NovedadClienteRow(
     int Id, int NovedadId, int ClientId, string Estado,
-    string? PorQue, string? DecididoPor, DateTime? DecididoAt);
+    string? PorQue, string? DecididoPor, DateTime? DecididoAt, string? RecursosJson = null);
 
 public interface IBoletinNovedadClienteStore
 {
@@ -19,11 +20,21 @@ public interface IBoletinNovedadClienteStore
     /// queda insertado y el reintento retoma donde quedó.</summary>
     Task<(int Evaluadas, int Candidatas)> EvaluarPendientesAsync(int clientId, CancellationToken ct = default);
 
-    /// <summary>Novedades ya evaluadas y visibles para el cliente: SOLO estado aprobada/pendiente
-    /// (rechazada y no_aplica nunca salen de acá — ver <see cref="NovedadClienteEstados"/>) y SOLO
-    /// de novedades globales activas: desactivar una novedad vía PUT es el kill switch y debe
-    /// ocultarla también para clientes ya evaluados, no solo frenar evaluaciones futuras.</summary>
-    Task<IReadOnlyList<(NovedadRow Novedad, NovedadClienteRow Estado)>> ListAsync(int clientId, CancellationToken ct = default);
+    /// <summary>Novedades ya evaluadas y visibles para el cliente: aprobada/pendiente SIEMPRE
+    /// salen; no_aplica NUNCA sale de acá (terminal, invisible siempre — ver
+    /// <see cref="NovedadClienteEstados"/>); rechazada sale solo con <paramref name="includeRechazadas"/>
+    /// (riesgo aceptado y documentado en el spec de Entrega 5 §7: el param se honra para cualquier
+    /// caller con acceso View al cliente, no solo el que decidió rechazar). SOLO de novedades
+    /// globales activas: desactivar una novedad vía PUT es el kill switch y debe ocultarla también
+    /// para clientes ya evaluados, no solo frenar evaluaciones futuras.</summary>
+    Task<IReadOnlyList<(NovedadRow Novedad, NovedadClienteRow Estado)>> ListAsync(
+        int clientId, bool includeRechazadas = false, CancellationToken ct = default);
+
+    /// <summary>Metadatos de frescura para el GET por cliente: última vez que se evaluó ESTE cliente
+    /// (MAX(created_at) de sus filas) y última vez que el catálogo global de novedades se actualizó
+    /// (MAX(created_at) de <c>dbo.boletin_novedad</c>, cualquier cliente). Ambos null cuando la tabla
+    /// respectiva está vacía para ese alcance.</summary>
+    Task<(DateTime? UltimaEvaluacion, DateTime? FeedActualizado)> MetadatosAsync(int clientId, CancellationToken ct = default);
 
     /// <summary>client_id dueño de la fila (o null si no existe). Patrón FindingStateOwner de
     /// OptimizationController: el controller lo usa para verificar acceso ANTES de llamar a
@@ -66,20 +77,26 @@ internal static class BoletinNovedadClientePlan
     /// NovedadId equivocado (nit duro documentado en el review de T3). Evaluaciones con un guid que no
     /// pertenece a <paramref name="candidatas"/> se descartan defensivamente (no debería ocurrir, el
     /// evaluador ya valida esto contra el lote que él mismo recibió). <c>aplica=false</c> siempre
-    /// resulta en <see cref="NovedadClienteEstados.NoAplica"/> con <c>PorQue=null</c>, sin importar lo
-    /// que haya llegado en <see cref="EvaluacionNovedad.PorQue"/> (defensa en profundidad, mismo
-    /// principio que BoletinEvaluatorParsers.ParseRespuesta).</summary>
-    internal static IReadOnlyList<(int NovedadId, string Estado, string? PorQue)> MapEvaluaciones(
+    /// resulta en <see cref="NovedadClienteEstados.NoAplica"/> con <c>PorQue=null</c> Y
+    /// <c>RecursosJson=null</c>, sin importar lo que haya llegado en
+    /// <see cref="EvaluacionNovedad.PorQue"/>/<see cref="EvaluacionNovedad.Recursos"/> (defensa en
+    /// profundidad, mismo principio que BoletinEvaluatorParsers.ParseRespuesta). RecursosJson se
+    /// serializa con <see cref="JsonSerializer"/> y opciones por defecto (mismo patrón que el resto
+    /// del módulo Boletin) SOLO cuando aplica=true y Recursos trae al menos un elemento.</summary>
+    internal static IReadOnlyList<(int NovedadId, string Estado, string? PorQue, string? RecursosJson)> MapEvaluaciones(
         IReadOnlyList<NovedadRow> candidatas, IReadOnlyList<EvaluacionNovedad> evaluaciones)
     {
         var porGuid = candidatas.ToDictionary(n => n.FeedGuid, n => n, StringComparer.Ordinal);
-        var result = new List<(int, string, string?)>(evaluaciones.Count);
+        var result = new List<(int, string, string?, string?)>(evaluaciones.Count);
         foreach (var e in evaluaciones)
         {
             if (!porGuid.TryGetValue(e.FeedGuid, out var novedad)) continue;
+            var recursosJson = e.Aplica && e.Recursos is { Count: > 0 }
+                ? JsonSerializer.Serialize(e.Recursos.Select(r => new { type = r.Type, cantidad = r.Cantidad }))
+                : null;
             result.Add(e.Aplica
-                ? (novedad.Id, NovedadClienteEstados.Pendiente, e.PorQue)
-                : (novedad.Id, NovedadClienteEstados.NoAplica, null));
+                ? (novedad.Id, NovedadClienteEstados.Pendiente, e.PorQue, recursosJson)
+                : (novedad.Id, NovedadClienteEstados.NoAplica, null, recursosJson));
         }
         return result;
     }
@@ -124,12 +141,12 @@ public sealed class BoletinNovedadClienteStore(
             var evaluaciones = await evaluator.EvaluarAsync(inventario, lote, ct);
             var mapeadas = BoletinNovedadClientePlan.MapEvaluaciones(lote, evaluaciones);
 
-            foreach (var (novedadId, estado, porQue) in mapeadas)
+            foreach (var (novedadId, estado, porQue, recursosJson) in mapeadas)
             {
                 // InsertResultadoAsync devuelve false cuando pierde la carrera de doble evaluación
                 // simultánea (2627 del UNIQUE): esa fila la insertó la otra evaluación, así que NO cuenta
                 // acá como evaluada por esta llamada (evitaba sobreconteo del retorno al caller).
-                if (await InsertResultadoAsync(conn, clientId, novedadId, estado, porQue, ct))
+                if (await InsertResultadoAsync(conn, clientId, novedadId, estado, porQue, recursosJson, ct))
                 {
                     evaluadas++;
                     if (estado == NovedadClienteEstados.Pendiente) candidatasNuevas++;
@@ -144,18 +161,23 @@ public sealed class BoletinNovedadClienteStore(
     /// granularidad. Si divergen solo cambia la granularidad del avance, no la corrección.</summary>
     private const int EvalBatchSize = 10;
 
-    public async Task<IReadOnlyList<(NovedadRow Novedad, NovedadClienteRow Estado)>> ListAsync(int clientId, CancellationToken ct = default)
+    public async Task<IReadOnlyList<(NovedadRow Novedad, NovedadClienteRow Estado)>> ListAsync(
+        int clientId, bool includeRechazadas = false, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
         await EnsureSchemaAsync(conn, ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        // Literal fijo, no interpolación de input externo: includeRechazadas es un bool del query
+        // string ya parseado por el model binder, no texto de usuario.
+        var extraEstados = includeRechazadas ? ", 'rechazada'" : "";
+        cmd.CommandText = $"""
             SELECT n.id, n.feed_guid, n.titulo, n.titulo_es, n.descripcion, n.descripcion_es, n.link,
                    n.estado_feed, n.categoria_bit, n.categorias_feed, n.published_at, n.is_active,
-                   c.id, c.novedad_id, c.client_id, c.estado, c.por_que, c.decidido_por, c.decidido_at
+                   c.id, c.novedad_id, c.client_id, c.estado, c.por_que, c.decidido_por, c.decidido_at,
+                   c.recursos_json
             FROM dbo.boletin_novedad_cliente c
             INNER JOIN dbo.boletin_novedad n ON n.id = c.novedad_id
-            WHERE c.client_id = @cid AND c.estado IN ('aprobada', 'pendiente')
+            WHERE c.client_id = @cid AND c.estado IN ('aprobada', 'pendiente'{extraEstados})
               AND n.is_active = 1
             ORDER BY n.published_at DESC
             """;
@@ -168,10 +190,33 @@ public sealed class BoletinNovedadClienteStore(
             var estado = new NovedadClienteRow(
                 r.GetInt32(12), r.GetInt32(13), r.GetInt32(14), r.GetString(15),
                 r.IsDBNull(16) ? null : r.GetString(16), r.IsDBNull(17) ? null : r.GetString(17),
-                r.IsDBNull(18) ? null : DateTime.SpecifyKind(r.GetDateTime(18), DateTimeKind.Utc));
+                r.IsDBNull(18) ? null : DateTime.SpecifyKind(r.GetDateTime(18), DateTimeKind.Utc),
+                r.IsDBNull(19) ? null : r.GetString(19));
             list.Add((novedad, estado));
         }
         return list;
+    }
+
+    /// <summary>Una conexión, dos escalares independientes (patrón simple, sin JOIN): la frescura del
+    /// catálogo global (feed_actualizado) es la misma para todos los clientes, así que no depende de
+    /// <paramref name="clientId"/> — solo la de sus propias evaluaciones sí.</summary>
+    public async Task<(DateTime? UltimaEvaluacion, DateTime? FeedActualizado)> MetadatosAsync(int clientId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+
+        await using var cmdCliente = conn.CreateCommand();
+        cmdCliente.CommandText = "SELECT MAX(created_at) FROM dbo.boletin_novedad_cliente WHERE client_id = @cid";
+        cmdCliente.Parameters.Add(new SqlParameter("@cid", clientId));
+        var ultimaEval = await cmdCliente.ExecuteScalarAsync(ct);
+
+        await using var cmdFeed = conn.CreateCommand();
+        cmdFeed.CommandText = "SELECT MAX(created_at) FROM dbo.boletin_novedad";
+        var feedAct = await cmdFeed.ExecuteScalarAsync(ct);
+
+        return (
+            ultimaEval is null or DBNull ? null : DateTime.SpecifyKind(Convert.ToDateTime(ultimaEval), DateTimeKind.Utc),
+            feedAct is null or DBNull ? null : DateTime.SpecifyKind(Convert.ToDateTime(feedAct), DateTimeKind.Utc));
     }
 
     public async Task<int?> OwnerClientIdAsync(int id, CancellationToken ct = default)
@@ -303,17 +348,18 @@ public sealed class BoletinNovedadClienteStore(
     /// <summary>Devuelve false cuando el INSERT pierde la carrera de doble evaluación simultánea (ver
     /// catch de abajo) — el caller usa el resultado para no sobrecontar `evaluadas`.</summary>
     private static async Task<bool> InsertResultadoAsync(
-        SqlConnection conn, int clientId, int novedadId, string estado, string? porQue, CancellationToken ct)
+        SqlConnection conn, int clientId, int novedadId, string estado, string? porQue, string? recursosJson, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO dbo.boletin_novedad_cliente (novedad_id, client_id, estado, por_que)
-            VALUES (@novedadId, @cid, @estado, @porQue)
+            INSERT INTO dbo.boletin_novedad_cliente (novedad_id, client_id, estado, por_que, recursos_json)
+            VALUES (@novedadId, @cid, @estado, @porQue, @recursosJson)
             """;
         cmd.Parameters.Add(new SqlParameter("@novedadId", novedadId));
         cmd.Parameters.Add(new SqlParameter("@cid", clientId));
         cmd.Parameters.Add(new SqlParameter("@estado", estado));
         cmd.Parameters.Add(new SqlParameter("@porQue", Db(porQue)));
+        cmd.Parameters.Add(new SqlParameter("@recursosJson", Db(recursosJson)));
         try
         {
             await cmd.ExecuteNonQueryAsync(ct);
@@ -350,5 +396,15 @@ public sealed class BoletinNovedadClienteStore(
               CONSTRAINT UX_boletin_novedad_cliente UNIQUE (novedad_id, client_id))
             """;
         await cmd.ExecuteNonQueryAsync(ct);
+
+        // Migración idempotente para la tabla ya desplegada (Task 2, Entrega 5): recursos_json
+        // persiste los TipoRecurso que citó la IA al evaluar (Task 1), NULL cuando no aplica o el
+        // evaluador no citó ninguno.
+        await using var cmdAlter = conn.CreateCommand();
+        cmdAlter.CommandText = """
+            IF COL_LENGTH('dbo.boletin_novedad_cliente','recursos_json') IS NULL
+            ALTER TABLE dbo.boletin_novedad_cliente ADD recursos_json NVARCHAR(MAX) NULL;
+            """;
+        await cmdAlter.ExecuteNonQueryAsync(ct);
     }
 }
