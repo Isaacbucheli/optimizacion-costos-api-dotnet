@@ -57,6 +57,13 @@ public sealed class BoletinMigracionSugeridor(
             ct.ThrowIfCancellationRequested();
             var chunk = anuncios.Skip(i).Take(ChunkSize).ToList();
             var (chunkSugerencias, chunkSinSugerencia) = await SugerirChunkAsync(chunk, ct);
+            // Omitir anuncios sin destino es comportamiento LEGÍTIMO del prompt, pero un chunk
+            // entero en cero también es la firma de un modelo perezoso devolviendo "[]": queda
+            // la señal en el log para poder distinguirlos al diagnosticar (hallazgo del review T4).
+            if (chunkSugerencias.Count == 0)
+                logger.LogWarning(
+                    "sugeridor migracion boletin: chunk de {Count} anuncio(s) sin ninguna sugerencia del modelo",
+                    chunk.Count);
             sugerencias.AddRange(chunkSugerencias);
             sinSugerencia.AddRange(chunkSinSugerencia);
         }
