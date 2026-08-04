@@ -178,6 +178,24 @@ public sealed class BoletinController(
             ? Ok(new { message = "Ruta desactivada", id })
             : NotFound(new { detail = "Ruta no encontrada" });
 
+    /// <summary>Sugerencias IA EFÍMERAS de rutas de migración para los anuncios sin ruta del cliente
+    /// (Fase 2 Entrega 4, Task 4): nada se persiste, son borradores para que el consultor los revise
+    /// y guarde a mano vía el CRUD de arriba si le parecen buenos. IA apagada o reintentos agotados
+    /// (InvalidOperationException) → 503 con detail, nunca un 500 crudo — mismo mapeo que
+    /// EvaluarNovedadesCliente.</summary>
+    [HttpPost("clients/{clientId:int}/migracion/sugerir")]
+    [RequireModule(Modules.Boletin, ModuleAccess.Edit)]
+    public async Task<IActionResult> SugerirMigracion(int clientId, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+        try { return Ok(await svc.SugerirMigracionAsync(clientId, ct)); }
+        catch (InvalidOperationException ex)
+        {
+            return Problem(statusCode: StatusCodes.Status503ServiceUnavailable, detail: ex.Message);
+        }
+    }
+
     /// <summary>Campos de texto del catálogo de migración: mismo criterio anti-bypass de
     /// StringColumns/BuildLifecycleFields (un número/bool en un campo de texto se rechaza explícito
     /// en vez de convertirse en silencio). is_active queda fuera: sigue aceptando bool.</summary>

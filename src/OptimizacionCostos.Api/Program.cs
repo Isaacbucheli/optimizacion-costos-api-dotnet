@@ -124,6 +124,11 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinNoved
     OptimizacionCostos.Api.Features.Boletin.BoletinNovedadEvaluator>();
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinNovedadClienteStore,
     OptimizacionCostos.Api.Features.Boletin.BoletinNovedadClienteStore>();
+// Sugeridor IA de rutas de migración (Fase 2 Entrega 4, Task 4): reusa IChatCompletionClient para
+// redactar BORRADORES desde/hacia de los anuncios sin ruta de un cliente. Efímero: nada se persiste
+// (BoletinService.SugerirMigracionAsync), el consultor guarda a mano vía el CRUD si le sirve.
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinMigracionSugeridor,
+    OptimizacionCostos.Api.Features.Boletin.BoletinMigracionSugeridor>();
 
 // Módulo WAF (B7). Schema lazy en cada store. Reusa IChatCompletionClient, IAzureCredentialFactory,
 // IAnalysisAccess, ICostResultsQuery, ISqlConnectionFactory ya registrados.

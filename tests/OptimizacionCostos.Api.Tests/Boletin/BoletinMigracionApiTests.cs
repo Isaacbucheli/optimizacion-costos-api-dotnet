@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
@@ -10,6 +11,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.Boletin;
+using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.Identity;
 
 namespace OptimizacionCostos.Api.Tests.Boletin;
@@ -182,6 +184,63 @@ public sealed class BoletinMigracionApiTests : IClassFixture<BoletinMigracionApi
         Assert.Equal(HttpStatusCode.NotFound, res.StatusCode);
     }
 
+    // ---- POST /boletin/clients/{clientId}/migracion/sugerir (Fase 2 Entrega 4, Task 4) ----
+
+    [Fact]
+    public async Task Sugerir_con_ia_apagada_devuelve_503_con_detail_exacto()
+    {
+        _factory.Service.ThrowOnSugerir = new InvalidOperationException("La IA no está configurada; no es posible sugerir rutas.");
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        try
+        {
+            var res = await client.PostAsync("/boletin/clients/1/migracion/sugerir", null);
+            Assert.Equal(HttpStatusCode.ServiceUnavailable, res.StatusCode);
+            var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+            Assert.Equal("La IA no está configurada; no es posible sugerir rutas.", body.GetProperty("detail").GetString());
+        }
+        finally { _factory.Service.ThrowOnSugerir = null; }
+    }
+
+    [Fact]
+    public async Task Sugerir_como_lector_devuelve_403()
+    {
+        var client = ClientFor("lector@bit.ec", Roles.Lector);
+        var res = await client.PostAsync("/boletin/clients/1/migracion/sugerir", null);
+        Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task Sugerir_devuelve_el_dict_del_service_sin_transformar()
+    {
+        _factory.Service.SugerirResult = new Dictionary<string, object?>
+        {
+            ["sugerencias"] = new[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["clave"] = "servicio-x", ["desde"] = "D", ["hacia"] = "H", ["notas"] = "N",
+                    ["match_pattern"] = "p", ["learn_more_url"] = null, ["announcement_title"] = "Retiro A",
+                },
+            },
+            ["sin_sugerencia"] = new[] { "Retiro B" },
+        };
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        try
+        {
+            var res = await client.PostAsync("/boletin/clients/1/migracion/sugerir", null);
+            Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+            var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+            var sugerencias = body.GetProperty("sugerencias");
+            Assert.Equal(1, sugerencias.GetArrayLength());
+            Assert.Equal("servicio-x", sugerencias[0].GetProperty("clave").GetString());
+            Assert.Equal("Retiro A", sugerencias[0].GetProperty("announcement_title").GetString());
+            var sinSugerencia = body.GetProperty("sin_sugerencia");
+            Assert.Equal(1, sinSugerencia.GetArrayLength());
+            Assert.Equal("Retiro B", sinSugerencia[0].GetString());
+        }
+        finally { _factory.Service.SugerirResult = null; }
+    }
+
     // ---- Fixture: API real en memoria, solo se fake-an auth y el store de migración ----
 
     public sealed class Factory : WebApplicationFactory<Program>
@@ -189,6 +248,8 @@ public sealed class BoletinMigracionApiTests : IClassFixture<BoletinMigracionApi
         public const string Secret = TestAppFactory.Secret;
         public FakeUserDirectory Directory { get; } = new();
         public FakeBoletinMigracionStore Store { get; } = new FakeBoletinMigracionStore().Seed();
+        public FakeAnalysisAccessAllowClient1 Access { get; } = new();
+        public FakeBoletinService Service { get; } = new();
 
         public Factory() => Environment.SetEnvironmentVariable("JWT_SECRET", Secret);
 
@@ -202,6 +263,58 @@ public sealed class BoletinMigracionApiTests : IClassFixture<BoletinMigracionApi
                 services.AddSingleton<IBoletinMigracionStore>(Store);
                 services.RemoveAll<IModulePermissionStore>();
                 services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
+                // El endpoint de sugerir rutas (Task 4) llama a IAnalysisAccess/IBoletinService: sin
+                // fake acá irían contra SQL real (no hay BD en estas pruebas de pipeline HTTP).
+                services.RemoveAll<IAnalysisAccess>();
+                services.AddSingleton<IAnalysisAccess>(Access);
+                services.RemoveAll<IBoletinService>();
+                services.AddSingleton<IBoletinService>(Service);
+            });
+        }
+    }
+
+    /// <summary>Acceso en memoria: el cliente 1 siempre es accesible (estas pruebas no ejercitan el
+    /// caso "sin acceso al cliente", ya cubierto en BoletinNovedadClienteApiTests para el mismo
+    /// patrón de RequireModule + IAnalysisAccess).</summary>
+    public sealed class FakeAnalysisAccessAllowClient1 : IAnalysisAccess
+    {
+        public Task<IReadOnlySet<int>?> AccessibleClientIdsAsync(ClaimsPrincipal user, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlySet<int>?>(new HashSet<int> { 1 });
+
+        public Task<AccessCheck> AssertAnalysisAccessAsync(ClaimsPrincipal user, int analysisId, CancellationToken ct = default)
+            => Task.FromResult(AccessCheck.NotFound("no aplica"));
+
+        public Task<AccessCheck> AssertCostResultAccessAsync(ClaimsPrincipal user, int costResultId, CancellationToken ct = default)
+            => Task.FromResult(AccessCheck.NotFound("no aplica"));
+
+        public Task<AccessCheck> AssertClientAccessAsync(ClaimsPrincipal user, int clientId, CancellationToken ct = default)
+            => Task.FromResult(clientId == 1 ? AccessCheck.Allow() : AccessCheck.Forbidden());
+
+        public Task<AccessCheck> AssertFileAccessAsync(ClaimsPrincipal user, int fileId, CancellationToken ct = default)
+            => Task.FromResult(AccessCheck.NotFound("no aplica"));
+    }
+
+    /// <summary>IBoletinService en memoria: solo implementa lo que estas pruebas ejercitan
+    /// (SugerirMigracionAsync). RunSyncAsync/GetAsync no los usa ningún test de este archivo (esos
+    /// endpoints los cubre el E2E manual, GetAsync no tiene aún un harness de pipeline HTTP propio).</summary>
+    public sealed class FakeBoletinService : IBoletinService
+    {
+        public Exception? ThrowOnSugerir { get; set; }
+        public IReadOnlyDictionary<string, object?>? SugerirResult { get; set; }
+
+        public Task<IReadOnlyDictionary<string, object?>> RunSyncAsync(int clientId, string? actor, CancellationToken ct = default)
+            => throw new NotImplementedException();
+
+        public Task<IReadOnlyDictionary<string, object?>> GetAsync(int clientId, CancellationToken ct = default)
+            => throw new NotImplementedException();
+
+        public Task<IReadOnlyDictionary<string, object?>> SugerirMigracionAsync(int clientId, CancellationToken ct = default)
+        {
+            if (ThrowOnSugerir is not null) throw ThrowOnSugerir;
+            return Task.FromResult(SugerirResult ?? new Dictionary<string, object?>
+            {
+                ["sugerencias"] = Array.Empty<object>(),
+                ["sin_sugerencia"] = Array.Empty<string>(),
             });
         }
     }
