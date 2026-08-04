@@ -11,6 +11,13 @@ public interface IBoletinService
 {
     Task<IReadOnlyDictionary<string, object?>> RunSyncAsync(int clientId, string? actor, CancellationToken ct = default);
     Task<IReadOnlyDictionary<string, object?>> GetAsync(int clientId, CancellationToken ct = default);
+
+    /// <summary>Sugerencias IA EFÍMERAS de rutas de migración (Fase 2 Entrega 4, Task 4) para los
+    /// anuncios sin ruta del cliente: nada se persiste, son borradores para que el consultor los
+    /// revise y, si le parecen buenos, los guarde a mano vía el CRUD del catálogo. Lanza
+    /// <see cref="InvalidOperationException"/> si la IA no está configurada o si el sugeridor agota
+    /// sus reintentos (el controller mapea ambos casos a 503).</summary>
+    Task<IReadOnlyDictionary<string, object?>> SugerirMigracionAsync(int clientId, CancellationToken ct = default);
 }
 
 public sealed class BoletinNoManagedSubscriptionsException()
@@ -30,7 +37,9 @@ internal enum BoletinReconcileMode { Full, ExcludeDerived, SubLevelOnly }
 public sealed class BoletinService(
     ISqlConnectionFactory factory, IResourceGraphRunner rg, IAzureCredentialFactory credentials,
     IBoletinTranslationService translation, ISiteRuntimeArmClient siteRuntimes,
-    IBoletinLifecycleStore lifecycle, ILogger<BoletinService> logger) : IBoletinService
+    IBoletinLifecycleStore lifecycle, IBoletinMigracionStore migracionStore,
+    IBoletinMigracionSugeridor migracionSugeridor,
+    ILogger<BoletinService> logger) : IBoletinService
 {
     private static object Db(object? v) => v ?? DBNull.Value; // SqlParameter null → 8178
 
@@ -383,17 +392,67 @@ public sealed class BoletinService(
 
         var managed = await ManagedSubscriptionsAsync(conn, clientId, ct);
         var subsTotal = managed.Sum(g => g.Value.Count);
-        var stored = BoletinAggregator.FilterToManaged(
-            await LoadVigentesAsync(conn, clientId, ct), managed.Values.SelectMany(subs => subs));
+        var stored = await LoadManagedStoredAsync(conn, clientId, managed, ct);
         var subscriptionNames = await ManagedSubscriptionNamesAsync(conn, clientId, ct);
         var view = new Dictionary<string, object?>(
             BoletinAggregator.BuildView(stored, subsTotal, DateOnly.FromDateTime(DateTime.UtcNow)))
         {
             ["last_sync"] = await LoadLastSyncAsync(conn, clientId, ct),
             ["subscriptions"] = BoletinAggregator.BuildSubscriptionsView(subscriptionNames),
+            ["migracion"] = BoletinMigracion.BuildSection(
+                stored, await migracionStore.ListAsync(includeInactive: false, ct), DateOnly.FromDateTime(DateTime.UtcNow)),
         };
         return view;
     }
+
+    /// <summary>Sugerencias IA EFÍMERAS de rutas de migración (Task 4): mismo camino de filas
+    /// administradas que <see cref="GetAsync"/> (<see cref="LoadManagedStoredAsync"/>, sin duplicar
+    /// SQL) + catálogo activo → <see cref="BoletinMigracion.SinRuta"/> → si no hay anuncios sin ruta,
+    /// respuesta vacía SIN llamar a la IA (no hay nada que sugerir, ni sentido en gastar tokens).
+    /// IsConfigured se chequea PRIMERO, antes de tocar la BD: falla rápido y barato si la IA está
+    /// apagada. Nada de esto se persiste — el consultor decide qué guardar, a mano, vía el CRUD.</summary>
+    public async Task<IReadOnlyDictionary<string, object?>> SugerirMigracionAsync(int clientId, CancellationToken ct = default)
+    {
+        if (!migracionSugeridor.IsConfigured)
+            throw new InvalidOperationException("La IA no está configurada; no es posible sugerir rutas.");
+
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+
+        var managed = await ManagedSubscriptionsAsync(conn, clientId, ct);
+        var stored = await LoadManagedStoredAsync(conn, clientId, managed, ct);
+        var entries = await migracionStore.ListAsync(includeInactive: false, ct);
+        var sinRuta = BoletinMigracion.SinRuta(stored, entries);
+
+        if (sinRuta.Count == 0)
+            return new Dictionary<string, object?>
+            {
+                ["sugerencias"] = Array.Empty<object>(),
+                ["sin_sugerencia"] = Array.Empty<string>(),
+            };
+
+        var (sugerencias, sinSugerencia) = await migracionSugeridor.SugerirAsync(sinRuta, ct);
+        return new Dictionary<string, object?>
+        {
+            ["sugerencias"] = sugerencias.Select(s => new Dictionary<string, object?>
+            {
+                ["clave"] = s.Clave, ["desde"] = s.Desde, ["hacia"] = s.Hacia, ["notas"] = s.Notas,
+                ["match_pattern"] = s.MatchPattern, ["learn_more_url"] = s.LearnMoreUrl,
+                ["announcement_title"] = s.AnnouncementTitle,
+            }).ToList(),
+            ["sin_sugerencia"] = sinSugerencia,
+        };
+    }
+
+    /// <summary>Filas VIGENTES filtradas a suscripciones administradas: mismo camino que
+    /// <see cref="GetAsync"/> usaba inline, extraído para que <see cref="SugerirMigracionAsync"/> lo
+    /// reuse sin duplicar el SQL de <see cref="LoadVigentesAsync"/>. <paramref name="managed"/> lo
+    /// calcula el caller (ya lo necesita para otra cosa — subsTotal en GetAsync, nada en
+    /// SugerirMigracionAsync — así que no tiene sentido recalcularlo acá adentro).</summary>
+    private static async Task<IReadOnlyList<StoredRetirement>> LoadManagedStoredAsync(
+        SqlConnection conn, int clientId, IReadOnlyDictionary<int, List<string>> managed, CancellationToken ct) =>
+        BoletinAggregator.FilterToManaged(
+            await LoadVigentesAsync(conn, clientId, ct), managed.Values.SelectMany(subs => subs));
 
     // -------------------- SQL --------------------
 

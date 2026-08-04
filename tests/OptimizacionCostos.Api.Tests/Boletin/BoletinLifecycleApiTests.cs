@@ -143,6 +143,29 @@ public sealed class BoletinLifecycleApiTests : IClassFixture<BoletinLifecycleApi
         Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
     }
 
+    [Fact]
+    public async Task Put_con_match_pattern_vacio_devuelve_400()
+    {
+        // Mismo hueco cazado en el catálogo de migración (review final E4): un match_pattern vacío
+        // en PUT se persistía y BoletinEol.MatchResources con Contains("") matchearía TODO recurso
+        // del match_field — y acá el resultado se PERSISTE en el sync (peor que el cruce al leer).
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        var res = await client.PutAsync("/boletin/lifecycle/1", Json("{\"match_pattern\":\"  \"}"));
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("El campo 'match_pattern' no puede quedar vacío", body.GetProperty("detail").GetString());
+    }
+
+    [Fact]
+    public async Task Put_con_campo_core_null_devuelve_400()
+    {
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        var res = await client.PutAsync("/boletin/lifecycle/1", Json("{\"producto\":null}"));
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("El campo 'producto' no puede quedar vacío", body.GetProperty("detail").GetString());
+    }
+
     // ---- Fixture: API real en memoria, solo se fake-an auth y el store de lifecycle ----
 
     public sealed class Factory : WebApplicationFactory<Program>
