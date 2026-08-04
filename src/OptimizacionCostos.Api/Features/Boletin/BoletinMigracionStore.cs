@@ -56,7 +56,7 @@ public sealed class BoletinMigracionStore(ISqlConnectionFactory factory) : IBole
 
     /// <summary>Resultado puro (sin BD, testeable directo) de decidir qué hacer con una clave que
     /// llega en un CreateAsync, en función de si ya existe una fila con esa clave y su estado.</summary>
-    public enum ClaveLookupOutcome { Insert, Undelete, Conflict }
+    internal enum ClaveLookupOutcome { Insert, Undelete, Conflict }
 
     internal static ClaveLookupOutcome DecideCreateOutcome(bool claveExists, bool existingIsActive) =>
         !claveExists ? ClaveLookupOutcome.Insert
