@@ -129,9 +129,16 @@ public sealed class BoletinController(
             !(Uri.TryCreate(urlStr, UriKind.Absolute, out var parsedUrl) &&
               (parsedUrl.Scheme == Uri.UriSchemeHttp || parsedUrl.Scheme == Uri.UriSchemeHttps)))
             return ([], "learn_more_url debe ser una URL http(s) absoluta");
+        // Un campo core presente pero vacío/null también se rechaza en PUT (requireCore solo cubre
+        // el POST): un match_pattern vacío persistido matchearía TODO recurso del match_field en
+        // BoletinEol.MatchResources (Contains("") es true) y el sync PERSISTIRÍA esas filas eol
+        // (hallazgo del review final E4, mismo hueco que el catálogo de migración).
+        foreach (var core in new[] { "clave", "producto", "categoria", "match_field", "match_pattern", "end_of_support", "recomendacion" })
+            if (fields.TryGetValue(core, out var cv) && (cv is null || (cv is string cs && string.IsNullOrWhiteSpace(cs))))
+                return ([], $"El campo '{core}' no puede quedar vacío");
         if (requireCore)
             foreach (var req in new[] { "clave", "producto", "categoria", "match_field", "match_pattern", "end_of_support", "recomendacion" })
-                if (!fields.ContainsKey(req) || fields[req] is null or "")
+                if (!fields.ContainsKey(req))
                     return ([], $"Falta el campo obligatorio '{req}'");
         return (fields, null);
     }
@@ -230,9 +237,16 @@ public sealed class BoletinController(
             !(Uri.TryCreate(urlStr, UriKind.Absolute, out var parsedUrl) &&
               (parsedUrl.Scheme == Uri.UriSchemeHttp || parsedUrl.Scheme == Uri.UriSchemeHttps)))
             return ([], "learn_more_url debe ser una URL http(s) absoluta");
+        // Un campo core presente pero vacío/null también se rechaza en PUT (requireCore solo cubre
+        // el POST): un match_pattern vacío persistido vuelve la ruta catch-all — BestRoute usa
+        // Contains("") que es true para TODO anuncio (hallazgo del review final E4). El chequeo va
+        // DESPUÉS de la normalización para atrapar también los patrones de solo espacios.
+        foreach (var core in new[] { "clave", "desde", "hacia", "notas", "match_pattern" })
+            if (fields.TryGetValue(core, out var cv) && (cv is null || (cv is string cs && string.IsNullOrWhiteSpace(cs))))
+                return ([], $"El campo '{core}' no puede quedar vacío");
         if (requireCore)
             foreach (var req in new[] { "clave", "desde", "hacia", "notas", "match_pattern" })
-                if (!fields.ContainsKey(req) || fields[req] is null or "")
+                if (!fields.ContainsKey(req))
                     return ([], $"Falta el campo obligatorio '{req}'");
         return (fields, null);
     }

@@ -103,11 +103,25 @@ public sealed class BoletinMigracionApiTests : IClassFixture<BoletinMigracionApi
     }
 
     [Fact]
-    public async Task Post_sin_campo_obligatorio_devuelve_400_con_detail_que_nombra_el_campo()
+    public async Task Post_con_campo_obligatorio_vacio_devuelve_400_con_detail_que_nombra_el_campo()
     {
+        // Presente pero vacío: lo caza el chequeo de campos core (mensaje distinto al de ausente).
         var client = ClientFor("consultor@bit.ec", Roles.Consultor);
         var res = await client.PostAsync("/boletin/migracion", Json("""
             {"clave":"otra-ruta","desde":"","hacia":"H","notas":"N","match_pattern":"p"}
+            """));
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("El campo 'desde' no puede quedar vacío", body.GetProperty("detail").GetString());
+    }
+
+    [Fact]
+    public async Task Post_sin_campo_obligatorio_devuelve_400_con_detail_que_nombra_el_campo()
+    {
+        // Ausente del body: lo caza requireCore.
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        var res = await client.PostAsync("/boletin/migracion", Json("""
+            {"clave":"otra-ruta","hacia":"H","notas":"N","match_pattern":"p"}
             """));
         Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
         var body = await res.Content.ReadFromJsonAsync<JsonElement>();
@@ -164,6 +178,29 @@ public sealed class BoletinMigracionApiTests : IClassFixture<BoletinMigracionApi
         var res = await client.PutAsync("/boletin/migracion/1", Json("{\"match_pattern\":\"  OTRO Patron  \"}"));
         Assert.Equal(HttpStatusCode.OK, res.StatusCode);
         Assert.Equal("otro patron", _factory.Store.LastFields!["match_pattern"]);
+    }
+
+    [Fact]
+    public async Task Put_con_match_pattern_vacio_devuelve_400()
+    {
+        // Hallazgo del review final: un match_pattern vacío pasaba el PUT (requireCore solo aplica
+        // en POST) y BestRoute usa Contains("") == true para TODO → la ruta se volvía catch-all.
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        var res = await client.PutAsync("/boletin/migracion/1", Json("{\"match_pattern\":\"   \"}"));
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("El campo 'match_pattern' no puede quedar vacío", body.GetProperty("detail").GetString());
+    }
+
+    [Fact]
+    public async Task Put_con_campo_core_null_devuelve_400()
+    {
+        // desde=null pasaría como DBNull contra una columna NOT NULL → SqlException 515 → 500 crudo.
+        var client = ClientFor("consultor@bit.ec", Roles.Consultor);
+        var res = await client.PutAsync("/boletin/migracion/1", Json("{\"desde\":null}"));
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal("El campo 'desde' no puede quedar vacío", body.GetProperty("detail").GetString());
     }
 
     [Fact]
