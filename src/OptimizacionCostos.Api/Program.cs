@@ -108,6 +108,9 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.ISiteRuntimeA
 // Catálogo de lifecycle (Fase 2 Entrega 2): fin de soporte de SO/BD, global (no por cliente). Schema+seed lazy.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinLifecycleStore,
     OptimizacionCostos.Api.Features.Boletin.BoletinLifecycleStore>();
+// Catálogo de rutas de migración (Fase 2 Entrega 4): rutas de actualización global (no por cliente). Schema+seed lazy.
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinMigracionStore,
+    OptimizacionCostos.Api.Features.Boletin.BoletinMigracionStore>();
 // Ingesta GLOBAL de novedades del feed de Azure Updates (Fase 2 Entrega 3, Task 2): schema lazy, sin
 // seed (nace vacía, la ingesta es la única fuente). El HttpClient del feed es IHttpClientFactory
 // "simple" (sin tipo): ya hay AddHttpClient<T,T2>() registrados más abajo, que dejan IHttpClientFactory

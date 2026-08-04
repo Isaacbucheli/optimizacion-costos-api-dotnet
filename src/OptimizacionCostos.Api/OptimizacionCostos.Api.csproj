@@ -22,6 +22,7 @@
   <ItemGroup>
     <EmbeddedResource Include="Features\AlertCatalog\Seed\alert_seed.json" />
     <EmbeddedResource Include="Features\Boletin\Seed\lifecycle_seed.json" />
+    <EmbeddedResource Include="Features\Boletin\Seed\migracion_seed.json" />
     <EmbeddedResource Include="Features\PolicyCatalog\Seed\policy_seed.json" />
     <!-- Plantilla XLSX del export WAF (B7): se copia al output para que el exporter la encuentre. -->
     <Content Include="Features\Waf\Templates\BIT_Matriz_Template_V1_2.xlsx" CopyToOutputDirectory="PreserveNewest" />
