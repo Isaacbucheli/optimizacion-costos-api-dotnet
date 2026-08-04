@@ -38,6 +38,12 @@ public static class AuthSetup
 
                 options.Events = new JwtBearerEvents
                 {
+                    OnMessageReceived = ctx =>
+                    {
+                        if (string.IsNullOrEmpty(ctx.Token) && ctx.Request.Cookies.TryGetValue(BrowserSession.SessionCookieName, out var token))
+                            ctx.Token = token;
+                        return Task.CompletedTask;
+                    },
                     OnTokenValidated = async ctx =>
                     {
                         var email = ctx.Principal?.FindFirst("sub")?.Value;

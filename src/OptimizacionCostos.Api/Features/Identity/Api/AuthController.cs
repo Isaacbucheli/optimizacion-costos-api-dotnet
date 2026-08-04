@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Auth;
@@ -146,6 +147,7 @@ public sealed class AuthController(
                     ["is_active"] = row.IsActive,
                     ["must_change_password"] = row.MustChangePassword,
                     ["is_super_admin"] = config.IsSuperAdmin(row.Email),
+                    ["csrf_token"] = IssueCsrfToken(),
                     ["modules"] = await BuildModulesAsync(row.Role, ct),
                 });
         }
@@ -159,6 +161,7 @@ public sealed class AuthController(
             ["email"] = email,
             ["role"] = User.FindFirst(ClaimTypes.Role)?.Value,
             ["is_super_admin"] = config.IsSuperAdmin(email),
+            ["csrf_token"] = IssueCsrfToken(),
             ["modules"] = await BuildModulesAsync(User.FindFirst(ClaimTypes.Role)?.Value ?? "", ct),
         });
     }
@@ -349,14 +352,26 @@ public sealed class AuthController(
     }
 
     // -------------------- helpers --------------------
+    [HttpPost("logout")]
+    [Authorize]
+    public IActionResult Logout()
+    {
+        Response.Cookies.Delete(BrowserSession.SessionCookieName, BrowserSession.SessionCookie(TimeSpan.Zero));
+        Response.Cookies.Delete(BrowserSession.CsrfCookieName, BrowserSession.CsrfCookie(TimeSpan.Zero));
+        return NoContent();
+    }
+
     private Dictionary<string, object?> TokenResponse(PublicUser user)
     {
         var issued = tokens.Create(user.Email, user.FullName, user.Role);
+        var lifetime = TimeSpan.FromSeconds(issued.ExpiresInSeconds);
+        var csrf = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        Response.Cookies.Append(BrowserSession.SessionCookieName, issued.AccessToken, BrowserSession.SessionCookie(lifetime));
+        Response.Cookies.Append(BrowserSession.CsrfCookieName, csrf, BrowserSession.CsrfCookie(lifetime));
         return new Dictionary<string, object?>
         {
-            ["access_token"] = issued.AccessToken,
-            ["token_type"] = "bearer",
             ["expires_in"] = issued.ExpiresInSeconds,
+            ["csrf_token"] = csrf,
             ["user_id"] = user.UserId,
             ["email"] = user.Email,
             ["full_name"] = user.FullName,
@@ -365,6 +380,13 @@ public sealed class AuthController(
             ["created_at"] = user.CreatedAt,
             ["must_change_password"] = user.MustChangePassword,
         };
+    }
+
+    private string IssueCsrfToken()
+    {
+        var csrf = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        Response.Cookies.Append(BrowserSession.CsrfCookieName, csrf, BrowserSession.CsrfCookie(TimeSpan.FromMinutes(config.AuthTokenMinutes)));
+        return csrf;
     }
 
     private static bool TryNormalizeRole(string? role, out string normalized)

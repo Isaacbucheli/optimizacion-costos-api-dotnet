@@ -58,6 +58,29 @@ public sealed class TemporaryPasswordApiTests : IClassFixture<TemporaryPasswordA
         Assert.False(body.GetProperty("must_change_password").GetBoolean());
     }
 
+    [Fact]
+    public async Task Login_entrega_sesion_en_cookie_HttpOnly_y_no_expone_el_JWT_en_JSON()
+    {
+        _factory.Users.AddUser("cookie1@bit.ec", "Definitiva123", "lector", mustChange: false);
+        var res = await _factory.CreateClient().PostAsJsonAsync("/auth/login", new { username = "cookie1@bit.ec", password = "Definitiva123" });
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.False(body.TryGetProperty("access_token", out _));
+        Assert.True(body.TryGetProperty("csrf_token", out var csrf) && csrf.GetString()?.Length > 20);
+        var cookies = res.Headers.GetValues("Set-Cookie").ToArray();
+        Assert.Contains(cookies, x => x.Contains(BrowserSession.SessionCookieName) && x.Contains("httponly", StringComparison.OrdinalIgnoreCase) && x.Contains("secure", StringComparison.OrdinalIgnoreCase) && x.Contains("samesite=none", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(cookies, x => x.Contains(BrowserSession.CsrfCookieName) && !x.Contains("httponly", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Mutacion_con_cookie_de_sesion_sin_CSRF_es_rechazada_antes_del_controller()
+    {
+        var client = ClientFor("csrf1@bit.ec", Roles.Lector);
+        client.DefaultRequestHeaders.Add("Cookie", $"{BrowserSession.SessionCookieName}=fake; {BrowserSession.CsrfCookieName}=fake");
+        var res = await client.PostAsJsonAsync("/auth/change-password", new { current_password = "x", new_password = "y" });
+        Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+    }
+
     // ---- Re-hash transparente en el login (endurecimiento a 600k iteraciones) ----
 
     [Fact]
