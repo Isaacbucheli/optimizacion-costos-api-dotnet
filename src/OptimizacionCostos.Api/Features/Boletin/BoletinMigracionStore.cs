@@ -22,6 +22,19 @@ public static class MigracionColumns
 {
     public static readonly string[] Editable =
         ["clave", "desde", "hacia", "notas", "match_pattern", "learn_more_url", "is_active"];
+
+    /// <summary>
+    /// Ancho de las columnas acotadas de dbo.boletin_migracion. notas es NVARCHAR(MAX), así que
+    /// queda fuera del mapa.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, int> MaxLengths = new Dictionary<string, int>
+    {
+        ["clave"] = 64,
+        ["desde"] = 256,
+        ["hacia"] = 256,
+        ["match_pattern"] = 256,
+        ["learn_more_url"] = 1024,
+    };
 }
 
 /// <summary>El UNIQUE(clave) de dbo.boletin_migracion cubre también las filas desactivadas: reactivar

@@ -38,13 +38,18 @@ public sealed class AlertCreate
     public string Name { get; set; } = "";
 
     public int? AlertNumber { get; set; }
-    public string? Resource { get; set; }
-    public string? AlertType { get; set; }
+
+    // Los StringLength son el ancho real de la columna en dbo.alert_catalog (espejo de
+    // AlertColumns.AlertMaxLengths, que cubre el PUT). Sin ellos un valor más largo llega a SQL
+    // Server y el INSERT muere con el error 8152 -> excepción sin manejar -> conexión cortada en vez
+    // de 400. Las propiedades sin atributo corresponden a columnas NVARCHAR(MAX).
+    [StringLength(120)] public string? Resource { get; set; }
+    [StringLength(80)] public string? AlertType { get; set; }
     public string? Description { get; set; }
-    public string? Severity { get; set; }
-    public string? Origin { get; set; }
+    [StringLength(40)] public string? Severity { get; set; }
+    [StringLength(120)] public string? Origin { get; set; }
     public string? Detail { get; set; }
-    public string? ActionGroup { get; set; }
+    [StringLength(300)] public string? ActionGroup { get; set; }
     public string? KqlCode { get; set; }
     public string? TechnicalRequirement { get; set; }
 }
