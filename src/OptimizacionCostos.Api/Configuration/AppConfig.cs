@@ -61,6 +61,14 @@ public sealed class AppConfig
 
     public string[] CorsOrigins { get; init; } = [];
 
+    /// <summary>
+    /// Peticiones por minuto permitidas a cada usuario autenticado (y a cada IP para el trafico
+    /// anonimo). Configurable por variable de entorno a proposito: si el umbral resulta apretado en
+    /// uso real se sube desde el portal, sin esperar un deploy. <c>0</c> apaga el limitador, que es la
+    /// valvula de escape si algo sale mal en produccion.
+    /// </summary>
+    public int RateLimitPerMinute { get; init; } = 100;
+
     // Key Vault — guarda los client_secret de las credenciales Azure de los clientes.
     // Misma variable que el FastAPI (KEY_VAULT_URL). La identidad del App Service
     // (DefaultAzureCredential) debe poder leer/escribir secretos en este vault.
@@ -120,6 +128,7 @@ public sealed class AppConfig
             AdvisorScoreSchedulerWeekday = int.TryParse(Get("ADVISOR_SCORE_SCHEDULER_WEEKDAY", "0"), out var wd) ? Math.Clamp(wd, 0, 6) : 0,
             CorsOrigins = corsRaw
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            RateLimitPerMinute = int.TryParse(Get("RATE_LIMIT_PER_MINUTE"), out var rpm) && rpm >= 0 ? rpm : 100,
             AzureOpenAiEnabled = Get("AZURE_OPENAI_ENABLED").Trim().ToLowerInvariant() is "true" or "1",
             AzureOpenAiEndpoint = Get("AZURE_OPENAI_ENDPOINT"),
             AzureOpenAiApiKey = Get("AZURE_OPENAI_API_KEY"),

@@ -122,14 +122,16 @@ public sealed class UnhandledExceptionTests : IClassFixture<UnhandledExceptionTe
 
         public Factory()
         {
-            // AppConfig lee las variables de entorno antes que la configuración en memoria y se
-            // evalúa al construir el host, así que es el único punto donde se pueden fijar.
             Environment.SetEnvironmentVariable("JWT_SECRET", Secret);
-            Environment.SetEnvironmentVariable("CORS_ORIGINS", OrigenPermitido);
+            // CORS_ORIGINS va por UseSetting y no por variable de entorno: la variable es global al
+            // proceso y otro factory con un origen distinto rompería la aserción de este. AppConfig
+            // prioriza la variable de entorno, así que hay que dejarla vacía para que gane UseSetting.
+            Environment.SetEnvironmentVariable("CORS_ORIGINS", null);
         }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
+            builder.UseSetting("CORS_ORIGINS", OrigenPermitido);
             builder.ConfigureTestServices(services =>
             {
                 services.RemoveAll<IUserDirectory>();
