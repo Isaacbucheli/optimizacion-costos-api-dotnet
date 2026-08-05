@@ -34,19 +34,24 @@ public sealed class PolicyCreate
     public string Name { get; set; } = "";
 
     public int? PolicyNumber { get; set; }
-    public string? Category { get; set; }
-    public string? PolicyType { get; set; }
-    public string? RecommendedEffect { get; set; }
-    public string? Mode { get; set; }
-    public string? KeyParameters { get; set; }
+
+    // Los StringLength son el ancho real de la columna en dbo.policy_catalog (espejo de
+    // PolicyColumns.MaxLengths, que cubre el PUT). Sin ellos un valor más largo llega a SQL Server y
+    // el INSERT muere con el error 8152 -> excepción sin manejar -> conexión cortada en vez de 400.
+    // Las propiedades sin atributo corresponden a columnas NVARCHAR(MAX).
+    [StringLength(160)] public string? Category { get; set; }
+    [StringLength(80)] public string? PolicyType { get; set; }
+    [StringLength(60)] public string? RecommendedEffect { get; set; }
+    [StringLength(40)] public string? Mode { get; set; }
+    [StringLength(300)] public string? KeyParameters { get; set; }
     public string? Description { get; set; }
     public string? Objective { get; set; }
-    public string? RecommendedScope { get; set; }
+    [StringLength(200)] public string? RecommendedScope { get; set; }
     public string? Rollout { get; set; }
     public string? Risk { get; set; }
     public string? ExampleParameters { get; set; }
     public string? AzureCli { get; set; }
     public string? Powershell { get; set; }
     public string? ScriptNotes { get; set; }
-    public string? OfficialSource { get; set; }
+    [StringLength(500)] public string? OfficialSource { get; set; }
 }

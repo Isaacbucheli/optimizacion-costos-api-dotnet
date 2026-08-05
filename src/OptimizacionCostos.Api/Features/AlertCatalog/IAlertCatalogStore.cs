@@ -30,4 +30,25 @@ public static class AlertColumns
     ];
 
     public static readonly string[] Kql = ["name", "description", "kql_query"];
+
+    /// <summary>
+    /// Ancho de las columnas acotadas de dbo.alert_catalog (ver AlertCatalogSchema). Solo las
+    /// NVARCHAR(n): las NVARCHAR(MAX) se omiten a propósito y alert_number es INT. Si cambia el
+    /// esquema hay que mover este mapa con él — es lo que evita el 8152 en el UPDATE.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, int> AlertMaxLengths = new Dictionary<string, int>
+    {
+        ["name"] = 300,
+        ["resource"] = 120,
+        ["alert_type"] = 80,
+        ["severity"] = 40,
+        ["origin"] = 120,
+        ["action_group"] = 300,
+    };
+
+    /// <summary>Ancho de las columnas acotadas de dbo.alert_kql_library (description y kql_query son MAX).</summary>
+    public static readonly IReadOnlyDictionary<string, int> KqlMaxLengths = new Dictionary<string, int>
+    {
+        ["name"] = 200,
+    };
 }

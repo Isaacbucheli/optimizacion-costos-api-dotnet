@@ -4,6 +4,7 @@ using System.Xml;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 
 namespace OptimizacionCostos.Api.Features.Boletin.Api;
@@ -141,6 +142,10 @@ public sealed class BoletinController(
             foreach (var req in new[] { "clave", "producto", "categoria", "match_field", "match_pattern", "end_of_support", "recomendacion" })
                 if (!fields.ContainsKey(req))
                     return ([], $"Falta el campo obligatorio '{req}'");
+        // Ultimo chequeo: que el texto quepa en su columna. Sin esto SQL Server responde con el
+        // error 8152 y la excepcion sin manejar corta la conexion en vez de devolver un 400.
+        var tooLong = ColumnLimits.FirstViolation(fields, LifecycleColumns.MaxLengths);
+        if (tooLong is not null) return ([], tooLong);
         return (fields, null);
     }
 
@@ -249,6 +254,9 @@ public sealed class BoletinController(
             foreach (var req in new[] { "clave", "desde", "hacia", "notas", "match_pattern" })
                 if (!fields.ContainsKey(req))
                     return ([], $"Falta el campo obligatorio '{req}'");
+        // Ultimo chequeo: que el texto quepa en su columna (ver BuildLifecycleFields).
+        var tooLong = ColumnLimits.FirstViolation(fields, MigracionColumns.MaxLengths);
+        if (tooLong is not null) return ([], tooLong);
         return (fields, null);
     }
 

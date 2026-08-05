@@ -24,6 +24,20 @@ public static class LifecycleColumns
 {
     public static readonly string[] Editable =
         ["clave", "producto", "categoria", "match_field", "match_pattern", "end_of_support", "recomendacion", "learn_more_url", "is_active"];
+
+    /// <summary>
+    /// Ancho de las columnas acotadas de dbo.boletin_lifecycle. recomendacion es NVARCHAR(MAX) y
+    /// end_of_support es DATE (ya se valida como fecha), así que quedan fuera del mapa.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, int> MaxLengths = new Dictionary<string, int>
+    {
+        ["clave"] = 64,
+        ["producto"] = 200,
+        ["categoria"] = 20,
+        ["match_field"] = 32,
+        ["match_pattern"] = 120,
+        ["learn_more_url"] = 1024,
+    };
 }
 
 /// <summary>El UNIQUE(clave) de dbo.boletin_lifecycle cubre también las filas desactivadas: reactivar

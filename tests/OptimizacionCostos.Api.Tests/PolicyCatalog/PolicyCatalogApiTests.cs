@@ -126,6 +126,66 @@ public sealed class PolicyCatalogApiTests : IClassFixture<PolicyCatalogApiTests.
         Assert.Equal("Invalid name", body.GetProperty("detail").GetString());
     }
 
+    // ---- Regresión del ZAP 2026-08-03 (hallazgo "Format String Error", CWE-134) ----
+    // El escáner mandó estos payloads a los 4 campos angostos de policy_catalog. Antes llegaban a
+    // SQL Server, el UPDATE moría con el error 8152 y la excepción sin manejar cortaba la conexión;
+    // ZAP leyó ese socket cerrado como un error de formato de cadena. Ahora es un 400 nombrando el
+    // campo, y el store nunca se toca.
+
+    [Theory]
+    [InlineData("category", 160)]
+    [InlineData("policy_type", 80)]
+    [InlineData("recommended_effect", 60)]
+    [InlineData("mode", 40)]
+    public async Task Put_con_payload_de_fuzzing_en_campo_angosto_devuelve_400_sin_tocar_el_store(string field, int max)
+    {
+        var client = ClientFor("admin@bit.ec", Roles.Admin);
+
+        // Los dos payloads del informe. category (160) recibió el largo, que es el único que la
+        // excede; los otros tres campos son más angostos que el corto y les basta ese.
+        var largo = "ZAP " + string.Concat(Enumerable.Range(1, 20).Select(i => $"%{i}!s"))
+                           + string.Concat(Enumerable.Range(21, 20).Select(i => $"%{i}!n"));
+        var corto = "ZAP" + string.Concat(Enumerable.Repeat("%n%s", 20));
+        var payload = field == "category" ? largo : corto;
+        Assert.True(payload.Length > max);
+
+        var res = await client.PutAsync($"/policy-catalog/1", Json($"{{\"{field}\":\"{payload}\"}}"));
+
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal($"El campo '{field}' excede el máximo de {max} caracteres",
+            body.GetProperty("detail").GetString());
+
+        // Y el catálogo no quedó con basura del fuzzing (esto es lo que sí pasó en la BD real).
+        var item = _factory.Store.Find(1)!;
+        foreach (var stored in new[] { item.Category, item.PolicyType, item.RecommendedEffect, item.Mode })
+            Assert.DoesNotContain("%n%s", stored ?? "");
+    }
+
+    [Fact]
+    public async Task Post_con_payload_de_fuzzing_en_campo_angosto_devuelve_400()
+    {
+        // El POST no pasa por BuildFields (usa el DTO PolicyCreate), así que necesita su propio
+        // límite vía StringLength o el INSERT muere igual con el 8152.
+        var client = ClientFor("admin@bit.ec", Roles.Admin);
+        var res = await client.PostAsJsonAsync("/policy-catalog", new
+        {
+            name = "Política válida",
+            mode = "ZAP" + string.Concat(Enumerable.Repeat("%n%s", 20)),
+        });
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task Put_con_payload_de_fuzzing_en_campo_nvarchar_max_sigue_pasando()
+    {
+        // Los campos MAX aceptaban el payload y ZAP no los alertó: ese comportamiento no cambia.
+        var client = ClientFor("admin@bit.ec", Roles.Admin);
+        var payload = "ZAP " + string.Concat(Enumerable.Range(1, 20).Select(i => $"%{i}!s"));
+        var res = await client.PutAsync("/policy-catalog/1", Json($"{{\"azure_cli\":\"{payload}\"}}"));
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+    }
+
     [Fact]
     public async Task Put_sin_campos_conocidos_devuelve_400()
     {

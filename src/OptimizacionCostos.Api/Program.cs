@@ -280,7 +280,10 @@ app.Use(async (context, next) =>
     headers["X-Content-Type-Options"] = "nosniff";
     headers["X-Frame-Options"] = "DENY";
     headers["Referrer-Policy"] = "no-referrer";
-    headers["Cache-Control"] = "no-store";
+    // La directiva completa, no solo no-store: el plugin 10015 de ZAP ("Re-examine Cache-control
+    // Directives") sigue listando la respuesta hasta que ve no-cache y must-revalidate junto a
+    // no-store, y es lo que se le informó al equipo de seguridad en julio.
+    headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
     // HSTS a mano en vez de UseHsts(): detrás del proxy de App Service la petición llega a
     // Kestrel como HTTP, así que Request.IsHttps es false y UseHsts no la emitiría nunca.
     // Emitirla siempre es seguro porque el navegador ignora la cabecera si no la recibió
@@ -292,6 +295,35 @@ app.Use(async (context, next) =>
     if (!swaggerEnabled || !context.Request.Path.StartsWithSegments("/swagger"))
         headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
     await next();
+});
+
+// Red de última instancia: una excepción que nadie maneje sale de Kestrel como conexión cortada, no
+// como respuesta HTTP. Un cliente ve un socket cerrado y un escáner lo lee como fallo explotable
+// (el ZAP del 2026-08-03 reportó justo eso como CWE-134 en policy-catalog, cuando la causa real era
+// un error 8152 de SQL Server por texto más largo que la columna). Acá se convierte en un 500 con
+// cuerpo JSON del mismo formato que el resto de la API.
+//
+// A propósito NO se usa UseExceptionHandler: ese middleware hace Response.Clear() y se lleva las
+// cabeceras de seguridad de arriba y las de CORS, que es lo que el front necesita para poder leer el
+// error. Acá solo se fija estado y cuerpo, dejando intactas las cabeceras ya puestas.
+app.Use(async (context, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogError(ex, "Excepción sin manejar en {Method} {Path}",
+            context.Request.Method, context.Request.Path);
+        // Si ya se empezó a escribir la respuesta no se puede reescribir el estado; que suba y
+        // Kestrel corte, porque cualquier otra cosa produciría un cuerpo corrupto a medias.
+        if (context.Response.HasStarted) throw;
+        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        context.Response.ContentType = "application/json; charset=utf-8";
+        // Mensaje genérico: el detalle de la excepción va al log, nunca al cliente.
+        await context.Response.WriteAsync("""{"detail":"Error interno"}""");
+    }
 });
 
 if (swaggerEnabled)

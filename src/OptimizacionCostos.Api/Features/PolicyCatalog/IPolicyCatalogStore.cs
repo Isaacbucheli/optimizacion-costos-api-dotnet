@@ -23,4 +23,21 @@ public static class PolicyColumns
         "rollout", "risk", "example_parameters", "azure_cli", "powershell",
         "script_notes", "official_source",
     ];
+
+    /// <summary>
+    /// Ancho de las columnas acotadas de dbo.policy_catalog (ver PolicyCatalogSchema). Solo las
+    /// NVARCHAR(n): las NVARCHAR(MAX) se omiten a propósito y policy_number es INT. Si cambia el
+    /// esquema hay que mover este mapa con él — es lo que evita el 8152 en el UPDATE.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, int> MaxLengths = new Dictionary<string, int>
+    {
+        ["name"] = 300,
+        ["category"] = 160,
+        ["policy_type"] = 80,
+        ["recommended_effect"] = 60,
+        ["mode"] = 40,
+        ["key_parameters"] = 300,
+        ["recommended_scope"] = 200,
+        ["official_source"] = 500,
+    };
 }

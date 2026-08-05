@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Data;
 
 namespace OptimizacionCostos.Api.Features.AlertCatalog;
 
@@ -33,7 +34,7 @@ public sealed class AlertCatalogController(IAlertCatalogStore store) : Controlle
     [RequireModule(Modules.Alerts, ModuleAccess.Edit)]
     public async Task<IActionResult> UpdateKql(int kqlId, [FromBody] JsonElement body, CancellationToken ct)
     {
-        var (fields, error) = BuildFields(body, AlertColumns.Kql, nameMaxLength: 200);
+        var (fields, error) = BuildFields(body, AlertColumns.Kql, AlertColumns.KqlMaxLengths);
         if (error is not null) return BadRequest(new { detail = error });
         if (fields.Count == 0) return BadRequest(new { detail = "No fields to update" });
         if (!await store.UpdateKqlAsync(kqlId, fields, ct))
@@ -75,7 +76,7 @@ public sealed class AlertCatalogController(IAlertCatalogStore store) : Controlle
     [RequireModule(Modules.Alerts, ModuleAccess.Edit)]
     public async Task<IActionResult> UpdateAlert(int alertId, [FromBody] JsonElement body, CancellationToken ct)
     {
-        var (fields, error) = BuildFields(body, AlertColumns.Alert, nameMaxLength: 300);
+        var (fields, error) = BuildFields(body, AlertColumns.Alert, AlertColumns.AlertMaxLengths);
         if (error is not null) return BadRequest(new { detail = error });
         if (fields.Count == 0) return BadRequest(new { detail = "No fields to update" });
         if (!await store.UpdateAlertAsync(alertId, fields, ct))
@@ -95,10 +96,10 @@ public sealed class AlertCatalogController(IAlertCatalogStore store) : Controlle
     /// <summary>
     /// Construye el diccionario de campos a actualizar tomando solo las claves
     /// presentes en el body que esten en la whitelist (semantica exclude_unset).
-    /// Valida `name` si viene presente.
+    /// Valida `name` si viene presente y que todo texto quepa en su columna.
     /// </summary>
     private static (Dictionary<string, object?> Fields, string? Error) BuildFields(
-        JsonElement body, string[] allowed, int nameMaxLength)
+        JsonElement body, string[] allowed, IReadOnlyDictionary<string, int> maxLengths)
     {
         var fields = new Dictionary<string, object?>(StringComparer.Ordinal);
         if (body.ValueKind != JsonValueKind.Object)
@@ -109,14 +110,22 @@ public sealed class AlertCatalogController(IAlertCatalogStore store) : Controlle
             if (!body.TryGetProperty(col, out var el)) continue;
             var value = AlertCatalogSchema.JsonToDb(el);
 
+            // name es el unico obligatorio y conserva su mensaje propio (contrato del front): vacio
+            // no se acepta ni en un PUT parcial, y el largo sale del mismo mapa que el resto.
             if (col == "name")
             {
                 var name = value as string;
-                if (string.IsNullOrEmpty(name) || name.Length > nameMaxLength)
+                if (string.IsNullOrEmpty(name) ||
+                    (maxLengths.TryGetValue(col, out var nameMax) && name.Length > nameMax))
                     return (fields, "Invalid name");
             }
             fields[col] = value;
         }
+
+        // Los largos se revisan al final para que el mensaje nombre el campo culpable en vez de
+        // dejar que SQL Server tumbe la conexion con el 8152 (ver ColumnLimits).
+        var tooLong = ColumnLimits.FirstViolation(fields, maxLengths);
+        if (tooLong is not null) return (fields, tooLong);
         return (fields, null);
     }
 }
