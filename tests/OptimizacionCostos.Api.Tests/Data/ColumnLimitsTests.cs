@@ -89,6 +89,32 @@ public sealed class ColumnLimitsTests
     }
 
     [Fact]
+    public void Con_varios_campos_excedidos_el_mensaje_es_siempre_el_mismo()
+    {
+        // El recorrido va por orden alfabético y no por el del diccionario. Sin eso, dos bodies con
+        // los mismos campos excedidos podían devolver mensajes distintos según el orden de inserción,
+        // y un reporte de ese 400 no se podía reproducir. 'category' < 'mode' < 'policy_type'.
+        var enOrden = new Dictionary<string, object?>
+        {
+            ["category"] = new string('x', 200),
+            ["mode"] = new string('x', 200),
+            ["policy_type"] = new string('x', 200),
+        };
+        var alReves = new Dictionary<string, object?>
+        {
+            ["policy_type"] = new string('x', 200),
+            ["mode"] = new string('x', 200),
+            ["category"] = new string('x', 200),
+        };
+
+        var a = ColumnLimits.FirstViolation(enOrden, PolicyColumns.MaxLengths);
+        var b = ColumnLimits.FirstViolation(alReves, PolicyColumns.MaxLengths);
+
+        Assert.Equal(a, b);
+        Assert.Contains("'category'", a);
+    }
+
+    [Fact]
     public void Valores_no_string_se_ignoran()
     {
         // policy_number es INT y is_active es BIT: no son texto, no tienen largo que validar.
