@@ -39,6 +39,24 @@ public sealed class JwtSecretValidationTests
         Configurar(secret); // no lanza
     }
 
+    [Theory]
+    // App Service entrega la referencia LITERAL cuando no la puede resolver. Mide más de 32 bytes,
+    // así que pasaría el chequeo de largo y la API arrancaría firmando con el texto de la
+    // referencia: /health en 200, todos los tokens inválidos y nada en los logs.
+    [InlineData("@Microsoft.KeyVault(SecretUri=https://kv-ejemplo.vault.azure.net/secrets/jwt-secret/)")]
+    [InlineData("@Microsoft.KeyVault(VaultName=kv-ejemplo;SecretName=jwt-secret)")]
+    [InlineData("@microsoft.keyvault(secreturi=https://kv-ejemplo.vault.azure.net/secrets/x/)")]
+    public void Una_referencia_a_key_vault_sin_resolver_impide_arrancar(string secret)
+    {
+        // Precondición del caso: es larga, o sea que el chequeo de largo no la atraparía.
+        Assert.True(System.Text.Encoding.UTF8.GetByteCount(secret) > AuthSetup.MinSecretBytes);
+
+        var ex = Assert.Throws<InvalidOperationException>(() => Configurar(secret));
+        Assert.Contains("Key Vault", ex.Message);
+        // El mensaje debe mandar a revisar el vault, no a cambiar el largo del secreto.
+        Assert.DoesNotContain("bytes", ex.Message);
+    }
+
     [Fact]
     public void El_minimo_es_el_tamano_de_salida_de_SHA256()
     {

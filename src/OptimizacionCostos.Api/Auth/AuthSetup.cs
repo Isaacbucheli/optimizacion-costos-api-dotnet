@@ -15,6 +15,11 @@ public static class AuthSetup
     public const int MinSecretBytes = 32;
 
     /// <summary>
+    /// Prefijo que App Service deja como valor literal cuando una referencia a Key Vault no resuelve.
+    /// </summary>
+    public const string KeyVaultReferencePrefix = "@Microsoft.KeyVault(";
+
+    /// <summary>
     /// Configura Bearer JWT compatible con los tokens del FastAPI:
     /// HS256 firmado con JWT_SECRET, sin issuer/audience, claim "sub" = email.
     /// Tras validar la firma, re-consulta el rol VIVO en dbo.app_users
@@ -23,6 +28,16 @@ public static class AuthSetup
     /// </summary>
     public static IServiceCollection AddBitJwtAuth(this IServiceCollection services, AppConfig config)
     {
+        // Cuando una referencia a Key Vault NO resuelve, App Service entrega la cadena literal
+        // "@Microsoft.KeyVault(...)" como valor del app setting. Mide mas de 32 bytes, asi que
+        // pasaria el chequeo de largo de abajo y la API arrancaria firmando con el texto de la
+        // referencia: /health en 200, todos los tokens invalidos y ni una linea en los logs. Este
+        // caso se atrapa aparte porque el mensaje de "secreto corto" mandaria a buscar donde no es.
+        if (config.JwtSecret.StartsWith(KeyVaultReferencePrefix, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(
+                "JWT_SECRET quedo con la referencia a Key Vault sin resolver. Revisa que el App " +
+                "Service tenga permiso de lectura sobre el vault y que el secreto exista.");
+
         // Un JWT_SECRET corto pero no vacio pasaba en silencio: SymmetricSecurityKey acepta 4 bytes
         // (KeySize=32 bits) y HMACSHA256 acepta hasta una llave vacia, asi que la API arrancaba
         // normal firmando tokens que se rompen por fuerza bruta, sin dejar rastro en ningun log.
