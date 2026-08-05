@@ -79,6 +79,25 @@ public sealed class UnhandledExceptionTests : IClassFixture<UnhandledExceptionTe
     }
 
     [Fact]
+    public async Task El_500_conserva_la_cabecera_de_CORS()
+    {
+        // Es la razón por la que el middleware NO usa UseExceptionHandler: ese hace Response.Clear()
+        // y se lleva esta cabecera. Sin ella el navegador reporta un error de CORS en vez de dejar
+        // que el front lea el 500, así que el usuario ve "Failed to fetch" y no el mensaje real.
+        // UseCors corre por DENTRO del middleware (se registra después), así que este caso no lo
+        // cubre la prueba de cabeceras de seguridad, que verifica el sentido contrario.
+        var client = AuthedClient();
+        var req = new HttpRequestMessage(HttpMethod.Get, "/alert-catalog");
+        req.Headers.Add("Origin", Factory.OrigenPermitido);
+
+        var res = await client.SendAsync(req);
+
+        Assert.Equal(HttpStatusCode.InternalServerError, res.StatusCode);
+        Assert.Equal(Factory.OrigenPermitido,
+            res.Headers.GetValues("Access-Control-Allow-Origin").Single());
+    }
+
+    [Fact]
     public async Task El_cache_control_trae_la_directiva_completa()
     {
         // Cierra el plugin 10015 de ZAP ("Re-examine Cache-control Directives"), que lo seguía
@@ -96,9 +115,18 @@ public sealed class UnhandledExceptionTests : IClassFixture<UnhandledExceptionTe
         public const string Secret = "test-secret-con-mas-de-32-caracteres-1234567890";
         public const string MensajeSembrado = "detalle-interno-que-no-debe-salir-al-cliente";
 
+        /// <summary>Origen distintivo para que no choque con nada si otra prueba lee CORS_ORIGINS.</summary>
+        public const string OrigenPermitido = "https://front-de-prueba-unhandled.example";
+
         public FakeUserDirectory Directory { get; } = new();
 
-        public Factory() => Environment.SetEnvironmentVariable("JWT_SECRET", Secret);
+        public Factory()
+        {
+            // AppConfig lee las variables de entorno antes que la configuración en memoria y se
+            // evalúa al construir el host, así que es el único punto donde se pueden fijar.
+            Environment.SetEnvironmentVariable("JWT_SECRET", Secret);
+            Environment.SetEnvironmentVariable("CORS_ORIGINS", OrigenPermitido);
+        }
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {

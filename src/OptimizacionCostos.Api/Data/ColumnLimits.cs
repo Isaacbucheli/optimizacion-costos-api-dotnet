@@ -18,14 +18,18 @@ public static class ColumnLimits
     /// Primer campo que excede el ancho de su columna, con el mensaje listo para un 400, o
     /// <c>null</c> si todos caben. Ignora los valores no-string (int, bool, null) y las columnas
     /// ausentes del mapa.
+    ///
+    /// El recorrido va en orden alfabetico y no en el del diccionario: cuando un body excede dos
+    /// campos a la vez, el 400 tiene que nombrar siempre el mismo, o el reporte de quien encuentre
+    /// el problema no se puede reproducir.
     /// </summary>
     public static string? FirstViolation(
         IReadOnlyDictionary<string, object?> fields,
         IReadOnlyDictionary<string, int> maxLengths)
     {
-        foreach (var (column, value) in fields)
+        foreach (var column in fields.Keys.OrderBy(c => c, StringComparer.Ordinal))
         {
-            if (value is not string text) continue;
+            if (fields[column] is not string text) continue;
             if (!maxLengths.TryGetValue(column, out var max)) continue;
             if (text.Length > max)
                 return $"El campo '{column}' excede el máximo de {max} caracteres";
