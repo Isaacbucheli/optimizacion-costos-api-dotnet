@@ -12,7 +12,8 @@ namespace OptimizacionCostos.Api.Features.Boletin;
 public sealed record TipoRecurso(string Type, int Cantidad);
 
 /// <summary>Resultado de evaluar una novedad del feed contra el inventario de un cliente.</summary>
-public sealed record EvaluacionNovedad(string FeedGuid, bool Aplica, string? PorQue);
+public sealed record EvaluacionNovedad(string FeedGuid, bool Aplica, string? PorQue,
+    IReadOnlyList<TipoRecurso>? Recursos = null);
 
 public interface IBoletinNovedadEvaluator
 {
@@ -88,7 +89,7 @@ public sealed class BoletinNovedadEvaluator(
             {
                 // Seam síncrono IChatCompletionClient (motor de costos); Task.Run como E1/WAF.
                 var raw = await Task.Run(() => chat.Complete(BoletinPrompts.EvaluarNovedadesSystem, userJson, maxTokens), ct);
-                var parsed = BoletinEvaluatorParsers.ParseRespuesta(raw, expectedGuids);
+                var parsed = BoletinEvaluatorParsers.ParseRespuesta(raw, expectedGuids, inventarioDto.Select(i => i.Type).ToList());
                 if (parsed is not null) return parsed;
                 logger.LogWarning(
                     "evaluacion boletin: respuesta invalida en intento {Attempt} de {Max} (guids incompletos/desconocidos)",
@@ -149,8 +150,11 @@ public static class BoletinEvaluatorParsers
     /// incompleto). El orden es libre: se re-empareja por guid, no por posición.
     /// Defensivo con la regla dura del prompt "ante la duda aplica=false, por_que=null": si la IA no
     /// la respeta, `por_que` se fuerza a null igual — nunca se expone texto colgado de un
-    /// aplica=false mal formado.</summary>
-    public static IReadOnlyList<EvaluacionNovedad>? ParseRespuesta(string? raw, IReadOnlyList<string> expectedGuids)
+    /// aplica=false mal formado. Valida `recursos` por entrada (no rechaza la respuesta completa si
+    /// hay tipos fuera del inventario): descarta tipos no presentes en <paramref name="inventarioTypes"/>,
+    /// cantidad <= 0 o type vacío, conserva máximo 4, null si aplica=false.</summary>
+    public static IReadOnlyList<EvaluacionNovedad>? ParseRespuesta(string? raw, IReadOnlyList<string> expectedGuids,
+        IReadOnlyCollection<string> inventarioTypes)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         var start = raw.IndexOf('[');
@@ -167,19 +171,38 @@ public static class BoletinEvaluatorParsers
 
         var expectedSet = expectedGuids.ToHashSet(StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        var inventarioSet = inventarioTypes.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var result = new List<EvaluacionNovedad>(parsed.Count);
         foreach (var item in parsed)
         {
             if (string.IsNullOrWhiteSpace(item.Guid)) return null;
             if (!expectedSet.Contains(item.Guid)) return null;
             if (!seen.Add(item.Guid)) return null; // duplicado: esconde un guid faltante
-            result.Add(new EvaluacionNovedad(item.Guid, item.Aplica, item.Aplica ? item.PorQue : null));
+
+            IReadOnlyList<TipoRecurso>? recursos = null;
+            if (item.Aplica && item.Recursos is { Count: > 0 })
+            {
+                var validos = item.Recursos
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Type) && x.Cantidad > 0
+                                && inventarioSet.Contains(x.Type!.Trim()))
+                    .Take(4)
+                    .Select(x => new TipoRecurso(x.Type!.Trim(), x.Cantidad))
+                    .ToList();
+                if (validos.Count > 0) recursos = validos;
+            }
+
+            result.Add(new EvaluacionNovedad(item.Guid, item.Aplica, item.Aplica ? item.PorQue : null, recursos));
         }
         return result;
     }
 
+    private sealed record RecursoDto(
+        [property: JsonPropertyName("type")] string? Type,
+        [property: JsonPropertyName("cantidad")] int Cantidad);
+
     private sealed record EvaluacionDto(
         [property: JsonPropertyName("guid")] string? Guid,
         [property: JsonPropertyName("aplica")] bool Aplica,
-        [property: JsonPropertyName("por_que")] string? PorQue);
+        [property: JsonPropertyName("por_que")] string? PorQue,
+        [property: JsonPropertyName("recursos")] List<RecursoDto>? Recursos);
 }

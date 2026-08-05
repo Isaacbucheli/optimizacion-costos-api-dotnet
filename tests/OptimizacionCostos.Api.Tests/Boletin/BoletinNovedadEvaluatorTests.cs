@@ -79,7 +79,7 @@ public class BoletinNovedadEvaluatorTests
     {
         var raw = "```json\n[{\"guid\":\"g1\",\"aplica\":true,\"por_que\":\"usas 3 maquinas virtuales\"}," +
                    "{\"guid\":\"g2\",\"aplica\":false,\"por_que\":null}]\n```";
-        var result = BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1", "g2"]);
+        var result = BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1", "g2"], ["microsoft.compute/virtualmachines"]);
         Assert.NotNull(result);
         Assert.Equal(2, result!.Count);
         Assert.True(result.Single(e => e.FeedGuid == "g1").Aplica);
@@ -92,7 +92,7 @@ public class BoletinNovedadEvaluatorTests
     public void ParseRespuesta_AceptaOrdenDistintoAlEsperado()
     {
         var raw = """[{"guid":"g2","aplica":false,"por_que":null},{"guid":"g1","aplica":true,"por_que":"x"}]""";
-        var result = BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1", "g2"]);
+        var result = BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1", "g2"], ["microsoft.compute/virtualmachines"]);
         Assert.NotNull(result);
         Assert.Equal(2, result!.Count);
         Assert.Contains(result, e => e.FeedGuid == "g1" && e.Aplica);
@@ -103,14 +103,14 @@ public class BoletinNovedadEvaluatorTests
     public void ParseRespuesta_RechazaLongitudIncorrecta()
     {
         var raw = """[{"guid":"g1","aplica":true,"por_que":"x"}]"""; // esperaba 2
-        Assert.Null(BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1", "g2"]));
+        Assert.Null(BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1", "g2"], ["microsoft.compute/virtualmachines"]));
     }
 
     [Fact]
     public void ParseRespuesta_RechazaGuidDesconocido()
     {
         var raw = """[{"guid":"g1","aplica":true,"por_que":"x"},{"guid":"g-no-existe","aplica":false,"por_que":null}]""";
-        Assert.Null(BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1", "g2"]));
+        Assert.Null(BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1", "g2"], ["microsoft.compute/virtualmachines"]));
     }
 
     [Fact]
@@ -118,15 +118,15 @@ public class BoletinNovedadEvaluatorTests
     {
         // longitud correcta (2) pero repite g1 y omite g2: no debe colarse como si estuviera completo.
         var raw = """[{"guid":"g1","aplica":true,"por_que":"x"},{"guid":"g1","aplica":false,"por_que":null}]""";
-        Assert.Null(BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1", "g2"]));
+        Assert.Null(BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1", "g2"], ["microsoft.compute/virtualmachines"]));
     }
 
     [Fact]
     public void ParseRespuesta_NuloVacioONoJsonEsInvalido()
     {
-        Assert.Null(BoletinEvaluatorParsers.ParseRespuesta(null, ["g1"]));
-        Assert.Null(BoletinEvaluatorParsers.ParseRespuesta("", ["g1"]));
-        Assert.Null(BoletinEvaluatorParsers.ParseRespuesta("esto no es json", ["g1"]));
+        Assert.Null(BoletinEvaluatorParsers.ParseRespuesta(null, ["g1"], ["microsoft.compute/virtualmachines"]));
+        Assert.Null(BoletinEvaluatorParsers.ParseRespuesta("", ["g1"], ["microsoft.compute/virtualmachines"]));
+        Assert.Null(BoletinEvaluatorParsers.ParseRespuesta("esto no es json", ["g1"], ["microsoft.compute/virtualmachines"]));
     }
 
     [Fact]
@@ -135,9 +135,54 @@ public class BoletinNovedadEvaluatorTests
         // Defensivo: aunque la IA no respete "ante la duda aplica=false, por_que=null", el parser
         // lo fuerza igual — nunca se expone un por_que colgado de un aplica=false.
         var raw = """[{"guid":"g1","aplica":false,"por_que":"texto que no deberia sobrevivir"}]""";
-        var result = BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1"]);
+        var result = BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1"], ["microsoft.compute/virtualmachines"]);
         Assert.NotNull(result);
         Assert.Null(result!.Single().PorQue);
+    }
+
+    [Fact]
+    public void ParseRespuesta_recursos_validos_se_conservan()
+    {
+        var raw = """[{"guid":"g1","aplica":true,"por_que":"usas VMs","recursos":[{"type":"microsoft.compute/virtualmachines","cantidad":83}]}]""";
+        var r = BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1"], ["microsoft.compute/virtualmachines"]);
+        var rec = Assert.Single(r![0].Recursos!);
+        Assert.Equal(("microsoft.compute/virtualmachines", 83), (rec.Type, rec.Cantidad));
+    }
+
+    [Fact]
+    public void ParseRespuesta_recurso_fuera_del_inventario_se_descarta_sin_rechazar_la_respuesta()
+    {
+        var raw = """[{"guid":"g1","aplica":true,"por_que":"x","recursos":[{"type":"microsoft.invento/fantasma","cantidad":9},{"type":"MICROSOFT.Compute/virtualMachines","cantidad":2}]}]""";
+        var r = BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1"], ["microsoft.compute/virtualmachines"]);
+        var rec = Assert.Single(r![0].Recursos!); // el inventado cayó; el válido (case-insensitive) quedó
+        Assert.Equal(2, rec.Cantidad);
+    }
+
+    [Fact]
+    public void ParseRespuesta_recursos_con_aplica_false_se_fuerzan_a_null()
+    {
+        var raw = """[{"guid":"g1","aplica":false,"por_que":null,"recursos":[{"type":"microsoft.compute/virtualmachines","cantidad":1}]}]""";
+        var r = BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1"], ["microsoft.compute/virtualmachines"]);
+        Assert.Null(r![0].Recursos);
+    }
+
+    [Fact]
+    public void ParseRespuesta_mas_de_cuatro_recursos_conserva_los_primeros_cuatro()
+    {
+        var recursos = string.Join(",", Enumerable.Range(1, 6).Select(i => $$"""{"type":"t{{i}}","cantidad":{{i}}}"""));
+        var raw = $$"""[{"guid":"g1","aplica":true,"por_que":"x","recursos":[{{recursos}}]}]""";
+        var r = BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1"], ["t1","t2","t3","t4","t5","t6"]);
+        Assert.Equal(4, r![0].Recursos!.Count);
+        Assert.Equal("t4", r[0].Recursos![3].Type);
+    }
+
+    [Fact]
+    public void ParseRespuesta_sin_campo_recursos_devuelve_null_compatible()
+    {
+        var raw = """[{"guid":"g1","aplica":true,"por_que":"x"}]""";
+        var r = BoletinEvaluatorParsers.ParseRespuesta(raw, ["g1"], ["t1"]);
+        Assert.True(r![0].Aplica);
+        Assert.Null(r[0].Recursos);
     }
 
     // ---------------- BoletinNovedadEvaluator.EvaluarAsync ----------------

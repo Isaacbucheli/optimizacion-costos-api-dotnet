@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Xml;
 using Microsoft.AspNetCore.Authorization;
@@ -352,18 +353,38 @@ public sealed class BoletinController(
         }
     }
 
+    /// <summary>include_rechazadas trae también las filas en estado rechazada (no_aplica sigue
+    /// invisible SIEMPRE, es terminal). El shape de item es uno solo: recursos/decidido_por/decidido_at
+    /// están presentes con o sin el param. Riesgo aceptado y documentado en el spec de Entrega 5 §7:
+    /// el param se honra para cualquier caller con acceso View a este cliente, no solo quien decidió
+    /// la fila — no hay un permiso más granular para "ver decisiones ajenas".</summary>
     [HttpGet("clients/{clientId:int}/novedades")]
-    public async Task<IActionResult> ListNovedadesCliente(int clientId, CancellationToken ct)
+    public async Task<IActionResult> ListNovedadesCliente(
+        int clientId, [FromQuery(Name = "include_rechazadas")] bool includeRechazadas, CancellationToken ct)
     {
         var chk = await access.AssertClientAccessAsync(User, clientId, ct);
         if (!chk.Ok) return Translate(chk);
-        var rows = await novedadesCliente.ListAsync(clientId, ct);
-        return Ok(new
+        var rows = await novedadesCliente.ListAsync(clientId, includeRechazadas, ct);
+        var (ultimaEval, feedAct) = await novedadesCliente.MetadatosAsync(clientId, ct);
+
+        var body = new Dictionary<string, object?>
         {
-            aprobadas = rows.Where(r => r.Estado.Estado == NovedadClienteEstados.Aprobada).Select(NovedadClienteItem).ToList(),
-            pendientes = rows.Where(r => r.Estado.Estado == NovedadClienteEstados.Pendiente).Select(NovedadClienteItem).ToList(),
-        });
+            ["aprobadas"] = rows.Where(r => r.Estado.Estado == NovedadClienteEstados.Aprobada).Select(NovedadClienteItem).ToList(),
+            ["pendientes"] = rows.Where(r => r.Estado.Estado == NovedadClienteEstados.Pendiente).Select(NovedadClienteItem).ToList(),
+        };
+        // La clave 'rechazadas' NO existe en el JSON cuando el param no viene (no es un array vacío
+        // ni null, está ausente) — así el front distingue "no la pediste" de "no hay rechazadas".
+        if (includeRechazadas)
+            body["rechazadas"] = rows.Where(r => r.Estado.Estado == NovedadClienteEstados.Rechazada).Select(NovedadClienteItem).ToList();
+        body["ultima_evaluacion"] = FormatIso(ultimaEval);
+        body["feed_actualizado"] = FormatIso(feedAct);
+        return Ok(body);
     }
+
+    /// <summary>Mismo formato ISO Z que BoletinService.LoadLastSyncAsync (yyyy-MM-ddTHH:mm:ssZ,
+    /// invariant): consistencia de contrato con el resto del Boletín.</summary>
+    private static string? FormatIso(DateTime? value) =>
+        value?.ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
 
     [HttpPut("novedades-cliente/{id:int}")]
     [RequireModule(Modules.Boletin, ModuleAccess.Edit)]
@@ -425,7 +446,7 @@ public sealed class BoletinController(
 
     /// <summary>Shape snake_case exacto pedido para el GET por cliente: `published_at` (no
     /// `published_at_utc` como el NovedadRow crudo del GET global) para mantener el contrato simple
-    /// del front.</summary>
+    /// del front. Task 2 (Entrega 5) agrega recursos/decidido_por/decidido_at.</summary>
     private static object NovedadClienteItem((NovedadRow Novedad, NovedadClienteRow Estado) r) => new
     {
         id = r.Estado.Id,
@@ -440,5 +461,19 @@ public sealed class BoletinController(
         published_at = r.Novedad.PublishedAtUtc,
         por_que = r.Estado.PorQue,
         estado = r.Estado.Estado,
+        recursos = ParseRecursos(r.Estado.RecursosJson),
+        decidido_por = r.Estado.DecididoPor,
+        decidido_at = FormatIso(r.Estado.DecididoAt),
     };
+
+    /// <summary>JSON legado corrupto (o cualquier valor que no sea JSON válido) jamás revienta el
+    /// GET: se degrada a null en vez de un 500 crudo. RecursosJson lo escribe SOLO este mismo
+    /// backend (MapEvaluaciones con JsonSerializer), pero un valor manual en BD o un cambio de
+    /// formato futuro no debe tumbar el endpoint.</summary>
+    private static object? ParseRecursos(string? recursosJson)
+    {
+        if (recursosJson is null) return null;
+        try { return JsonSerializer.Deserialize<JsonElement>(recursosJson); }
+        catch (JsonException) { return null; }
+    }
 }

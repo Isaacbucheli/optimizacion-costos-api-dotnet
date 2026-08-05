@@ -85,4 +85,62 @@ public class BoletinNovedadClienteStoreTests
         Assert.Contains(NovedadClienteEstados.Pendiente, NovedadClienteEstados.DecidiblesValidos);
         Assert.DoesNotContain(NovedadClienteEstados.NoAplica, NovedadClienteEstados.DecidiblesValidos);
     }
+
+    // ---- Task 2: persistencia de recursos citados (BoletinNovedadEvaluator.Recursos, Task 1) ----
+
+    [Fact]
+    public void SerializaRecursosAJsonCuandoAplicaYHayRecursos()
+    {
+        var candidatas = new List<NovedadRow> { Row(1, "g1") };
+        var evaluaciones = new List<EvaluacionNovedad>
+        {
+            new("g1", true, "usas estos recursos",
+                new List<TipoRecurso> { new("Microsoft.Compute/virtualMachines", 3), new("Microsoft.Sql/servers", 1) }),
+        };
+
+        var result = BoletinNovedadClientePlan.MapEvaluaciones(candidatas, evaluaciones);
+
+        var row = Assert.Single(result);
+        Assert.Equal(
+            "[{\"type\":\"Microsoft.Compute/virtualMachines\",\"cantidad\":3},{\"type\":\"Microsoft.Sql/servers\",\"cantidad\":1}]",
+            row.RecursosJson);
+    }
+
+    [Fact]
+    public void RecursosNuloProduceRecursosJsonNulo()
+    {
+        var candidatas = new List<NovedadRow> { Row(1, "g1") };
+        var evaluaciones = new List<EvaluacionNovedad> { new("g1", true, "ok", null) };
+
+        var result = BoletinNovedadClientePlan.MapEvaluaciones(candidatas, evaluaciones);
+
+        Assert.Null(Assert.Single(result).RecursosJson);
+    }
+
+    [Fact]
+    public void RecursosVacioProduceRecursosJsonNulo()
+    {
+        var candidatas = new List<NovedadRow> { Row(1, "g1") };
+        var evaluaciones = new List<EvaluacionNovedad> { new("g1", true, "ok", new List<TipoRecurso>()) };
+
+        var result = BoletinNovedadClientePlan.MapEvaluaciones(candidatas, evaluaciones);
+
+        Assert.Null(Assert.Single(result).RecursosJson);
+    }
+
+    [Fact]
+    public void NoAplicaSiempreProduceRecursosJsonNuloAunqueLleguenRecursos()
+    {
+        // Defensa en profundidad (mismo principio que AplicaFalseFuerzaPorQueNuloAunqueLaIaMandeTexto):
+        // aunque llegue Recursos con datos junto a Aplica=false, RecursosJson se queda en null.
+        var candidatas = new List<NovedadRow> { Row(1, "g1") };
+        var evaluaciones = new List<EvaluacionNovedad>
+        {
+            new("g1", false, null, new List<TipoRecurso> { new("Microsoft.Compute/virtualMachines", 3) }),
+        };
+
+        var result = BoletinNovedadClientePlan.MapEvaluaciones(candidatas, evaluaciones);
+
+        Assert.Null(Assert.Single(result).RecursosJson);
+    }
 }
