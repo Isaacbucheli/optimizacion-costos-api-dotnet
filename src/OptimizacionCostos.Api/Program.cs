@@ -160,6 +160,7 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Consultants.IConsulta
 // Pendientes y bloqueantes (Gestión CDC): usa la BD del tablero, NO la de la plataforma.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Pendientes.IPendientesStore, OptimizacionCostos.Api.Features.Pendientes.SqlPendientesStore>();
 builder.Services.AddBitJwtAuth(config);
+builder.Services.AddBitRateLimiter(config);
 
 // Identidad: emisión de JWT (login/bootstrap) + administración de usuarios y asignaciones (B3).
 builder.Services.AddSingleton<TokenIssuer>();
@@ -348,6 +349,10 @@ if (!app.Environment.IsDevelopment() && config.CorsOrigins.Length == 0)
 
 app.UseCors(CorsPolicy);
 app.UseAuthentication();
+// Después de UseAuthentication para poder particionar por usuario (el claim "sub" ya está resuelto) y
+// después de UseCors para que el 429 salga con Access-Control-Allow-Origin: si no, el navegador
+// reporta un fallo de CORS y el front muestra "Failed to fetch" en lugar del mensaje del límite.
+app.UseRateLimiter();
 app.UseAuthorization();
 app.MapControllers();
 
