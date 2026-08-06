@@ -33,6 +33,8 @@ builder.Services.AddControllers().AddJsonOptions(o =>
 
 // Datos y auth
 builder.Services.AddSingleton<ISqlConnectionFactory, SqlConnectionFactory>();
+// Enfriamiento por operacion para los endpoints que disparan trabajo real contra Azure.
+builder.Services.AddScoped<IOperationCooldown, SqlOperationCooldown>();
 // Conexión a la BD del tablero de pendientes (Seguimiento CDC): otro servidor, otro dueño del
 // esquema. Si faltan las SQL_*2 la factory queda "no configurada" y solo ese módulo responde 503.
 builder.Services.AddSingleton<ISeguimientoSqlConnectionFactory, SeguimientoSqlConnectionFactory>();
