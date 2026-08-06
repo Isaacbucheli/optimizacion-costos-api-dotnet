@@ -20,6 +20,41 @@ public sealed record WafAdvisorSyncJobStatus(
 public sealed record WafAdvisorSyncProgress(
     int Processed, int Failed, int Total, string? CurrentSubscription);
 
+/// <summary>Resultado de pedir una corrida: se creó, ya había una activa, o está en enfriamiento.</summary>
+public enum WafAdvisorSyncOutcome { Created, AlreadyActive, InCooldown }
+
+/// <summary>
+/// <paramref name="Job"/> es la corrida creada, la activa, o la última terminada segun el caso.
+/// <paramref name="RetryAfter"/> solo viene con <see cref="WafAdvisorSyncOutcome.InCooldown"/>.
+/// </summary>
+public sealed record WafAdvisorSyncStartResult(
+    WafAdvisorSyncOutcome Outcome, WafAdvisorSyncJobStatus? Job, TimeSpan? RetryAfter);
+
+/// <summary>
+/// Decision del enfriamiento, separada del SQL a proposito: la consulta necesita base de datos y la
+/// suite de CI corre sin una, asi que la aritmetica (bordes, enfriamiento apagado, reloj hacia atras)
+/// se prueba aca. El SQL solo aporta los segundos transcurridos.
+/// </summary>
+public static class WafAdvisorSyncCooldown
+{
+    /// <summary>
+    /// Cuanto falta para poder volver a consultar Advisor, o <c>null</c> si ya se puede.
+    /// </summary>
+    /// <param name="secondsSinceLastFinished">
+    /// Segundos desde que termino la ultima corrida, o <c>null</c> si no hay ninguna terminada.
+    /// </param>
+    public static TimeSpan? Remaining(int? secondsSinceLastFinished, TimeSpan cooldown)
+    {
+        if (cooldown <= TimeSpan.Zero) return null;        // enfriamiento desactivado
+        if (secondsSinceLastFinished is null) return null; // primera corrida del cliente
+
+        // Se acota a >= 0: un salto de reloj hacia atras daria un transcurrido negativo y volveria el
+        // enfriamiento mas largo que lo configurado, o incluso eterno.
+        var transcurrido = TimeSpan.FromSeconds(Math.Max(0, secondsSinceLastFinished.Value));
+        return transcurrido < cooldown ? cooldown - transcurrido : null;
+    }
+}
+
 public interface IWafAdvisorSyncJobQueue
 {
     void Enqueue(WafAdvisorSyncJob job);
@@ -37,9 +72,19 @@ public sealed class WafAdvisorSyncJobQueue : IWafAdvisorSyncJobQueue
 
 public interface IWafAdvisorSyncJobStore
 {
-    Task<(WafAdvisorSyncJobStatus Status, bool Created)> CreateOrGetActiveAsync(
+    /// <summary>
+    /// Pide una corrida de Advisor. No crea una segunda si ya hay activa, y tampoco si la ultima
+    /// termino hace menos de <paramref name="cooldown"/>. <c>TimeSpan.Zero</c> desactiva el
+    /// enfriamiento.
+    ///
+    /// El enfriamiento vive aca y no en el controlador porque la comprobacion tiene que ser atomica
+    /// con el insert: este metodo ya corre en una transaccion Serializable con UPDLOCK/HOLDLOCK, asi
+    /// que dos peticiones a la vez no pueden colarse las dos. Chequearlo antes de llamar dejaria la
+    /// ventana abierta justo para el patron que se quiere frenar, una rafaga de peticiones paralelas.
+    /// </summary>
+    Task<WafAdvisorSyncStartResult> StartAsync(
         int clientId, IReadOnlyList<string> subscriptions, string? actor,
-        int timeoutSecondsPerSubscription, CancellationToken ct);
+        int timeoutSecondsPerSubscription, TimeSpan cooldown, CancellationToken ct);
     Task<WafAdvisorSyncJobStatus?> GetAsync(int clientId, int jobId, CancellationToken ct);
     Task<WafAdvisorSyncJobStatus?> GetActiveAsync(int clientId, CancellationToken ct);
     Task<IReadOnlyList<WafAdvisorSyncJob>> LoadQueuedAsync(CancellationToken ct);
@@ -54,9 +99,15 @@ public sealed class SqlWafAdvisorSyncJobStore(ISqlConnectionFactory factory) : I
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-    public async Task<(WafAdvisorSyncJobStatus Status, bool Created)> CreateOrGetActiveAsync(
+    private const string JobColumns = """
+        job_id, client_id, status, subscriptions_total, subscriptions_processed,
+        subscriptions_failed, current_subscription, ingestion_run_id, new_recommendations,
+        new_findings, resolved_findings, warnings_json, error_message, started_at, completed_at
+        """;
+
+    public async Task<WafAdvisorSyncStartResult> StartAsync(
         int clientId, IReadOnlyList<string> subscriptions, string? actor,
-        int timeoutSecondsPerSubscription, CancellationToken ct)
+        int timeoutSecondsPerSubscription, TimeSpan cooldown, CancellationToken ct)
     {
         await using var conn = await factory.OpenAsync(ct);
         await EnsureSchemaAsync(conn, ct);
@@ -65,10 +116,8 @@ public sealed class SqlWafAdvisorSyncJobStore(ISqlConnectionFactory factory) : I
         await using (var find = conn.CreateCommand())
         {
             find.Transaction = tx;
-            find.CommandText = """
-                SELECT TOP 1 job_id, client_id, status, subscriptions_total, subscriptions_processed,
-                    subscriptions_failed, current_subscription, ingestion_run_id, new_recommendations,
-                    new_findings, resolved_findings, warnings_json, error_message, started_at, completed_at
+            find.CommandText = $"""
+                SELECT TOP 1 {JobColumns}
                 FROM dbo.waf_advisor_sync_job WITH (UPDLOCK, HOLDLOCK)
                 WHERE client_id = @cid AND status IN ('queued', 'running')
                 ORDER BY job_id DESC
@@ -80,7 +129,43 @@ public sealed class SqlWafAdvisorSyncJobStore(ISqlConnectionFactory factory) : I
                 var existing = Read(reader);
                 await reader.DisposeAsync();
                 await tx.CommitAsync(ct);
-                return (existing, false);
+                return new WafAdvisorSyncStartResult(WafAdvisorSyncOutcome.AlreadyActive, existing, null);
+            }
+        }
+
+        // Enfriamiento: el refresco de Advisor es la unica operacion que ESCRIBE en ARM del cliente
+        // (dispara la generacion de recomendaciones), asi que repetirla en bucle no solo gasta
+        // llamadas, toca la suscripcion ajena. La guarda de "ya hay una activa" no alcanzaba: una
+        // corrida dura entre 10 y 30 segundos, asi que peticiones espaciadas la esquivan siempre. Es
+        // exactamente lo que paso el 2026-08-03, seis corridas reales en cuarenta minutos.
+        if (cooldown > TimeSpan.Zero)
+        {
+            await using var ultima = conn.CreateCommand();
+            ultima.Transaction = tx;
+            // El tiempo transcurrido lo calcula SQL Server y no el proceso, para no depender de que
+            // los relojes del App Service y de la base esten sincronizados. Se mira status NOT IN
+            // ('queued','running') en vez de listar los terminales ('completed', 'partial', 'failed')
+            // para que un estado nuevo quede cubierto sin tocar esta consulta.
+            ultima.CommandText = $"""
+                SELECT TOP 1 {JobColumns},
+                    DATEDIFF(SECOND, COALESCE(completed_at, updated_at, started_at), SYSUTCDATETIME())
+                FROM dbo.waf_advisor_sync_job WITH (UPDLOCK, HOLDLOCK)
+                WHERE client_id = @cid AND status NOT IN ('queued', 'running')
+                ORDER BY job_id DESC
+                """;
+            ultima.Parameters.Add(new SqlParameter("@cid", clientId));
+            await using var reader = await ultima.ExecuteReaderAsync(ct);
+            if (await reader.ReadAsync(ct))
+            {
+                var terminada = Read(reader);
+                var falta = WafAdvisorSyncCooldown.Remaining(reader.GetInt32(15), cooldown);
+                if (falta is not null)
+                {
+                    await reader.DisposeAsync();
+                    await tx.CommitAsync(ct);
+                    return new WafAdvisorSyncStartResult(
+                        WafAdvisorSyncOutcome.InCooldown, terminada, falta);
+                }
             }
         }
 
@@ -105,8 +190,11 @@ public sealed class SqlWafAdvisorSyncJobStore(ISqlConnectionFactory factory) : I
             jobId = Convert.ToInt32(await insert.ExecuteScalarAsync(ct));
         }
         await tx.CommitAsync(ct);
-        return (new WafAdvisorSyncJobStatus(jobId, clientId, "queued", subscriptions.Count, 0, 0,
-            null, null, 0, 0, 0, null, null, now, null), true);
+        return new WafAdvisorSyncStartResult(
+            WafAdvisorSyncOutcome.Created,
+            new WafAdvisorSyncJobStatus(jobId, clientId, "queued", subscriptions.Count, 0, 0,
+                null, null, 0, 0, 0, null, null, now, null),
+            null);
     }
 
     public async Task<WafAdvisorSyncJobStatus?> GetAsync(int clientId, int jobId, CancellationToken ct)

@@ -1,7 +1,9 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.Clients;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
@@ -33,6 +35,7 @@ public sealed class WafController(
     IWafSyncOrchestrator orchestrator,
     IWafAdvisorSyncJobStore advisorSyncJobs,
     IWafAdvisorSyncJobQueue advisorSyncQueue,
+    AppConfig config,
     ILogger<WafController> logger) : ControllerBase
 {
     private const string CostReferenceDisclaimer =
@@ -678,8 +681,26 @@ public sealed class WafController(
         var selected = payload.Subscriptions is { Count: > 0 }
             ? payload.Subscriptions
             : available.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToList();
-        var (job, created) = await advisorSyncJobs.CreateOrGetActiveAsync(
-            clientId, selected, Email, payload.TimeoutSecondsPerSubscription, ct);
+        var cooldown = TimeSpan.FromMinutes(config.AdvisorSyncCooldownMinutes);
+        var result = await advisorSyncJobs.StartAsync(
+            clientId, selected, Email, payload.TimeoutSecondsPerSubscription, cooldown, ct);
+
+        if (result.Outcome == WafAdvisorSyncOutcome.InCooldown)
+        {
+            var segundos = (int)Math.Ceiling(result.RetryAfter!.Value.TotalSeconds);
+            Response.Headers.RetryAfter = segundos.ToString(CultureInfo.InvariantCulture);
+            // 429 y no 409: es una regla de tasa, y con Retry-After el front sabe cuanto esperar sin
+            // que nadie tenga que interpretar el mensaje.
+            return StatusCode(StatusCodes.Status429TooManyRequests, new
+            {
+                detail = $"La consulta a Advisor de este cliente se ejecutó hace menos de "
+                       + $"{config.AdvisorSyncCooldownMinutes} minutos. Intenta de nuevo en {segundos} segundos.",
+                last_job = AdvisorSyncJobResponse(result.Job!, false),
+            });
+        }
+
+        var job = result.Job!;
+        var created = result.Outcome == WafAdvisorSyncOutcome.Created;
         if (created)
             advisorSyncQueue.Enqueue(new WafAdvisorSyncJob(
                 job.JobId, clientId, selected, Email, payload.TimeoutSecondsPerSubscription));
