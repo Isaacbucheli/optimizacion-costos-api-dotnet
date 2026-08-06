@@ -69,6 +69,15 @@ public sealed class AppConfig
     /// </summary>
     public int RateLimitPerMinute { get; init; } = 100;
 
+    /// <summary>
+    /// Minutos que deben pasar entre dos consultas a Advisor del MISMO cliente. El limite de tasa
+    /// global frena la rafaga, pero con 100 por minuto todavia entran varias sincronizaciones reales;
+    /// esta es la regla de negocio: nadie necesita re-consultar Advisor de un cliente seis veces en
+    /// cuarenta minutos, y es la unica operacion que escribe en ARM de la suscripcion ajena.
+    /// <c>0</c> desactiva el enfriamiento.
+    /// </summary>
+    public int AdvisorSyncCooldownMinutes { get; init; } = 15;
+
     // Key Vault — guarda los client_secret de las credenciales Azure de los clientes.
     // Misma variable que el FastAPI (KEY_VAULT_URL). La identidad del App Service
     // (DefaultAzureCredential) debe poder leer/escribir secretos en este vault.
@@ -129,6 +138,7 @@ public sealed class AppConfig
             CorsOrigins = corsRaw
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             RateLimitPerMinute = int.TryParse(Get("RATE_LIMIT_PER_MINUTE"), out var rpm) && rpm >= 0 ? rpm : 100,
+            AdvisorSyncCooldownMinutes = int.TryParse(Get("ADVISOR_SYNC_COOLDOWN_MINUTES"), out var acm) && acm >= 0 ? acm : 15,
             AzureOpenAiEnabled = Get("AZURE_OPENAI_ENABLED").Trim().ToLowerInvariant() is "true" or "1",
             AzureOpenAiEndpoint = Get("AZURE_OPENAI_ENDPOINT"),
             AzureOpenAiApiKey = Get("AZURE_OPENAI_API_KEY"),
