@@ -1,5 +1,6 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.Clients;
@@ -18,7 +19,9 @@ public class WafAdvisorNameEnTests
     private static bool Enabled => Environment.GetEnvironmentVariable("BIT_INTEGRATION_DB") == "1";
 
     private static ISqlConnectionFactory NewFactory() =>
-        new SqlConnectionFactory(AppConfig.FromConfiguration(new ConfigurationBuilder().Build()));
+        new SqlConnectionFactory(
+            AppConfig.FromConfiguration(new ConfigurationBuilder().Build()),
+            NullLogger<SqlConnectionFactory>.Instance);
 
     private static AdvisorRow Row(string name, string resource) => new(
         AdvisorName: name, AdvisorCategory: "OperationalExcellence", BusinessImpact: "Medium",

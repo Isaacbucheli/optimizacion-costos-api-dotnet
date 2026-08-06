@@ -58,7 +58,7 @@ public sealed class CostEngineParityDiffTests
             : svcRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         var config = AppConfig.FromConfiguration(new ConfigurationBuilder().Build());
-        var factory = new SqlConnectionFactory(config);
+        var factory = new SqlConnectionFactory(config, NullLogger<SqlConnectionFactory>.Instance);
         var constants = new PricingConstants(factory);
         using var http = new HttpClient();
         // Decorador SIN refresh: lee la cache de precios existente (los mismos precios que
@@ -127,7 +127,7 @@ public sealed class CostEngineParityDiffTests
             : svcRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         var config = AppConfig.FromConfiguration(new ConfigurationBuilder().Build());
-        var factory = new SqlConnectionFactory(config);
+        var factory = new SqlConnectionFactory(config, NullLogger<SqlConnectionFactory>.Instance);
         var constants = new PricingConstants(factory);
         using var http = new HttpClient();
         // BIT_WRITE_PARITY_FETCH=1 → cache REAL: trae precios faltantes de la Retail API (como
@@ -214,7 +214,7 @@ public sealed class CostEngineParityDiffTests
             : svcRaw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         var config = AppConfig.FromConfiguration(new ConfigurationBuilder().Build());
-        var factory = new SqlConnectionFactory(config);
+        var factory = new SqlConnectionFactory(config, NullLogger<SqlConnectionFactory>.Instance);
         var constants = new PricingConstants(factory);
         using var http = new HttpClient();
         var assistant = new SqlPriceAssistant(

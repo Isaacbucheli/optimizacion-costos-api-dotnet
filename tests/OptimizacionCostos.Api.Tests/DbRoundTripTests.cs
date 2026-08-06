@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.AlertCatalog;
@@ -19,7 +20,7 @@ public class DbRoundTripTests
     private static IAlertCatalogStore NewStore()
     {
         var config = AppConfig.FromConfiguration(new ConfigurationBuilder().Build());
-        return new SqlAlertCatalogStore(new SqlConnectionFactory(config));
+        return new SqlAlertCatalogStore(new SqlConnectionFactory(config, NullLogger<SqlConnectionFactory>.Instance));
     }
 
     [Fact]

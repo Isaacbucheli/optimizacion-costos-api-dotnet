@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.Pendientes;
@@ -25,7 +26,8 @@ public class PendientesDbRoundTripTests
     private static IPendientesStore NewStore()
     {
         var config = AppConfig.FromConfiguration(new ConfigurationBuilder().Build());
-        return new SqlPendientesStore(new SeguimientoSqlConnectionFactory(config));
+        return new SqlPendientesStore(
+            new SeguimientoSqlConnectionFactory(config, NullLogger<SeguimientoSqlConnectionFactory>.Instance));
     }
 
     [Fact]

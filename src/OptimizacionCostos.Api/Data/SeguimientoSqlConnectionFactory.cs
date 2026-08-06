@@ -14,9 +14,12 @@ namespace OptimizacionCostos.Api.Data;
 public sealed class SeguimientoSqlConnectionFactory : ISeguimientoSqlConnectionFactory
 {
     private readonly string? _connectionString;
+    private readonly ILogger<SeguimientoSqlConnectionFactory> _logger;
 
-    public SeguimientoSqlConnectionFactory(AppConfig config)
+    public SeguimientoSqlConnectionFactory(AppConfig config, ILogger<SeguimientoSqlConnectionFactory> logger)
     {
+        _logger = logger;
+
         if (string.IsNullOrWhiteSpace(config.Sql2Server) ||
             string.IsNullOrWhiteSpace(config.Sql2Database) ||
             string.IsNullOrWhiteSpace(config.Sql2Username) ||
@@ -40,13 +43,39 @@ public sealed class SeguimientoSqlConnectionFactory : ISeguimientoSqlConnectionF
 
     public bool IsConfigured => _connectionString is not null;
 
-    public async Task<SqlConnection> OpenAsync(CancellationToken ct = default)
+    public Task<SqlConnection> OpenAsync(CancellationToken ct = default)
     {
         if (_connectionString is null)
             throw new InvalidOperationException("La BD del tablero de pendientes no está configurada.");
 
+        // Mismo reintento que la base principal: es otra base, pero el corte transitorio de Azure no
+        // distingue entre las dos. Ver SqlTransientRetry.
+        return SqlTransientRetry.EjecutarAsync(
+            AbrirAsync,
+            ex => ex is SqlException sql && SqlTransientRetry.EsReintentable(sql.Number),
+            async (intento, causa, espera, token) =>
+            {
+                _logger.LogWarning(
+                    "Fallo transitorio al abrir la conexion a la BD de pendientes (intento {Intento} " +
+                    "de {Total}); se reintenta en {Espera} ms. Causa: {Causa}",
+                    intento, SqlTransientRetry.Intentos, espera.TotalMilliseconds, causa.Message);
+                await Task.Delay(espera, token);
+            },
+            ct);
+    }
+
+    private async Task<SqlConnection> AbrirAsync(CancellationToken ct)
+    {
         var conn = new SqlConnection(_connectionString);
-        await conn.OpenAsync(ct);
-        return conn;
+        try
+        {
+            await conn.OpenAsync(ct);
+            return conn;
+        }
+        catch
+        {
+            await conn.DisposeAsync();
+            throw;
+        }
     }
 }
