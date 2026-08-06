@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.Clients;
@@ -18,7 +19,7 @@ public class SecurityManagementStoreTests
     private static IClientStore NewStore()
     {
         var config = AppConfig.FromConfiguration(new ConfigurationBuilder().Build());
-        return new SqlClientStore(new SqlConnectionFactory(config));
+        return new SqlClientStore(new SqlConnectionFactory(config, NullLogger<SqlConnectionFactory>.Instance));
     }
 
     [Fact]

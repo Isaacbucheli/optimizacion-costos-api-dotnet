@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 
@@ -18,7 +19,7 @@ public class SeedTestUserBootstrap
 
         var email = Environment.GetEnvironmentVariable("BIT_SEED_EMAIL") ?? "poc-dotnet@bit.ec";
         var config = AppConfig.FromConfiguration(new ConfigurationBuilder().Build());
-        var factory = new SqlConnectionFactory(config);
+        var factory = new SqlConnectionFactory(config, NullLogger<SqlConnectionFactory>.Instance);
 
         await using var conn = await factory.OpenAsync();
         await using (var ddl = conn.CreateCommand())

@@ -1,5 +1,6 @@
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging.Abstractions;
 using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.Clients;
@@ -17,7 +18,9 @@ public class WafSubscriptionFilterDbTests
     private static bool Enabled => Environment.GetEnvironmentVariable("BIT_INTEGRATION_DB") == "1";
 
     private static ISqlConnectionFactory NewFactory() =>
-        new SqlConnectionFactory(AppConfig.FromConfiguration(new ConfigurationBuilder().Build()));
+        new SqlConnectionFactory(
+            AppConfig.FromConfiguration(new ConfigurationBuilder().Build()),
+            NullLogger<SqlConnectionFactory>.Instance);
 
     private const string SubA = "11111111-1111-1111-1111-1111111111aa";
     private const string SubB = "22222222-2222-2222-2222-2222222222bb";
