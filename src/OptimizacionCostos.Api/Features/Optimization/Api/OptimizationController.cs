@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Configuration;
+using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.Clients;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 
@@ -20,6 +22,8 @@ public sealed class OptimizationController(
     IAnalysisAccess access,
     IClientStore clients,
     IOptimizationExcelExporter excel,
+    IOperationCooldown cooldown,
+    AppConfig config,
     ILogger<OptimizationController> logger) : ControllerBase
 {
     public sealed record StateUpdateRequest(string? State, string? Notes);
@@ -38,6 +42,14 @@ public sealed class OptimizationController(
         if (!svc.AccessAllowed(Email)) return Forbid403();
         var chk = await access.AssertClientAccessAsync(User, clientId, ct);
         if (!chk.Ok) return Translate(chk);
+
+        // El barrido recorre el tenant del cliente contra Resource Graph. Los recursos no cambian en
+        // segundos, asi que repetirlo solo gasta llamadas contra su suscripcion. Va DESPUES del control
+        // de acceso para no filtrar por el 429 que un cliente ajeno existe.
+        var falta = await cooldown.TryBeginAsync(
+            "optimization-scan", clientId, TimeSpan.FromMinutes(config.OperationCooldownMinutes), ct);
+        if (falta is not null) return this.EnCooldown(falta.Value, "El barrido de optimización");
+
         try { return Ok(await svc.RunScanAsync(clientId, Email, ct)); }
         catch (NoManagedSubscriptionsException ex) { return BadRequest(new { detail = ex.Message }); }
         catch (Exception ex)

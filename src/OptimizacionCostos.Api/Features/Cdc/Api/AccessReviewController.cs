@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.Cdc.AccessReview;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
@@ -23,6 +24,8 @@ public sealed class AccessReviewController(
     IAccessReviewJobQueue queue,
     IAccessReviewExcelExporter excel,
     IAnalysisAccess access,
+    IOperationCooldown cooldown,
+    AppConfig config,
     ISqlConnectionFactory factory) : ControllerBase
 {
     private const string XlsxContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
@@ -37,6 +40,14 @@ public sealed class AccessReviewController(
 
         if (await store.IsRunActiveAsync(clientId, ct))
             return StatusCode(StatusCodes.Status202Accepted, new { status = "running", message = "Ya hay una revisión en proceso" });
+
+        // La guarda de arriba solo cubre corridas SIMULTANEAS, y una revisión dura entre 10 y 30
+        // segundos: peticiones espaciadas la esquivan siempre. Fue lo que pasó el 2026-08-03, seis
+        // revisiones reales contra el Entra ID de un cliente en cuarenta minutos. Los permisos en Entra
+        // no cambian en segundos, así que repetirla solo gasta llamadas a Graph.
+        var falta = await cooldown.TryBeginAsync(
+            "access-review-sync", clientId, TimeSpan.FromMinutes(config.OperationCooldownMinutes), ct);
+        if (falta is not null) return this.EnCooldown(falta.Value, "La revisión de accesos");
 
         var actor = User.FindFirst("sub")?.Value;
         var runId = await store.CreateRunAsync(clientId, actor, ct);

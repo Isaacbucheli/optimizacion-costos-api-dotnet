@@ -78,6 +78,18 @@ public sealed class AppConfig
     /// </summary>
     public int AdvisorSyncCooldownMinutes { get; init; } = 15;
 
+    /// <summary>
+    /// Minutos entre dos ejecuciones de la MISMA operacion externa para el mismo cliente (barrido de
+    /// optimizacion, sync del Boletin, revision de accesos). Una sola palanca para las tres en vez de
+    /// un setting por endpoint: la razon es la misma en todas, la informacion de origen no cambia en
+    /// segundos. <c>0</c> desactiva el enfriamiento.
+    ///
+    /// A proposito NO cubre las operaciones con re-ejecucion legitima e inmediata (sync de
+    /// suscripciones, refresco del score de Advisor, generacion de informes, endpoints de IA): ahi el
+    /// enfriamiento romperia trabajo real. Ver IOperationCooldown.
+    /// </summary>
+    public int OperationCooldownMinutes { get; init; } = 10;
+
     // Key Vault — guarda los client_secret de las credenciales Azure de los clientes.
     // Misma variable que el FastAPI (KEY_VAULT_URL). La identidad del App Service
     // (DefaultAzureCredential) debe poder leer/escribir secretos en este vault.
@@ -139,6 +151,7 @@ public sealed class AppConfig
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             RateLimitPerMinute = int.TryParse(Get("RATE_LIMIT_PER_MINUTE"), out var rpm) && rpm >= 0 ? rpm : 100,
             AdvisorSyncCooldownMinutes = int.TryParse(Get("ADVISOR_SYNC_COOLDOWN_MINUTES"), out var acm) && acm >= 0 ? acm : 15,
+            OperationCooldownMinutes = int.TryParse(Get("OPERATION_COOLDOWN_MINUTES"), out var ocm) && ocm >= 0 ? ocm : 10,
             AzureOpenAiEnabled = Get("AZURE_OPENAI_ENABLED").Trim().ToLowerInvariant() is "true" or "1",
             AzureOpenAiEndpoint = Get("AZURE_OPENAI_ENDPOINT"),
             AzureOpenAiApiKey = Get("AZURE_OPENAI_API_KEY"),

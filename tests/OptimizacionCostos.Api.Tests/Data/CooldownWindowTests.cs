@@ -1,6 +1,6 @@
-using OptimizacionCostos.Api.Features.Waf;
+using OptimizacionCostos.Api.Data;
 
-namespace OptimizacionCostos.Api.Tests.Waf;
+namespace OptimizacionCostos.Api.Tests.Data;
 
 /// <summary>
 /// Enfriamiento del refresco de Advisor. La guarda que ya existía ("no crear una corrida si hay otra
@@ -11,14 +11,14 @@ namespace OptimizacionCostos.Api.Tests.Waf;
 ///
 /// El límite de tasa global es la capa ancha; esto es la regla de negocio.
 /// </summary>
-public sealed class WafAdvisorSyncCooldownTests
+public sealed class CooldownWindowTests
 {
     private static readonly TimeSpan Quince = TimeSpan.FromMinutes(15);
 
     [Fact]
     public void Sin_corrida_previa_se_puede_consultar()
     {
-        Assert.Null(WafAdvisorSyncCooldown.Remaining(null, Quince));
+        Assert.Null(CooldownWindow.Remaining(null, Quince));
     }
 
     [Theory]
@@ -28,7 +28,7 @@ public sealed class WafAdvisorSyncCooldownTests
     [InlineData(899)]  // un segundo antes de cumplir los 15
     public void Antes_del_enfriamiento_devuelve_lo_que_falta(int transcurrido)
     {
-        var falta = WafAdvisorSyncCooldown.Remaining(transcurrido, Quince);
+        var falta = CooldownWindow.Remaining(transcurrido, Quince);
 
         Assert.NotNull(falta);
         Assert.Equal(Quince - TimeSpan.FromSeconds(transcurrido), falta);
@@ -40,15 +40,15 @@ public sealed class WafAdvisorSyncCooldownTests
     [InlineData(86400)] // un día después
     public void Cumplido_el_enfriamiento_se_puede_consultar(int transcurrido)
     {
-        Assert.Null(WafAdvisorSyncCooldown.Remaining(transcurrido, Quince));
+        Assert.Null(CooldownWindow.Remaining(transcurrido, Quince));
     }
 
     [Fact]
     public void Con_enfriamiento_en_cero_nunca_bloquea()
     {
         // ADVISOR_SYNC_COOLDOWN_MINUTES=0 es la válvula de escape para desactivarlo en producción.
-        Assert.Null(WafAdvisorSyncCooldown.Remaining(0, TimeSpan.Zero));
-        Assert.Null(WafAdvisorSyncCooldown.Remaining(null, TimeSpan.Zero));
+        Assert.Null(CooldownWindow.Remaining(0, TimeSpan.Zero));
+        Assert.Null(CooldownWindow.Remaining(null, TimeSpan.Zero));
     }
 
     [Theory]
@@ -58,7 +58,7 @@ public sealed class WafAdvisorSyncCooldownTests
     {
         // DATEDIFF puede dar negativo si el reloj salta hacia atrás. Sin acotar a 0, el tiempo
         // restante saldría mayor que el enfriamiento configurado y en el caso extremo no vencería.
-        var falta = WafAdvisorSyncCooldown.Remaining(transcurrido, Quince);
+        var falta = CooldownWindow.Remaining(transcurrido, Quince);
 
         Assert.Equal(Quince, falta);
         Assert.True(falta <= Quince, "el restante nunca puede superar el enfriamiento configurado");
@@ -71,7 +71,7 @@ public sealed class WafAdvisorSyncCooldownTests
         // rango le diría al cliente que espere más de lo que la regla exige.
         for (var s = -60; s <= 1000; s++)
         {
-            var falta = WafAdvisorSyncCooldown.Remaining(s, Quince);
+            var falta = CooldownWindow.Remaining(s, Quince);
             if (falta is null) continue;
             Assert.InRange(falta.Value, TimeSpan.Zero, Quince);
         }

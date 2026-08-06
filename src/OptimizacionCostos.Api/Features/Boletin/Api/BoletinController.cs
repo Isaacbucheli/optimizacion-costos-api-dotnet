@@ -4,6 +4,7 @@ using System.Xml;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 
@@ -18,7 +19,8 @@ namespace OptimizacionCostos.Api.Features.Boletin.Api;
 public sealed class BoletinController(
     IBoletinService svc, IAnalysisAccess access, ILogger<BoletinController> logger,
     IBoletinLifecycleStore lifecycle, IBoletinMigracionStore migracion, IBoletinNovedadStore novedades,
-    IBoletinNovedadClienteStore novedadesCliente) : ControllerBase
+    IBoletinNovedadClienteStore novedadesCliente,
+    IOperationCooldown cooldown, AppConfig config) : ControllerBase
 {
     [HttpGet("clients/{clientId:int}")]
     public async Task<IActionResult> Get(int clientId, CancellationToken ct)
@@ -34,6 +36,13 @@ public sealed class BoletinController(
     {
         var chk = await access.AssertClientAccessAsync(User, clientId, ct);
         if (!chk.Ok) return Translate(chk);
+
+        // El sync consulta Service Health del tenant del cliente. Los retiros de Microsoft se anuncian
+        // con meses de anticipación, así que repetir la consulta minuto a minuto no aporta nada.
+        var falta = await cooldown.TryBeginAsync(
+            "boletin-sync", clientId, TimeSpan.FromMinutes(config.OperationCooldownMinutes), ct);
+        if (falta is not null) return this.EnCooldown(falta.Value, "La sincronización del Boletín");
+
         try { return Ok(await svc.RunSyncAsync(clientId, User.FindFirst("sub")?.Value, ct)); }
         catch (BoletinNoManagedSubscriptionsException ex) { return BadRequest(new { detail = ex.Message }); }
         catch (Exception ex)

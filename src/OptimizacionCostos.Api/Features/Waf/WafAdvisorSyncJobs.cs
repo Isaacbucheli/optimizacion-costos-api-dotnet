@@ -30,30 +30,9 @@ public enum WafAdvisorSyncOutcome { Created, AlreadyActive, InCooldown }
 public sealed record WafAdvisorSyncStartResult(
     WafAdvisorSyncOutcome Outcome, WafAdvisorSyncJobStatus? Job, TimeSpan? RetryAfter);
 
-/// <summary>
-/// Decision del enfriamiento, separada del SQL a proposito: la consulta necesita base de datos y la
-/// suite de CI corre sin una, asi que la aritmetica (bordes, enfriamiento apagado, reloj hacia atras)
-/// se prueba aca. El SQL solo aporta los segundos transcurridos.
-/// </summary>
-public static class WafAdvisorSyncCooldown
-{
-    /// <summary>
-    /// Cuanto falta para poder volver a consultar Advisor, o <c>null</c> si ya se puede.
-    /// </summary>
-    /// <param name="secondsSinceLastFinished">
-    /// Segundos desde que termino la ultima corrida, o <c>null</c> si no hay ninguna terminada.
-    /// </param>
-    public static TimeSpan? Remaining(int? secondsSinceLastFinished, TimeSpan cooldown)
-    {
-        if (cooldown <= TimeSpan.Zero) return null;        // enfriamiento desactivado
-        if (secondsSinceLastFinished is null) return null; // primera corrida del cliente
-
-        // Se acota a >= 0: un salto de reloj hacia atras daria un transcurrido negativo y volveria el
-        // enfriamiento mas largo que lo configurado, o incluso eterno.
-        var transcurrido = TimeSpan.FromSeconds(Math.Max(0, secondsSinceLastFinished.Value));
-        return transcurrido < cooldown ? cooldown - transcurrido : null;
-    }
-}
+// El calculo del enfriamiento vive en Data/CooldownWindow: lo comparten esta corrida de Advisor y el
+// resto de las operaciones externas, y tener dos implementaciones de los mismos bordes es como se
+// terminan desviando.
 
 public interface IWafAdvisorSyncJobQueue
 {
@@ -158,7 +137,7 @@ public sealed class SqlWafAdvisorSyncJobStore(ISqlConnectionFactory factory) : I
             if (await reader.ReadAsync(ct))
             {
                 var terminada = Read(reader);
-                var falta = WafAdvisorSyncCooldown.Remaining(reader.GetInt32(15), cooldown);
+                var falta = CooldownWindow.Remaining(reader.GetInt32(15), cooldown);
                 if (falta is not null)
                 {
                     await reader.DisposeAsync();
