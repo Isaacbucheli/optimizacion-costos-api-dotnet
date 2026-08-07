@@ -1,4 +1,5 @@
 using OptimizacionCostos.Api.Features.Cdc.AccessReview;
+using static OptimizacionCostos.Api.Tests.Cdc.AccessReview.AccessReviewSnapshotTestHelper;
 
 namespace OptimizacionCostos.Api.Tests.Cdc.AccessReview;
 
@@ -10,14 +11,14 @@ namespace OptimizacionCostos.Api.Tests.Cdc.AccessReview;
 /// <c>EstadoRbac.LoginMedido</c>, que se crea en la Task 2: queda deliberadamente afuera de este
 /// archivo para no acoplar las tareas (ver informe de la Task 1).
 /// </para>
+/// <para>
+/// El armado del snapshot (<c>Snap</c>) vive en <see cref="AccessReviewSnapshotTestHelper"/>,
+/// compartido con <c>EstadoRbacTests</c> del Informe de Valor: las dos reglas de completitud
+/// necesitan exactamente el mismo snapshot mínimo.
+/// </para>
 /// </summary>
 public sealed class AccessReviewCompletitudTests
 {
-    private static AccessReviewSnapshot Snap(string runStatus, params (string Arm, string Graph)[] creds) =>
-        new(new AccessRunRef(1, 1, runStatus, null, null, null, null),
-            [.. creds.Select((c, i) => new AccessCredStatus(i + 1, null, c.Arm, c.Graph, null))],
-            [], [], []);
-
     [Fact]
     public void ArmComplete_es_publico_y_exige_todas_las_credenciales_en_ok()
     {
