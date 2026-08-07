@@ -345,14 +345,23 @@ public sealed class SqlAccessReviewStore(ISqlConnectionFactory factory) : IAcces
         return await r.ReadAsync(ct) ? ReadRun(r) : null;
     }
 
+    /// <summary>
+    /// Expuesto para <see cref="OptimizacionCostos.Api.Tests.Cdc.AccessReview.AccessReviewCompletitudTests"/>
+    /// (InternalsVisibleTo): la unica clausula que justifica <see cref="GetLatestFinishedRunAsync"/> es el
+    /// filtro de estado, y no hay forma de trancarla sin base de datos salvo mirando el texto. Si alguien
+    /// la borra o pega de vuelta el <c>run_id &lt;</c> de <see cref="GetPreviousFinishedRunAsync"/>, el
+    /// test de esa clase lo rompe.
+    /// </summary>
+    internal const string LatestFinishedRunSql = "SELECT TOP 1 " + RunCols + " FROM dbo.cdc_access_review_run"
+        + " WHERE client_id=@cid AND status IN ('ok','partial')"
+        + " ORDER BY run_id DESC";
+
     public async Task<AccessRunRef?> GetLatestFinishedRunAsync(int clientId, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
         await EnsureSchemaAsync(conn, ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "SELECT TOP 1 " + RunCols + " FROM dbo.cdc_access_review_run"
-            + " WHERE client_id=@cid AND status IN ('ok','partial')"
-            + " ORDER BY run_id DESC";
+        cmd.CommandText = LatestFinishedRunSql;
         cmd.Parameters.Add(new SqlParameter("@cid", clientId));
         await using var r = await cmd.ExecuteReaderAsync(ct);
         return await r.ReadAsync(ct) ? ReadRun(r) : null;

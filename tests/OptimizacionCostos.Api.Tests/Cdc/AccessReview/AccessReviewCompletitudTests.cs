@@ -25,4 +25,17 @@ public sealed class AccessReviewCompletitudTests
         Assert.False(AccessReviewAccountBuilder.ArmComplete(Snap("ok", ("ok", "ok"), ("error", "ok"))));
         Assert.False(AccessReviewAccountBuilder.ArmComplete(Snap("error", ("ok", "ok"))));
     }
+
+    /// <summary>
+    /// Red sin base de datos para la unica clausula que justifica el metodo: si alguien la borra
+    /// o pega de vuelta el <c>run_id &lt;</c> de su gemelo <c>GetPreviousFinishedRunAsync</c>, un
+    /// cliente con una corrida en error recibiria un inventario a medias presentado como completo,
+    /// sin que se vea en ninguna pantalla.
+    /// </summary>
+    [Fact]
+    public void GetLatestFinishedRunAsync_filtra_estado_y_no_filtra_por_run_id()
+    {
+        Assert.Contains("status IN ('ok','partial')", SqlAccessReviewStore.LatestFinishedRunSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("run_id <", SqlAccessReviewStore.LatestFinishedRunSql, StringComparison.Ordinal);
+    }
 }
