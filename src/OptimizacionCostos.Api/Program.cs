@@ -132,6 +132,12 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinNoved
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinMigracionSugeridor,
     OptimizacionCostos.Api.Features.Boletin.BoletinMigracionSugeridor>();
 
+// Informe de valor del servicio administrado (Entrega 1): ingesta de los insumos que no vienen
+// de la credencial del cliente (BITCOST y mesa de servicio). Reusa ISqlConnectionFactory (ya
+// registrado arriba). El cálculo y la generación son de las entregas 2 y 3.
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.InformeValor.IInformeValorStore,
+    OptimizacionCostos.Api.Features.InformeValor.SqlInformeValorStore>();
+
 // Módulo WAF (B7). Schema lazy en cada store. Reusa IChatCompletionClient, IAzureCredentialFactory,
 // IAnalysisAccess, ICostResultsQuery, ISqlConnectionFactory ya registrados.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafCatalogStore, OptimizacionCostos.Api.Features.Waf.SqlWafCatalogStore>();

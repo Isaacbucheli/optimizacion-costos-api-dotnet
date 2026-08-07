@@ -24,6 +24,7 @@ public sealed class RequireModuleCoverageTests
         ["ReportsController"] = Modules.Report,
         ["FilesController"] = Modules.Report,
         ["BoletinController"] = Modules.Boletin,
+        ["InformeValorController"] = Modules.InformeValor,
     };
 
     private static IEnumerable<Type> Controllers() =>
