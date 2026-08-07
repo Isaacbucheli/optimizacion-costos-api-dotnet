@@ -62,6 +62,10 @@ public static class EstadoRbac
     /// (<c>is_active = 1 AND COALESCE(is_managed,1) = 1</c>).</param>
     public static EstadoRbacResultado Resolver(AccessReviewSnapshot? snapshot, bool tieneSuscripcionesAdministradas)
     {
+        // Fijo en (false, false) en las tres ramas NoDisponible: ahí la fuente del insumo pasa a
+        // ser el archivo que sube el consultor, y estos ejes describen la corrida de base, no el
+        // archivo, así que no aplican. Default conservador: suprime en vez de afirmar (mejor
+        // omitir un hallazgo que publicar una afirmación de seguridad falsa).
         var sinMedir = new EjesRbac(false, false);
 
         if (!tieneSuscripcionesAdministradas)
