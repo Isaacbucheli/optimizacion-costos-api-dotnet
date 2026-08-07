@@ -130,12 +130,20 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         await using var conn = await factory.OpenAsync(ct);
         await InformeValorSchema.EnsureSchemaAsync(conn, ct);
         await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct);
-        await ExecAsync(conn, tx, ct, $"DELETE FROM {table} WHERE client_id = @cid",
-            ("@cid", SqlDbType.Int, clientId));
-        await ExecAsync(conn, tx, ct,
-            "DELETE FROM dbo.informe_valor_ingesta WHERE client_id = @cid AND kind = @k",
-            ("@cid", SqlDbType.Int, clientId), ("@k", SqlDbType.NVarChar, kind));
-        await tx.CommitAsync(ct);
+        try
+        {
+            await ExecAsync(conn, tx, ct, $"DELETE FROM {table} WHERE client_id = @cid",
+                ("@cid", SqlDbType.Int, clientId));
+            await ExecAsync(conn, tx, ct,
+                "DELETE FROM dbo.informe_valor_ingesta WHERE client_id = @cid AND kind = @k",
+                ("@cid", SqlDbType.Int, clientId), ("@k", SqlDbType.NVarChar, kind));
+            await tx.CommitAsync(ct);
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
     }
 
     public async Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct)

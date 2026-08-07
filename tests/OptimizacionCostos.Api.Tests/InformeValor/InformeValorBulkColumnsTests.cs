@@ -25,6 +25,16 @@ public sealed class InformeValorBulkColumnsTests
     }
 
     [Fact]
+    public void Las_columnas_de_casos_cubren_el_esquema()
+    {
+        var nombres = SqlInformeValorStore.CasoColumns.Select(c => c.Column).ToList();
+        Assert.Equal(
+            ["client_id", "ingesta_id", "natural_key_hash", "caso", "fecha_registro", "estado",
+             "sla_horas", "duracion_cruda", "cumple", "categoria", "subcategoria", "horario"],
+            nombres);
+    }
+
+    [Fact]
     public void Los_nulos_de_facturacion_se_mapean_a_DBNull()
     {
         foreach (var (column, _, value) in SqlInformeValorStore.FacturacionColumns)
