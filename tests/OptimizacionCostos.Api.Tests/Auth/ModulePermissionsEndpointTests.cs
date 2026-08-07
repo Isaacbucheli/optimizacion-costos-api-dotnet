@@ -30,12 +30,12 @@ public sealed class ModulePermissionsEndpointTests : IClassFixture<ModulePermiss
     private static StringContent Json(string body) => new(body, Encoding.UTF8, "application/json");
 
     [Fact]
-    public async Task Me_de_admin_trae_los_15_modulos_todo_true()
+    public async Task Me_de_admin_trae_los_16_modulos_todo_true()
     {
         var client = ClientFor("admin@bit.ec", Roles.Admin);
         var me = await client.GetFromJsonAsync<JsonElement>("/auth/me");
         var modules = me.GetProperty("modules");
-        Assert.Equal(15, modules.GetArrayLength());
+        Assert.Equal(16, modules.GetArrayLength());
         Assert.All(modules.EnumerateArray(), m =>
         {
             Assert.True(m.GetProperty("can_view").GetBoolean());
@@ -70,9 +70,9 @@ public sealed class ModulePermissionsEndpointTests : IClassFixture<ModulePermiss
     {
         var client = ClientFor("admin2@bit.ec", Roles.Admin);
         var body = await client.GetFromJsonAsync<JsonElement>("/auth/module-permissions");
-        Assert.Equal(15, body.GetProperty("modules").GetArrayLength());
-        Assert.Equal(15, body.GetProperty("permissions").GetProperty("consultor").GetArrayLength());
-        Assert.Equal(15, body.GetProperty("permissions").GetProperty("lector").GetArrayLength());
+        Assert.Equal(16, body.GetProperty("modules").GetArrayLength());
+        Assert.Equal(16, body.GetProperty("permissions").GetProperty("consultor").GetArrayLength());
+        Assert.Equal(16, body.GetProperty("permissions").GetProperty("lector").GetArrayLength());
         var first = body.GetProperty("modules")[0];
         Assert.True(first.TryGetProperty("label", out _));
         Assert.True(first.TryGetProperty("group", out _));
