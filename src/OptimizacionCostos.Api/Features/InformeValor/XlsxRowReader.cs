@@ -16,15 +16,17 @@ public static class XlsxRowReader
     {
         SpreadsheetDocument doc;
         try { doc = SpreadsheetDocument.Open(stream, false); }
-        catch (Exception ex) when (ex is FileFormatException or FormatException or ArgumentException)
+        catch (Exception ex) when (ex is FileFormatException or FormatException or ArgumentException
+            or OpenXmlPackageException)
         {
             // Estas son las excepciones que de verdad significan "esto no es un .xlsx":
             // FileFormatException es la que lanza la librería al abrir un paquete que no es un
-            // zip/OOXML válido (incluye el caso de un stream vacío), y FormatException/
-            // ArgumentException cubren fallos de parseo o de argumentos inválidos dentro del
-            // paquete. Cualquier otra cosa (E/S, memoria, un bug nuestro) se propaga: el
-            // controller ya tiene un catch general que responde 500, que es lo correcto para
-            // una falla que no es del archivo.
+            // zip/OOXML válido (incluye el caso de un stream vacío), OpenXmlPackageException es
+            // la que lanza cuando el paquete OOXML tiene relaciones o content-types inválidos, y
+            // FormatException/ArgumentException cubren fallos de parseo o de argumentos
+            // inválidos dentro del paquete. Cualquier otra cosa (E/S, memoria, un bug nuestro) se
+            // propaga: el controller ya tiene un catch general que responde 500, que es lo
+            // correcto para una falla que no es del archivo.
             throw new InvalidOperationException("El archivo no es un Excel (.xlsx) válido.");
         }
 
@@ -74,18 +76,25 @@ public static class XlsxRowReader
     /// <summary>
     /// "C7" → 2. Sin referencia, null: el llamador (Cells) la ubica en la posición siguiente a
     /// la última celda leída de esa fila, que es como OOXML define la posición de una celda sin
-    /// atributo "r" (implícitamente consecutiva a la anterior).
+    /// atributo "r" (implícitamente consecutiva a la anterior). Referencias con más de 3 letras,
+    /// o cuyo valor cae fuera de las 16.384 columnas de Excel (la última es "XFD"), también
+    /// devuelven null y caen en ese mismo camino: sin este límite, una racha larga de letras
+    /// desborda el acumulador (aritmética unchecked) y puede volver a producir el arreglo
+    /// desmedido que las celdas sin referencia producían antes del fix anterior.
     /// </summary>
     private static int? ColumnIndex(string? reference)
     {
         if (string.IsNullOrEmpty(reference)) return null;
+        const int columnasMaximasExcel = 16_384; // "XFD"
         var n = 0;
+        var letras = 0;
         foreach (var ch in reference)
         {
             if (ch is < 'A' or > 'Z') break;
+            if (++letras > 3) return null; // "XFD" tiene 3 letras; más de 3 no puede ser una columna válida
             n = n * 26 + (ch - 'A' + 1);
         }
-        return n - 1;
+        return n is >= 1 and <= columnasMaximasExcel ? n - 1 : null;
     }
 
     private static string Text(Cell cell, SharedStringTable? sst)

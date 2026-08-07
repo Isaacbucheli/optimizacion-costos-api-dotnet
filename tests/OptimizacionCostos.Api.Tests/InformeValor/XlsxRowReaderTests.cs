@@ -143,6 +143,21 @@ public sealed class XlsxRowReaderTests
         Assert.Equal(["a", "b", "c"], rows[0]);
     }
 
+    /// <summary>
+    /// Una referencia con una racha de miles de letras (un exportador raro, o un archivo
+    /// corrupto) no debe desbordar el acumulador de ColumnIndex ni hacer que Cells() intente
+    /// reservar un arreglo desmedido: se trata como una referencia inválida y la celda cae en
+    /// la posición siguiente a la anterior, igual que el caso sin referencia de arriba.
+    /// </summary>
+    [Fact]
+    public void Celda_con_referencia_de_columna_absurdamente_larga_usa_la_posicion_siguiente_a_la_anterior()
+    {
+        var referenciaLarga = new string('Z', 10_000) + "1";
+        using var xlsx = BuildXlsxConCeldas([[("A1", "a"), (referenciaLarga, "b"), ("C1", "c")]]);
+        var rows = XlsxRowReader.Read(xlsx, 100).ToList();
+        Assert.Equal(["a", "b", "c"], rows[0]);
+    }
+
     [Fact]
     public void Superar_el_tope_de_filas_lanza_con_mensaje_para_el_usuario()
     {
