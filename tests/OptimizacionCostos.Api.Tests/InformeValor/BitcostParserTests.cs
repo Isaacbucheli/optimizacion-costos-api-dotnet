@@ -11,8 +11,10 @@ public sealed class BitcostParserTests
         "Tarifa", "PVP", "Jerarquía de Fechas - Año", "Jerarquía de Fechas - Mes",
     ];
 
-    private static string?[] Fila(string recurso, string pvp, string anio, string mes, string categoria = "Storage") =>
-        ["t-1", "Azure plan", "sub-1", "rg-prod", recurso, "IT", categoria, "Files", "Hot", "1", "1/Hour", "0.01", pvp, anio, mes];
+    private static string?[] Fila(
+        string recurso, string pvp, string anio, string mes, string categoria = "Storage",
+        string cantidad = "1", string tarifa = "0.01") =>
+        ["t-1", "Azure plan", "sub-1", "rg-prod", recurso, "IT", categoria, "Files", "Hot", cantidad, "1/Hour", tarifa, pvp, anio, mes];
 
     [Fact]
     public void Lee_una_fila_completa()
@@ -91,6 +93,74 @@ public sealed class BitcostParserTests
         ]);
         var r = BitcostParser.Parse(xlsx);
         Assert.Equal(15.25m, Assert.Single(r.Rows).Pvp);
+        Assert.Equal(1, r.RowsMerged);
+    }
+
+    /// <summary>
+    /// La regla que tiene que cerrarle al consultor: total = procesadas + descartadas +
+    /// fusionadas. Antes de este fix una fusión no se contaba en ningún lado (ver el comentario
+    /// de la clase): con el archivo real de 26.611 filas eso daba rows_total: 26611,
+    /// rows_processed: 14111, rows_skipped: 0 sin ninguna explicación de los 12.500 que faltaban.
+    /// </summary>
+    [Fact]
+    public void La_aritmetica_de_filas_fusionadas_le_cierra_al_consultor()
+    {
+        using var xlsx = XlsxRowReaderTests.BuildXlsx([
+            Cabecera,
+            Fila("vm-uno", "10", "2026", "Enero"),
+            Fila("vm-uno", "5", "2026", "Enero"),
+            Fila("vm-uno", "1", "2026", "Enero"),
+        ]);
+        var r = BitcostParser.Parse(xlsx);
+
+        Assert.Equal(3, r.RowsTotal);
+        Assert.Single(r.Rows);
+        Assert.Equal(0, r.RowsSkipped);
+        Assert.Equal(2, r.RowsMerged);
+        Assert.Equal(r.RowsTotal, r.Rows.Count + r.RowsSkipped + r.RowsMerged);
+        Assert.Contains(r.Warnings, w => w.Contains("fusion", StringComparison.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Quantity es aditiva igual que Pvp: dos filas fusionadas son el mismo recurso repetido, así
+    /// que sus cantidades también se suman. Antes de este fix la fila fusionada se quedaba con
+    /// la Quantity de la primera nomás, junto a un Pvp que sí era la suma de las N filas: un
+    /// importe de N filas al lado de la cantidad de una sola.
+    /// </summary>
+    [Fact]
+    public void Al_fusionar_la_cantidad_tambien_se_suma()
+    {
+        using var xlsx = XlsxRowReaderTests.BuildXlsx([
+            Cabecera,
+            Fila("vm-uno", "10", "2026", "Enero", cantidad: "2"),
+            Fila("vm-uno", "5", "2026", "Enero", cantidad: "3"),
+        ]);
+        var f = Assert.Single(BitcostParser.Parse(xlsx).Rows);
+        Assert.Equal(5m, f.Quantity);
+    }
+
+    /// <summary>
+    /// Rate es un precio UNITARIO, no algo que se acumule: sumar dos tarifas no da un número con
+    /// significado de negocio. Se conserva solo si todas las filas fusionadas coinciden en el
+    /// mismo valor; en cuanto una difiere, no hay una sola tarifa que describa la fila resultante
+    /// y queda en null antes que inventar un número.
+    /// </summary>
+    [Fact]
+    public void Al_fusionar_la_tarifa_se_conserva_solo_si_coincide_en_todas()
+    {
+        using var igual = XlsxRowReaderTests.BuildXlsx([
+            Cabecera,
+            Fila("vm-uno", "10", "2026", "Enero", tarifa: "0.05"),
+            Fila("vm-uno", "5", "2026", "Enero", tarifa: "0.05"),
+        ]);
+        Assert.Equal(0.05m, Assert.Single(BitcostParser.Parse(igual).Rows).Rate);
+
+        using var distinta = XlsxRowReaderTests.BuildXlsx([
+            Cabecera,
+            Fila("vm-uno", "10", "2026", "Enero", tarifa: "0.05"),
+            Fila("vm-uno", "5", "2026", "Enero", tarifa: "0.09"),
+        ]);
+        Assert.Null(Assert.Single(BitcostParser.Parse(distinta).Rows).Rate);
     }
 
     [Fact]

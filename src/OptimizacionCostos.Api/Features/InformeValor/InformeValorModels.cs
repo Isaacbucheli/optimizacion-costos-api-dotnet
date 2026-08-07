@@ -11,5 +11,10 @@ public sealed record CasoRow(
     decimal? DuracionCruda, string? Cumple, string? Categoria, string? Subcategoria, string? Horario);
 
 public sealed record ParseResult<T>(
-    IReadOnlyList<T> Rows, int RowsTotal, int RowsSkipped, int TruncatedValues,
-    IReadOnlyList<string> Warnings);
+    IReadOnlyList<T> Rows, int RowsTotal, int RowsSkipped,
+    // Filas que ni se guardaron ni se contaron como descartadas: se fusionaron con otra de la
+    // misma clave natural (hoy solo pasa en BitcostParser; CasosParser siempre manda 0 acá,
+    // porque ahí una colisión es un duplicado real, no algo que sumar). Junto con RowsSkipped
+    // deja la cuenta explicable: RowsTotal = Rows.Count + RowsSkipped + RowsMerged.
+    int RowsMerged,
+    int TruncatedValues, IReadOnlyList<string> Warnings);

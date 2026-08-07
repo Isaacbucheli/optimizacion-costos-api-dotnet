@@ -83,7 +83,10 @@ public static class CasosParser
         if (duplicadas > 0) warnings.Add($"{duplicadas} filas se descartaron por ser idénticas a otra.");
         if (truncated > 0) warnings.Add($"{truncated} valores se recortaron por exceder el largo de su columna.");
 
-        return new ParseResult<CasoRow>(rows.Values.ToList(), total, skipped, truncated, warnings);
+        // CasosParser nunca fusiona (ver el comentario de la clave natural más arriba): una
+        // colisión es siempre un duplicado real que se descarta entero, así que RowsMerged
+        // siempre va en 0 acá.
+        return new ParseResult<CasoRow>(rows.Values.ToList(), total, skipped, 0, truncated, warnings);
     }
 
     private static int Col(string[] hdr, params string[] alternativas)
