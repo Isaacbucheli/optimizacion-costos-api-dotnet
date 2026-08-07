@@ -96,3 +96,24 @@ public sealed record RbacFila(
     bool? CuentaHabilitada,
     string? UltimoLoginTexto,
     string? ViaGrupoId);
+
+/// <summary>
+/// Un retiro de Azure vigente para un cliente, agrupado por anuncio (<see cref="AnnouncementKey"/>):
+/// <see cref="RecursosAfectados"/> cuenta cuántos recursos concretos toca ese anuncio, no cuántas
+/// veces aparece. La fuente es <c>boletin_retirement</c> del módulo Boletín (no el cruce de
+/// Advisor de la matriz, que no trae fecha de retiro ni acción recomendada por recurso).
+/// <see cref="Titulo"/> y <see cref="AccionRecomendada"/> prefieren la traducción al español
+/// cuando ya existe (<c>title_es</c>/<c>recommended_action_es</c>) y caen al original en inglés si
+/// todavía no se tradujo, para no publicar un campo vacío mientras la traducción está pendiente.
+/// <see cref="Caracteristica"/> es <c>retiring_feature</c> ("Retiring Feature" del CSV de Advisor).
+/// <b>Este recolector no clasifica el plazo</b> (vencido, menos de tres meses, menos de un año):
+/// esa regla depende de la fecha de corte del informe, que solo conoce la calculadora. Por eso el
+/// record no tiene ni "Situación" ni "Vencido", solo <see cref="FechaRetiro"/> cruda.
+/// </summary>
+public sealed record RetiroFila(
+    string AnnouncementKey,
+    string? Caracteristica,
+    DateOnly? FechaRetiro,
+    string? Titulo,
+    string? AccionRecomendada,
+    int RecursosAfectados);
