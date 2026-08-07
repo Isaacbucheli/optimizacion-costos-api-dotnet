@@ -185,10 +185,9 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
             """;
         cmd.Parameters.Add(new SqlParameter("@cid", SqlDbType.Int) { Value = clientId });
         cmd.Parameters.Add(new SqlParameter("@k", SqlDbType.NVarChar, 20) { Value = kind });
-        cmd.Parameters.Add(new SqlParameter("@f", SqlDbType.NVarChar, 400)
-        { Value = fileName.Length > 400 ? fileName[..400] : fileName });
+        cmd.Parameters.Add(new SqlParameter("@f", SqlDbType.NVarChar, 400) { Value = TruncDb(fileName, 400) });
         cmd.Parameters.Add(new SqlParameter("@now", SqlDbType.DateTime2) { Value = DateTime.UtcNow });
-        cmd.Parameters.Add(new SqlParameter("@u", SqlDbType.NVarChar, 200) { Value = (object?)user ?? DBNull.Value });
+        cmd.Parameters.Add(new SqlParameter("@u", SqlDbType.NVarChar, 200) { Value = TruncDb(user, 200) });
         return (int)(await cmd.ExecuteScalarAsync(ct))!;
     }
 
@@ -234,4 +233,13 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
 
     /// <summary>Un null de C# en SqlParameter lanza SqlException 8178; hay que mapear a DBNull.</summary>
     private static object Db(object? value) => value ?? DBNull.Value;
+
+    /// <summary>
+    /// Trunca al ancho de la columna y mapea null a DBNull.Value. Un valor más largo que su
+    /// NVARCHAR(n) dispara el error 8152 de SQL Server y Kestrel corta la conexión en vez de
+    /// devolver una respuesta HTTP normal — eso ya se leyó una vez como vulnerabilidad que no
+    /// era. fileName y user pasan los dos por aquí antes del INSERT en CreateRunAsync.
+    /// </summary>
+    private static object TruncDb(string? value, int max) =>
+        value is null ? DBNull.Value : value.Length > max ? value[..max] : value;
 }
