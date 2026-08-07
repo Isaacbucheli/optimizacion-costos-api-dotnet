@@ -23,6 +23,14 @@ public static class AccessReviewAccountBuilder
         s.Run.Status != "error"
         && s.Credentials.All(c => c.GraphStatus is "ok" or "sin_licencia_p1");
 
+    /// <summary>
+    /// El inventario de ARM se leyó completo para todas las credenciales. Vivía private dentro
+    /// de AccessReviewDeltaBuilder; se promueve acá para que exista una sola definición, al
+    /// lado de GraphComplete, que es su gemela para el eje de identidad.
+    /// </summary>
+    public static bool ArmComplete(AccessReviewSnapshot s)
+        => s.Run.Status != "error" && s.Credentials.All(c => c.ArmStatus == "ok");
+
     /// <param name="decisions">Decisiones del cliente por access_key (bloque 3). Vacío = todo pendiente.</param>
     public static IReadOnlyList<AccessAccountRow> Build(
         AccessReviewSnapshot s, IReadOnlyDictionary<string, AccessDecision>? decisions = null)
