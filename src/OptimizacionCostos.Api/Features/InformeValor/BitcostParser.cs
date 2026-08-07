@@ -1,4 +1,5 @@
 using System.Globalization;
+using static OptimizacionCostos.Api.Features.InformeValor.InsumoCellUtils;
 
 namespace OptimizacionCostos.Api.Features.InformeValor;
 
@@ -110,38 +111,10 @@ public static class BitcostParser
         return -1;
     }
 
-    internal static string Norm(string? s)
-    {
-        if (string.IsNullOrEmpty(s)) return string.Empty;
-        var d = s.Normalize(System.Text.NormalizationForm.FormD);
-        var sb = new System.Text.StringBuilder(d.Length);
-        foreach (var ch in d)
-        {
-            if (CharUnicodeInfo.GetUnicodeCategory(ch) == UnicodeCategory.NonSpacingMark) continue;
-            sb.Append(char.IsLetterOrDigit(ch) ? char.ToLowerInvariant(ch) : ' ');
-        }
-        return string.Join(' ', sb.ToString().Split(' ', StringSplitOptions.RemoveEmptyEntries));
-    }
-
-    private static string Get(string[] row, int idx) =>
-        idx >= 0 && idx < row.Length ? row[idx].Trim() : string.Empty;
-
     private static byte Mes(string raw)
     {
         var n = Norm(raw);
         if (Meses.TryGetValue(n, out var m)) return m;
         return byte.TryParse(n, out var num) && num >= 1 && num <= 12 ? num : (byte)0;
-    }
-
-    private static bool TryDecimal(string raw, out decimal value) =>
-        decimal.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
-
-    /// <summary>Recorta al ancho de la columna. El hash ya se calculó sobre el valor completo.</summary>
-    private static string? Trunc(string s, int max, ref int counter)
-    {
-        if (s.Length == 0) return null;
-        if (s.Length <= max) return s;
-        counter++;
-        return s[..max];
     }
 }

@@ -1,4 +1,5 @@
 using System.Globalization;
+using static OptimizacionCostos.Api.Features.InformeValor.InsumoCellUtils;
 
 namespace OptimizacionCostos.Api.Features.InformeValor;
 
@@ -19,7 +20,7 @@ public static class CasosParser
     {
         var rows = new Dictionary<string, CasoRow>(StringComparer.Ordinal);
         var warnings = new List<string>();
-        int total = 0, skipped = 0, truncated = 0, fechasMalas = 0;
+        int total = 0, skipped = 0, truncated = 0, fechasMalas = 0, duplicadas = 0;
         string[]? hdr = null;
         int cCaso = -1, cFecha = -1, cEstado = -1, cSla = -1, cDur = -1, cCumple = -1, cCat = -1, cSub = -1, cHor = -1;
 
@@ -54,7 +55,14 @@ public static class CasosParser
             DateOnly? fecha = TryFecha(fechaRaw, out var f) ? f : null;
             if (fecha is null && fechaRaw.Length > 0) fechasMalas++;
 
-            var hash = NaturalKey.Hash(caso, fechaRaw, Get(row, cCat), Get(row, cSub), Get(row, cDur));
+            var hash = NaturalKey.Hash(
+                caso, fechaRaw, estado, Get(row, cCat), Get(row, cSub), Get(row, cDur), Get(row, cHor));
+
+            // A diferencia de BitcostParser, dos filas con la misma clave natural NO son aditivas
+            // acá: si la clave ya existe, es un duplicado real y sobrescribirla en silencio haría
+            // desaparecer una fila sin dejar rastro. Se descarta y se cuenta, nunca se pisa.
+            if (rows.ContainsKey(hash)) { duplicadas++; continue; }
+
             rows[hash] = new CasoRow(
                 hash,
                 Trunc(caso, 120, ref truncated),
@@ -70,6 +78,7 @@ public static class CasosParser
 
         if (hdr is null) throw new InvalidOperationException(ErrorFormatoMesaServicio);
         if (fechasMalas > 0) warnings.Add($"{fechasMalas} casos tienen una fecha de registro que no se pudo leer.");
+        if (duplicadas > 0) warnings.Add($"{duplicadas} filas se descartaron por ser idénticas a otra.");
         if (truncated > 0) warnings.Add($"{truncated} valores se recortaron por exceder el largo de su columna.");
 
         return new ParseResult<CasoRow>(rows.Values.ToList(), total, skipped, truncated, warnings);
@@ -79,17 +88,9 @@ public static class CasosParser
     {
         foreach (var alt in alternativas)
             for (var i = 0; i < hdr.Length; i++)
-                if (BitcostParser.Norm(hdr[i]) == alt) return i;
+                if (Norm(hdr[i]) == alt) return i;
         return -1;
     }
-
-    /// <summary>
-    /// Las filas del lector tienen largo variable: los huecos del final no se rellenan hasta el
-    /// ancho de la cabecera (XlsxRowReader solo reserva hasta la última celda no vacía de esa
-    /// fila). Un índice fuera de rango es, por lo tanto, una celda vacía legítima, no un error.
-    /// </summary>
-    private static string Get(string[] row, int idx) =>
-        idx >= 0 && idx < row.Length ? row[idx].Trim() : string.Empty;
 
     /// <summary>Acepta ISO, formato local y el serial numérico de Excel (base 1899-12-30).</summary>
     private static bool TryFecha(string raw, out DateOnly value)
@@ -104,17 +105,5 @@ public static class CasosParser
             return true;
         }
         return false;
-    }
-
-    private static bool TryDecimal(string raw, out decimal value) =>
-        decimal.TryParse(raw, NumberStyles.Float, CultureInfo.InvariantCulture, out value);
-
-    /// <summary>Recorta al ancho de la columna. El hash ya se calculó sobre el valor completo.</summary>
-    private static string? Trunc(string s, int max, ref int counter)
-    {
-        if (s.Length == 0) return null;
-        if (s.Length <= max) return s;
-        counter++;
-        return s[..max];
     }
 }

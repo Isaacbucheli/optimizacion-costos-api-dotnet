@@ -40,7 +40,7 @@ public sealed class CasosParserTests
     [Fact]
     public void Acepta_fecha_en_serial_de_Excel()
     {
-        // 46023 = 2026-01-15 en el calendario 1900 de Excel.
+        // 46037 = 2026-01-15 en el calendario 1900 de Excel.
         using var xlsx = XlsxRowReaderTests.BuildXlsx([Cabecera, Fila("RF-1", "46037", "1", "SI")]);
         var f = Assert.Single(CasosParser.Parse(xlsx).Rows);
         Assert.NotNull(f.FechaRegistro);
@@ -75,6 +75,22 @@ public sealed class CasosParserTests
         ]);
         var r = CasosParser.Parse(xlsx);
         Assert.Equal(2, r.Rows.Select(x => x.Hash).Distinct().Count());
+    }
+
+    /// <summary>
+    /// Dos filas realmente idénticas colapsan a una sola (misma clave natural), pero a
+    /// diferencia de BitcostParser acá no hay nada que sumar: la fila descartada debe quedar
+    /// registrada en un aviso, no desaparecer sin dejar rastro.
+    /// </summary>
+    [Fact]
+    public void Dos_filas_identicas_se_deduplican_con_aviso()
+    {
+        using var xlsx = XlsxRowReaderTests.BuildXlsx([
+            Cabecera, Fila("RF-1", "2026-01-15", "1", "SI"), Fila("RF-1", "2026-01-15", "1", "SI"),
+        ]);
+        var r = CasosParser.Parse(xlsx);
+        Assert.Single(r.Rows);
+        Assert.Contains(r.Warnings, w => w.Contains("idéntic", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
