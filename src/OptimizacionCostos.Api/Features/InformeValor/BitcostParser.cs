@@ -12,6 +12,10 @@ public static class BitcostParser
 {
     public const int MaxRows = 400_000;
 
+    private const string ErrorFormatoBitcost =
+        "El archivo no tiene la forma del export de BITCOST. Deben estar las columnas "
+        + "Recurso, PVP y la jerarquía de fechas con Año y Mes.";
+
     private static readonly Dictionary<string, byte> Meses = new(StringComparer.OrdinalIgnoreCase)
     {
         ["enero"] = 1, ["febrero"] = 2, ["marzo"] = 3, ["abril"] = 4, ["mayo"] = 5, ["junio"] = 6,
@@ -32,10 +36,12 @@ public static class BitcostParser
         {
             if (hdr is null)
             {
-                // Solo se salta una fila realmente en blanco (posible en un sheet exportado con
-                // filas vacías al inicio); una fila con contenido, aunque no tenga la forma
-                // esperada, ya cuenta como cabecera y debe caer en el throw de más abajo.
-                if (row.All(x => string.IsNullOrWhiteSpace(x))) continue;
+                // Se saltea toda fila con menos de 3 celdas no vacías: son filas decorativas o de
+                // título (p. ej. el nombre del informe, un patrón común en exports de Power BI)
+                // que pueden aparecer antes de la cabecera real. La primera fila que supere ese
+                // umbral se toma como cabecera, aunque no tenga la forma esperada; si no mapea
+                // columnas, cae en el throw de más abajo.
+                if (row.Count(x => !string.IsNullOrWhiteSpace(x)) < 3) continue;
                 hdr = row;
                 cTen = Col(hdr, "tenant"); cSubN = Col(hdr, "nombre suscripcion");
                 cSubI = Col(hdr, "id suscripcion"); cRg = Col(hdr, "grupo de recursos");
@@ -45,9 +51,7 @@ public static class BitcostParser
                 cUni = Col(hdr, "unidad"); cRate = Col(hdr, "tarifa"); cPvp = Col(hdr, "pvp");
                 cAnio = Col(hdr, "jerarquia de fechas ano"); cMes = Col(hdr, "jerarquia de fechas mes");
                 if (cPvp < 0 || cRes < 0 || cAnio < 0 || cMes < 0)
-                    throw new InvalidOperationException(
-                        "El archivo no tiene la forma del export de BITCOST. Deben estar las columnas "
-                        + "Recurso, PVP y la jerarquía de fechas con Año y Mes.");
+                    throw new InvalidOperationException(ErrorFormatoBitcost);
                 continue;
             }
 
@@ -91,7 +95,7 @@ public static class BitcostParser
                 pvp, anio, mes);
         }
 
-        if (hdr is null) throw new InvalidOperationException("El archivo está vacío.");
+        if (hdr is null) throw new InvalidOperationException(ErrorFormatoBitcost);
         if (truncated > 0) warnings.Add($"{truncated} valores se recortaron por exceder el largo de su columna.");
 
         return new ParseResult<FacturacionRow>(
