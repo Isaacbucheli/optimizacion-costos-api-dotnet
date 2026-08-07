@@ -96,6 +96,28 @@ public sealed class CasosParserTests
         Assert.Contains(r.Warnings, w => w.Contains("idéntic", StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// Regresión del hallazgo original (commit 5e6456d): antes de que la clave natural incluyera
+    /// Estado y Horario, dos casos DISTINTOS con Caso vacío y el resto igual salvo el Estado
+    /// colisionaban en el mismo hash y el segundo pisaba al primero en silencio, porque la guarda
+    /// de descarte (caso vacío Y estado vacío) no los frenaba: el estado sí venía con valor. El
+    /// test de duplicados de arriba no lo cubre, porque usa dos filas totalmente idénticas, así
+    /// que habría pasado igual incluso con la clave vieja (sin Estado).
+    /// </summary>
+    [Fact]
+    public void Dos_casos_con_caso_vacio_y_distinto_estado_no_colisionan()
+    {
+        string?[] cerrado = ["", "2026-01-15", "Cerrado", "4", "1", "SI", "CÓMPUTO", "Solicitud de cambio", "Hábil"];
+        string?[] abierto = ["", "2026-01-15", "Abierto", "4", "1", "SI", "CÓMPUTO", "Solicitud de cambio", "Hábil"];
+        using var xlsx = XlsxRowReaderTests.BuildXlsx([Cabecera, cerrado, abierto]);
+
+        var r = CasosParser.Parse(xlsx);
+
+        Assert.Equal(2, r.Rows.Count);
+        Assert.Equal(2, r.Rows.Select(x => x.Hash).Distinct().Count());
+        Assert.Equal(0, r.RowsSkipped);
+    }
+
     [Fact]
     public void Sin_las_columnas_esperadas_lanza_con_mensaje_para_el_usuario()
     {
