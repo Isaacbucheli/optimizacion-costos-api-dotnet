@@ -80,7 +80,9 @@ public sealed class CasosParserTests
     /// <summary>
     /// Dos filas realmente idénticas colapsan a una sola (misma clave natural), pero a
     /// diferencia de BitcostParser acá no hay nada que sumar: la fila descartada debe quedar
-    /// registrada en un aviso, no desaparecer sin dejar rastro.
+    /// registrada en un aviso, no desaparecer sin dejar rastro. Y como es una fila que no se
+    /// guardó, tiene que contar en RowsSkipped: el consultor ve 2 filas totales, 1 guardada,
+    /// 1 descartada, y esa aritmética tiene que cerrar sin necesidad de leer el aviso.
     /// </summary>
     [Fact]
     public void Dos_filas_identicas_se_deduplican_con_aviso()
@@ -90,6 +92,7 @@ public sealed class CasosParserTests
         ]);
         var r = CasosParser.Parse(xlsx);
         Assert.Single(r.Rows);
+        Assert.Equal(1, r.RowsSkipped);
         Assert.Contains(r.Warnings, w => w.Contains("idéntic", StringComparison.OrdinalIgnoreCase));
     }
 

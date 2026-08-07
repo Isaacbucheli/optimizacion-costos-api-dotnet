@@ -60,8 +60,10 @@ public static class CasosParser
 
             // A diferencia de BitcostParser, dos filas con la misma clave natural NO son aditivas
             // acá: si la clave ya existe, es un duplicado real y sobrescribirla en silencio haría
-            // desaparecer una fila sin dejar rastro. Se descarta y se cuenta, nunca se pisa.
-            if (rows.ContainsKey(hash)) { duplicadas++; continue; }
+            // desaparecer una fila sin dejar rastro. Se descarta y se cuenta como duplicada, y
+            // también como omitida: es una fila que no llegó a guardarse, así que RowsSkipped
+            // tiene que reflejarla para que total = guardadas + descartadas le cierre al consultor.
+            if (rows.ContainsKey(hash)) { duplicadas++; skipped++; continue; }
 
             rows[hash] = new CasoRow(
                 hash,
