@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
+using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 using OptimizacionCostos.Api.Features.Storage;
 
 namespace OptimizacionCostos.Api.Features.InformeValor.Api;
@@ -31,7 +32,8 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Api;
 [Route("informe-valor")]
 [RequireModule(Modules.InformeValor)]
 public sealed class InformeValorController(
-    IInformeValorStore store, IAnalysisAccess access, ILogger<InformeValorController> logger) : ControllerBase
+    IInformeValorStore store, IAnalysisAccess access, ILogger<InformeValorController> logger,
+    IInsumosBdRecolector recolector) : ControllerBase
 {
     // Un export de BITCOST de 24 meses de un cliente grande está entre 8 y 18 MB, así que el
     // tope compartido de UploadValidation (10 MiB) rechazaría un archivo legítimo.
@@ -66,6 +68,60 @@ public sealed class InformeValorController(
                 Describe(SqlInformeValorStore.KindCasos, true, porKind),
                 Describe(SqlInformeValorStore.KindRbac, false, porKind),
             },
+        });
+    }
+
+    /// <summary>
+    /// Diagnóstico de los insumos que salen de la base (Advisor, Matriz, RBAC, Retiros): conteos y
+    /// metadatos, nunca las filas. Le dice al consultor si el cliente tiene datos suficientes antes
+    /// de generar el informe, y le dice a quien depure de dónde salió cada cifra — no es andamiaje
+    /// descartable, aunque esta entrega todavía no calcula nada con lo que devuelve.
+    ///
+    /// Solo lee: hereda [RequireModule(Modules.InformeValor)] de la clase (ModuleAccess.View), sin
+    /// la variante Edit que sí llevan Subir/Borrar.
+    ///
+    /// <b>No expone nombres de recurso, de suscripción ni de identidad.</b> Los datos completos
+    /// salen recién en el informe (entrega 2b), que tiene su propio gating. Por eso "excluidos"
+    /// existe SOLO dentro de <c>matriz</c>: is_excluded vive en la canónica de la matriz WAF y es
+    /// el flag que el consultor cura desde esa pantalla (ver MatrizFila.Excluida). El bloque
+    /// <c>advisor</c>, al grano recomendación × recurso, no repite ese eje — ni siquiera en cero —
+    /// para que nadie confunda "este bloque no lo mide" con "no hay excluidos en Advisor".
+    /// </summary>
+    [HttpGet("clients/{clientId:int}/insumos-bd")]
+    public async Task<IActionResult> InsumosBd(int clientId, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+
+        var insumos = await recolector.LeerAsync(clientId, ct);
+
+        return Ok(new
+        {
+            advisor = new
+            {
+                total = insumos.Advisor.Count,
+                suscripciones = insumos.Advisor
+                    .Select(a => a.SubscriptionId ?? a.SubscriptionName)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Count(),
+                con_ahorro = insumos.Advisor.Count(a => a.AhorroAnual is not null),
+            },
+            matriz = new
+            {
+                total = insumos.Matriz.Count,
+                excluidos = insumos.Matriz.Count(m => m.Excluida),
+            },
+            rbac = new { asignaciones = insumos.Rbac.Count },
+            retiros = new { total = insumos.Retiros.Count },
+            estado_rbac = new
+            {
+                disponibilidad = Disponibilidad(insumos.EstadoRbac.Disponibilidad),
+                estado_cuenta_medido = insumos.EstadoRbac.Ejes.EstadoCuentaMedido,
+                ultimo_login_medido = insumos.EstadoRbac.Ejes.UltimoLoginMedido,
+                fecha_corrida = insumos.EstadoRbac.FechaCorrida,
+                motivo = insumos.EstadoRbac.Motivo,
+            },
+            leido_en = insumos.LeidoEn,
         });
     }
 
@@ -161,6 +217,16 @@ public sealed class InformeValorController(
         await store.DeleteInsumoAsync(clientId, kind.ToLowerInvariant(), ct);
         return NoContent();
     }
+
+    /// <summary>snake_case en minúsculas, como el resto de los campos "status" del repo (ok/error/
+    /// vigente/...), en vez del PascalCase crudo del identificador de C#.</summary>
+    private static string Disponibilidad(DisponibilidadRbac d) => d switch
+    {
+        DisponibilidadRbac.Completo => "completo",
+        DisponibilidadRbac.ParcialFaltaIdentidad => "parcial_falta_identidad",
+        DisponibilidadRbac.NoDisponible => "no_disponible",
+        _ => d.ToString(),
+    };
 
     private static bool ExtensionValida(string? fileName) =>
         fileName is not null && fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase);

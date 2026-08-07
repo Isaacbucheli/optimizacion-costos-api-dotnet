@@ -137,6 +137,11 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinMigra
 // registrado arriba). El cálculo y la generación son de las entregas 2 y 3.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.InformeValor.IInformeValorStore,
     OptimizacionCostos.Api.Features.InformeValor.SqlInformeValorStore>();
+// Entrega 2a: ensamblador de los cuatro recolectores (Advisor, Matriz, RBAC, Retiros) + estado de
+// RBAC, detrás del endpoint de diagnóstico GET .../insumos-bd. Reusa ISqlConnectionFactory y el
+// IAccessReviewStore de Revisión de accesos, ya registrados.
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.InformeValor.Recolector.IInsumosBdRecolector,
+    OptimizacionCostos.Api.Features.InformeValor.Recolector.SqlInsumosBdRecolector>();
 
 // Módulo WAF (B7). Schema lazy en cada store. Reusa IChatCompletionClient, IAzureCredentialFactory,
 // IAnalysisAccess, ICostResultsQuery, ISqlConnectionFactory ya registrados.

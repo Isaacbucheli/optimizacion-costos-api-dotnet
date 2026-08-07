@@ -10,6 +10,7 @@ using OptimizacionCostos.Api.Auth;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.Identity;
 using OptimizacionCostos.Api.Features.InformeValor;
+using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 
 namespace OptimizacionCostos.Api.Tests.InformeValor;
 
@@ -152,6 +153,12 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
                 services.AddSingleton<IAnalysisAccess>(Access);
                 services.RemoveAll<IInformeValorStore>();
                 services.AddSingleton<IInformeValorStore>(Store);
+                // El controller también pide IInsumosBdRecolector (Tarea 7, endpoint de
+                // diagnóstico). Ningún test de esta clase lo ejercita: un falso que revienta si se
+                // llega a llamar mantiene la fixture "solo BD fake" en vez de depender en silencio
+                // de que SqlInsumosBdRecolector no abra conexión al construirse.
+                services.RemoveAll<IInsumosBdRecolector>();
+                services.AddSingleton<IInsumosBdRecolector>(new FakeInsumosBdRecolectorVacio());
                 services.RemoveAll<IModulePermissionStore>();
                 services.AddSingleton<IModulePermissionStore>(Perms);
                 // El servicio cacheado debe ser singleton en tests para poder invalidarlo
@@ -204,5 +211,13 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
 
         public Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<InsumoEstado>>([]);
+    }
+
+    /// <summary>Ensamblador falso que revienta si se lo llega a usar: ver el comentario de
+    /// ConfigureWebHost sobre por qué está acá aunque nada de esta clase lo necesite.</summary>
+    public sealed class FakeInsumosBdRecolectorVacio : IInsumosBdRecolector
+    {
+        public Task<InsumosBd> LeerAsync(int clientId, CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 }
