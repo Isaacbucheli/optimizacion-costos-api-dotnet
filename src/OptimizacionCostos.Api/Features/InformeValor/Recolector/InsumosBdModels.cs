@@ -30,3 +30,34 @@ public sealed record AdvisorFila(
     string ResourceType,
     decimal? AhorroAnual,
     string? MonedaAhorro);
+
+/// <summary>
+/// Una recomendación de la matriz WAF de un cliente, al grano recomendación × canónica × tracking
+/// (una fila por recomendación, no por recurso: <see cref="ResourceCount"/> ya viene contado).
+/// <see cref="Hallazgo"/> es <c>review_scope_es</c> ("título/ámbito" curado que ve el consultor en
+/// la pantalla de la matriz), y <see cref="Ambito"/> es la etiqueta de pilar (misma tabla que usa
+/// <see cref="AdvisorRecolector.EtiquetaPilar"/>): dos conceptos distintos con nombres que se
+/// prestan a confundirse.
+/// <see cref="EsfuerzoTexto"/> es <c>projected_bit_effort</c> tal cual lo escribió el consultor
+/// ("2-3 días", "medio día"): no se parsea a número acá. <see cref="AvancePct"/> es
+/// <c>completion_pct</c> de <c>waf_recommendation_tracking</c>, 0 si el cliente todavía no tiene
+/// fila de tracking. <see cref="Prioridad"/> es <c>priority_override</c> tal cual (el número que
+/// el consultor eligió, sin la etiqueta "1 - ALTA" que arma el exportador de Excel): esa traducción
+/// es una decisión de presentación de la calculadora, no de este recolector.
+/// <see cref="Excluida"/> es <c>is_excluded</c> de la canónica: se cuenta para la trazabilidad, no
+/// filtra ninguna fila (la pantalla de la matriz tampoco lo hace).
+/// </summary>
+public sealed record MatrizFila(
+    int CanonicalId,
+    string? MatrixCode,
+    int PillarNumber,
+    string Ambito,
+    string Hallazgo,
+    DateOnly? Fecha,
+    int? ImpactNumber,
+    string? Prioridad,
+    string? EsfuerzoTexto,
+    int AvancePct,
+    string? Registro,
+    int ResourceCount,
+    bool Excluida);
