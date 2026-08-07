@@ -61,3 +61,38 @@ public sealed record MatrizFila(
     string? Registro,
     int ResourceCount,
     bool Excluida);
+
+/// <summary>
+/// Una asignación RBAC efectiva de la última corrida finalizada de Revisión de accesos, ya
+/// deduplicada (ver <see cref="Recolector.RbacRecolector"/> y
+/// <see cref="OptimizacionCostos.Api.Features.Cdc.AccessReview.AccessReviewAssignments.Distinct"/>).
+/// <see cref="RoleKey"/> es el GUID del rol sin el prefijo de suscripción que le agrega ARM
+/// (mismo valor que agrupó la deduplicación); <see cref="Rol"/> es el nombre legible.
+/// <see cref="SuscripcionesAlcanzadas"/> es el conjunto completo de suscripciones bajo las que ARM
+/// reportó esta asignación: para <see cref="ScopeLevel"/> "root" o "management_group" son varias
+/// (la asignación no "vive" en ninguna suscripción puntual), y <see cref="SubscriptionId"/> /
+/// <see cref="SubscriptionName"/> quedan con el valor de la primera fila que ganó el dedup, que es
+/// arbitrario para esos dos niveles: la calculadora decide cómo agrupar, usando el conjunto
+/// completo en vez de esos dos campos sueltos.
+/// <see cref="CuentaHabilitada"/> viaja como booleano, nunca como texto: un consumidor que
+/// reconozca solo la palabra "enabled"/"habilitado" marcaría como deshabilitada toda cuenta cuyo
+/// estado real es otro texto (el Excel del módulo escribe "Sí"/"No", por ejemplo).
+/// <see cref="UltimoLoginTexto"/> es la fecha en ISO 8601 UTC tal cual, sin frase relativa ("hace
+/// N días") ni clasificación de actividad: esa decisión depende de la fecha de corte del informe,
+/// que solo conoce la calculadora.
+/// </summary>
+public sealed record RbacFila(
+    string PrincipalObjectId,
+    string? Nombre,
+    string? Login,
+    string PrincipalType,
+    string Rol,
+    string RoleKey,
+    string Scope,
+    string ScopeLevel,
+    string? SubscriptionId,
+    string? SubscriptionName,
+    IReadOnlyList<string> SuscripcionesAlcanzadas,
+    bool? CuentaHabilitada,
+    string? UltimoLoginTexto,
+    string? ViaGrupoId);
