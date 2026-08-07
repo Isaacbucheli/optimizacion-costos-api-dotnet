@@ -22,8 +22,10 @@ namespace OptimizacionCostos.Api.Tests.InformeValor;
 ///   1) el guard de acceso por cliente corre ANTES que la validación de extensión (si no, un
 ///      usuario sin permiso recibe un error distinto según cómo se llame su archivo: fuga de
 ///      información por el nombre).
-///   2) un archivo sobre el tope del módulo devuelve 413 limpio y NUNCA el 500 opaco que produce
-///      el middleware de última instancia cuando BadHttpRequestException escapa del model binding.
+///   2) un archivo sobre el tope del módulo devuelve 413 limpio (el chequeo manual de
+///      Request.ContentLength en Subir()). La protección contra que un BadHttpRequestException
+///      del model binding escape como 500 descansa en el controller, no en este test: detalle en
+///      el comentario del método de abajo (TestServer no reproduce ese escape).
 ///   3) un content-type que no es multipart/form-data devuelve 400 limpio y no el mismo 500 opaco,
 ///      por la misma razón (InvalidOperationException de ReadFormAsync sin capturar).
 /// </summary>
@@ -61,11 +63,17 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
     }
 
     /// <summary>
-    /// El tope se mira sobre Request.ContentLength, ANTES de que el action tenga oportunidad de
-    /// leer el archivo. Un IFormFile en la firma del método dispara el model binding del form ANTES
-    /// de que el cuerpo del método corra: con un archivo sobre el límite, la excepción salta ahí,
-    /// nunca llega al chequeo manual, y el middleware de última instancia de Program.cs la convierte
-    /// en un 500 opaco ({"detail":"Error interno"}) en vez del 413 que el usuario necesita ver.
+    /// Fija el chequeo manual de Request.ContentLength en Subir(): con un archivo declarado por
+    /// encima del tope del módulo, el controller devuelve 413 antes de tocar el cuerpo.
+    ///
+    /// Ojo: esto NO prueba que la excepción del model binding no escape como 500 bajo Kestrel
+    /// real. TestServer no aplica IHttpMaxRequestBodySizeFeature, así que este mismo test pasa
+    /// igual con la firma original del brief (IFormFile como parámetro más [RequestSizeLimit],
+    /// sin DisableFormValueModelBinding); lo comprobé a mano durante la Tarea 8, revirtiendo la
+    /// firma. La protección contra ese escape descansa en [DisableFormValueModelBinding] más
+    /// [RequestSizeLimit] del controller (ver su comentario de clase), no en un test de este
+    /// repo: haría falta correr contra Kestrel real, no contra WebApplicationFactory, y eso no
+    /// se hizo.
     /// </summary>
     [Fact]
     public async Task Un_archivo_sobre_el_tope_devuelve_413_y_no_500()
