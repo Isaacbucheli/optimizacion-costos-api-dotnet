@@ -78,42 +78,60 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
     {
         await using var conn = await factory.OpenAsync(ct);
         await InformeValorSchema.EnsureSchemaAsync(conn, ct);
-        await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct);
+
+        // La fila de la corrida se crea FUERA de la transacción de datos, a propósito: si el
+        // DELETE + bulk insert de abajo revienta y esa transacción hace rollback, esta fila
+        // tiene que sobrevivirlo. Es la bitácora de que se intentó cargar algo y qué pasó (así
+        // lo pide el spec de informe_valor_ingesta); sin ella, una carga que falla no deja
+        // ningún rastro que el consultor pueda mirar después. Partirla en dos pasos no le pega
+        // a la atomicidad de los DATOS: la corrida es metadata sobre el intento, no una fila de
+        // facturación o casos que tenga que aparecer o desaparecer junto con ellas.
+        var ingestaId = await CreateRunAsync(conn, null, clientId, kind, fileName, user, ct);
         try
         {
-            var ingestaId = await CreateRunAsync(conn, tx, clientId, kind, fileName, user, ct);
-
-            await ExecAsync(conn, tx, ct, $"DELETE FROM {table} WHERE client_id = @cid",
-                ("@cid", SqlDbType.Int, clientId));
-
-            using var data = new DataTable();
-            foreach (var (column, type, _) in columns) data.Columns.Add(column, type).AllowDBNull = true;
-            foreach (var row in rows)
+            await using var tx = (SqlTransaction)await conn.BeginTransactionAsync(ct);
+            try
             {
-                var values = new object[columns.Length];
-                for (var i = 0; i < columns.Length; i++) values[i] = columns[i].Value(row);
-                values[0] = clientId;
-                values[1] = ingestaId;
-                data.Rows.Add(values);
-            }
+                await ExecAsync(conn, tx, ct, $"DELETE FROM {table} WHERE client_id = @cid",
+                    ("@cid", SqlDbType.Int, clientId));
 
-            if (data.Rows.Count > 0)
-            {
-                using var bulk = new SqlBulkCopy(conn, SqlBulkCopyOptions.Default, tx)
+                using var data = new DataTable();
+                foreach (var (column, type, _) in columns) data.Columns.Add(column, type).AllowDBNull = true;
+                foreach (var row in rows)
                 {
-                    DestinationTableName = table, BatchSize = 2000, BulkCopyTimeout = 300,
-                };
-                foreach (DataColumn c in data.Columns) bulk.ColumnMappings.Add(c.ColumnName, c.ColumnName);
-                await bulk.WriteToServerAsync(data, ct);
-            }
+                    var values = new object[columns.Length];
+                    for (var i = 0; i < columns.Length; i++) values[i] = columns[i].Value(row);
+                    values[0] = clientId;
+                    values[1] = ingestaId;
+                    data.Rows.Add(values);
+                }
 
-            await FinishRunAsync(conn, tx, ingestaId, parsed, rows.Count, ct);
-            await tx.CommitAsync(ct);
-            return ingestaId;
+                if (data.Rows.Count > 0)
+                {
+                    using var bulk = new SqlBulkCopy(conn, SqlBulkCopyOptions.Default, tx)
+                    {
+                        DestinationTableName = table, BatchSize = 2000, BulkCopyTimeout = 300,
+                    };
+                    foreach (DataColumn c in data.Columns) bulk.ColumnMappings.Add(c.ColumnName, c.ColumnName);
+                    await bulk.WriteToServerAsync(data, ct);
+                }
+
+                await FinishRunAsync(conn, tx, ingestaId, parsed, rows.Count, ct);
+                await tx.CommitAsync(ct);
+                return ingestaId;
+            }
+            catch
+            {
+                await tx.RollbackAsync(ct);
+                throw;
+            }
         }
-        catch
+        catch (Exception ex)
         {
-            await tx.RollbackAsync(ct);
+            // Ya no queda transacción de datos que rollbackear (se deshizo arriba, si llegó a
+            // abrirse: esto también atrapa que BeginTransactionAsync mismo falle). MarkRunFailedAsync
+            // usa "conn" directo, sin transacción, así que esta escritura sobrevive igual.
+            await MarkRunFailedAsync(conn, ingestaId, ex, ct);
             throw;
         }
     }
@@ -180,7 +198,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
     }
 
     private static async Task<int> CreateRunAsync(
-        SqlConnection conn, SqlTransaction tx, int clientId, string kind, string fileName, string? user,
+        SqlConnection conn, SqlTransaction? tx, int clientId, string kind, string fileName, string? user,
         CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
@@ -227,6 +245,38 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    /// <summary>
+    /// Contraparte de FinishRunAsync para el camino de error: marca la corrida como fallida con
+    /// su mensaje, SIN transacción (conn directo), porque se llama después de que la transacción
+    /// de datos ya hizo rollback. Es mejor esfuerzo a propósito: si ni esto se puede escribir
+    /// (p. ej. la misma caída de conexión que tumbó la carga), no hay que tapar la excepción
+    /// original que ReplaceAsync relanza con throw justo después de llamarla.
+    /// Internal para que el test sin base de datos (conexión nunca abierta) pueda invocarla directo.
+    /// </summary>
+    internal static async Task MarkRunFailedAsync(
+        SqlConnection conn, int ingestaId, Exception ex, CancellationToken ct)
+    {
+        try
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                UPDATE dbo.informe_valor_ingesta
+                SET status = 'error', error_message = @err, completed_at = @now
+                WHERE ingesta_id = @id
+                """;
+            cmd.Parameters.Add(new SqlParameter("@err", SqlDbType.NVarChar, 1000) { Value = TruncDb(ex.Message, 1000) });
+            cmd.Parameters.Add(new SqlParameter("@now", SqlDbType.DateTime2) { Value = DateTime.UtcNow });
+            cmd.Parameters.Add(new SqlParameter("@id", SqlDbType.Int) { Value = ingestaId });
+            await cmd.ExecuteNonQueryAsync(ct);
+        }
+        catch
+        {
+            // Nada mejor que hacer acá: que se propague la excepción ORIGINAL (la de "ex", vía
+            // throw; en el catch de ReplaceAsync), no una nueva sobre el intento de registrar el
+            // fallo.
+        }
+    }
+
     private static async Task ExecAsync(
         SqlConnection conn, SqlTransaction tx, CancellationToken ct, string sql,
         params (string Name, SqlDbType Type, object Value)[] ps)
@@ -246,7 +296,8 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
     /// Trunca al ancho de la columna y mapea null a DBNull.Value. Un valor más largo que su
     /// NVARCHAR(n) dispara el error 8152 de SQL Server y Kestrel corta la conexión en vez de
     /// devolver una respuesta HTTP normal — eso ya se leyó una vez como vulnerabilidad que no
-    /// era. fileName y user pasan los dos por aquí antes del INSERT en CreateRunAsync.
+    /// era. fileName y user pasan los dos por aquí antes del INSERT en CreateRunAsync, y
+    /// ex.Message también antes del UPDATE de MarkRunFailedAsync.
     /// </summary>
     private static object TruncDb(string? value, int max) =>
         value is null ? DBNull.Value : value.Length > max ? value[..max] : value;

@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Features.InformeValor;
 
 namespace OptimizacionCostos.Api.Tests.InformeValor;
@@ -5,7 +6,9 @@ namespace OptimizacionCostos.Api.Tests.InformeValor;
 /// <summary>
 /// Verifica la proyección a DataTable sin base de datos. Un null de C# en un SqlParameter
 /// lanza SqlException 8178; en SqlBulkCopy el equivalente es que la celda tiene que ser
-/// DBNull.Value y la columna admitir nulos.
+/// DBNull.Value y la columna admitir nulos. También cubre, en el mismo espíritu de "sin base
+/// de datos", que MarkRunFailedAsync no tape una excepción real si ni la bitácora se puede
+/// escribir.
 /// </summary>
 public sealed class InformeValorBulkColumnsTests
 {
@@ -57,5 +60,19 @@ public sealed class InformeValorBulkColumnsTests
     {
         var col = SqlInformeValorStore.FacturacionColumns.Single(c => c.Column == "natural_key_hash");
         Assert.Equal(typeof(string), col.Type);
+    }
+
+    /// <summary>
+    /// MarkRunFailedAsync es mejor esfuerzo: si ni la bitácora se puede escribir (acá, porque la
+    /// conexión nunca se abrió, sin necesidad de una base de datos real) no tiene que lanzar. La
+    /// excepción que le importa al consultor es la original de la carga, que ReplaceAsync
+    /// relanza con throw justo después de este llamado, no una nueva sobre este intento.
+    /// </summary>
+    [Fact]
+    public async Task MarkRunFailedAsync_no_lanza_si_la_bitacora_tampoco_se_puede_escribir()
+    {
+        using var conn = new SqlConnection();
+        await SqlInformeValorStore.MarkRunFailedAsync(
+            conn, ingestaId: 1, new InvalidOperationException("boom"), CancellationToken.None);
     }
 }
