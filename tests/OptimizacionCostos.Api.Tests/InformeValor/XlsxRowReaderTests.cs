@@ -42,6 +42,46 @@ public sealed class XlsxRowReaderTests
         return ms;
     }
 
+    /// <summary>
+    /// Hermano de BuildXlsx para el caso que ese helper no puede generar: celdas sin atributo
+    /// CellReference. BuildXlsx siempre calcula la referencia a partir de la posición en el
+    /// arreglo, así que acá cada celda declara la suya explícitamente (o null para omitir el
+    /// atributo "r", algo que Excel y otros exportadores sí producen).
+    /// </summary>
+    private static MemoryStream BuildXlsxConCeldas(IEnumerable<(string? Reference, string Texto)[]> rows, string sheetName = "Export")
+    {
+        var ms = new MemoryStream();
+        using (var doc = SpreadsheetDocument.Create(ms, SpreadsheetDocumentType.Workbook, autoSave: true))
+        {
+            var wbPart = doc.AddWorkbookPart();
+            wbPart.Workbook = new Workbook();
+            var wsPart = wbPart.AddNewPart<WorksheetPart>();
+            var data = new SheetData();
+            var r = 1u;
+            foreach (var row in rows)
+            {
+                var xr = new Row { RowIndex = r };
+                foreach (var (reference, texto) in row)
+                {
+                    var cell = new Cell
+                    {
+                        DataType = CellValues.InlineString,
+                        InlineString = new InlineString(new Text(texto)),
+                    };
+                    if (reference is not null) cell.CellReference = reference;
+                    xr.Append(cell);
+                }
+                data.Append(xr);
+                r++;
+            }
+            wsPart.Worksheet = new Worksheet(data);
+            wbPart.Workbook.AppendChild(new Sheets()).AppendChild(
+                new Sheet { Id = wbPart.GetIdOfPart(wsPart), SheetId = 1u, Name = sheetName });
+        }
+        ms.Position = 0;
+        return ms;
+    }
+
     private static string ColName(int index)
     {
         var s = "";
@@ -70,6 +110,37 @@ public sealed class XlsxRowReaderTests
         using var xlsx = BuildXlsx([["a", "b", "c"], ["x", null, "z"]]);
         var rows = XlsxRowReader.Read(xlsx, 100).ToList();
         Assert.Equal(["x", "", "z"], rows[1]);
+    }
+
+    /// <summary>
+    /// BuildXlsx genera nombres de columna de dos letras en cuanto la fila supera 26 celdas
+    /// (columna 27 = "AA", índice 26). Sin este caso, un error de signo o de base en
+    /// ColumnIndex para referencias multiletra pasaría inadvertido.
+    /// </summary>
+    [Fact]
+    public void Ubica_una_celda_en_columna_de_dos_letras()
+    {
+        var fila = Enumerable.Range(0, 27).Select(i => (string?)$"v{i}").ToArray();
+        using var xlsx = BuildXlsx([fila]);
+        var rows = XlsxRowReader.Read(xlsx, 100).ToList();
+        Assert.Equal(27, rows[0].Length);
+        Assert.Equal("v26", rows[0][26]); // columna AA
+    }
+
+    /// <summary>
+    /// Cuando una celda omite el atributo CellReference, OOXML la ubica en la posición
+    /// siguiente a la celda anterior de la misma fila (acá, la "b" entre "A1" y "C1" debe
+    /// caer en la columna B). Antes de este fix, la celda sin referencia se mandaba a
+    /// int.MaxValue-1 y Cells() reservaba un arreglo de ~2^31 posiciones: revienta el proceso
+    /// por falta de memoria en vez de ubicar la celda. BuildXlsx no sirve para este caso
+    /// porque siempre escribe la referencia; se usa el helper hermano que la deja opcional.
+    /// </summary>
+    [Fact]
+    public void Celda_sin_referencia_usa_la_posicion_siguiente_a_la_anterior()
+    {
+        using var xlsx = BuildXlsxConCeldas([[("A1", "a"), (null, "b"), ("C1", "c")]]);
+        var rows = XlsxRowReader.Read(xlsx, 100).ToList();
+        Assert.Equal(["a", "b", "c"], rows[0]);
     }
 
     [Fact]

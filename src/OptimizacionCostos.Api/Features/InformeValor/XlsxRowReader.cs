@@ -16,8 +16,15 @@ public static class XlsxRowReader
     {
         SpreadsheetDocument doc;
         try { doc = SpreadsheetDocument.Open(stream, false); }
-        catch (Exception ex) when (ex is not InvalidOperationException)
+        catch (Exception ex) when (ex is FileFormatException or FormatException or ArgumentException)
         {
+            // Estas son las excepciones que de verdad significan "esto no es un .xlsx":
+            // FileFormatException es la que lanza la librería al abrir un paquete que no es un
+            // zip/OOXML válido (incluye el caso de un stream vacío), y FormatException/
+            // ArgumentException cubren fallos de parseo o de argumentos inválidos dentro del
+            // paquete. Cualquier otra cosa (E/S, memoria, un bug nuestro) se propaga: el
+            // controller ya tiene un catch general que responde 500, que es lo correcto para
+            // una falla que no es del archivo.
             throw new InvalidOperationException("El archivo no es un Excel (.xlsx) válido.");
         }
 
@@ -49,8 +56,13 @@ public static class XlsxRowReader
     private static string[] Cells(Row row, SharedStringTable? sst)
     {
         var byIndex = new SortedDictionary<int, string>();
+        var next = 0; // posición para la próxima celda sin referencia; se reinicia en cada fila
         foreach (var cell in row.Elements<Cell>())
-            byIndex[ColumnIndex(cell.CellReference?.Value)] = Text(cell, sst);
+        {
+            var index = ColumnIndex(cell.CellReference?.Value) ?? next;
+            byIndex[index] = Text(cell, sst);
+            next = index + 1;
+        }
 
         if (byIndex.Count == 0) return [];
         var last = byIndex.Keys.Max();
@@ -59,10 +71,14 @@ public static class XlsxRowReader
         return result;
     }
 
-    /// <summary>"C7" → 2. Sin referencia, cae al final para no pisar una columna real.</summary>
-    private static int ColumnIndex(string? reference)
+    /// <summary>
+    /// "C7" → 2. Sin referencia, null: el llamador (Cells) la ubica en la posición siguiente a
+    /// la última celda leída de esa fila, que es como OOXML define la posición de una celda sin
+    /// atributo "r" (implícitamente consecutiva a la anterior).
+    /// </summary>
+    private static int? ColumnIndex(string? reference)
     {
-        if (string.IsNullOrEmpty(reference)) return int.MaxValue - 1;
+        if (string.IsNullOrEmpty(reference)) return null;
         var n = 0;
         foreach (var ch in reference)
         {
