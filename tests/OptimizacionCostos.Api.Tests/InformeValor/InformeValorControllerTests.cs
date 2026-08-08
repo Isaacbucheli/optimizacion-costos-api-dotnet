@@ -40,4 +40,12 @@ public sealed class InformeValorControllerTests
     {
         Assert.Null(Method("Estado").GetCustomAttribute<RequireModuleAttribute>());
     }
+
+    /// <summary>Tarea 8: /preview es POST pero no muta nada (calcula y devuelve, no persiste), así
+    /// que hereda View de la clase igual que Estado/InsumosBd, no Edit como Subir/Borrar.</summary>
+    [Fact]
+    public void El_preview_no_exige_permiso_de_edicion()
+    {
+        Assert.Null(Method("Preview").GetCustomAttribute<RequireModuleAttribute>());
+    }
 }

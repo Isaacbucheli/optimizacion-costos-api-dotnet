@@ -22,4 +22,18 @@ public interface IInformeValorStore
     Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct);
 
     Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct);
+
+    /// <summary>
+    /// Las filas de facturación ya persistidas de un cliente (Tarea 8: insumo del ensamblador del
+    /// informe). Devuelve la carga vigente completa, sin filtrar por rango — el filtro D0 es
+    /// responsabilidad de la calculadora, no de la lectura. Ordenada por <c>row_id</c> (orden de
+    /// inserción de la carga vigente) para que dos lecturas de la misma carga siempre devuelvan las
+    /// filas en el mismo orden: el orden de SQL sin <c>ORDER BY</c> no está garantizado, y
+    /// <c>ConsumoCalculador</c> desempata por primer orden de aparición.
+    /// </summary>
+    Task<IReadOnlyList<FacturacionRow>> GetFacturacionAsync(int clientId, CancellationToken ct);
+
+    /// <summary>Las filas de casos ya persistidas de un cliente. Mismo motivo de
+    /// <c>ORDER BY row_id</c> que <see cref="GetFacturacionAsync"/>.</summary>
+    Task<IReadOnlyList<CasoRow>> GetCasosAsync(int clientId, CancellationToken ct);
 }

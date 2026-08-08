@@ -199,6 +199,79 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         return result;
     }
 
+    public async Task<IReadOnlyList<FacturacionRow>> GetFacturacionAsync(int clientId, CancellationToken ct)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await InformeValorSchema.EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT natural_key_hash, tenant, subscription_name, subscription_id, resource_group,
+                resource_name, cost_center, category, subcategory, service, quantity, unit, rate,
+                pvp, period_year, period_month
+            FROM dbo.informe_valor_facturacion
+            WHERE client_id = @cid
+            ORDER BY row_id
+            """;
+        cmd.Parameters.Add(new SqlParameter("@cid", SqlDbType.Int) { Value = clientId });
+
+        var result = new List<FacturacionRow>();
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct))
+        {
+            result.Add(new FacturacionRow(
+                Hash: rd.GetString(0),
+                Tenant: rd.IsDBNull(1) ? null : rd.GetString(1),
+                SubscriptionName: rd.IsDBNull(2) ? null : rd.GetString(2),
+                SubscriptionId: rd.IsDBNull(3) ? null : rd.GetString(3),
+                ResourceGroup: rd.IsDBNull(4) ? null : rd.GetString(4),
+                ResourceName: rd.IsDBNull(5) ? null : rd.GetString(5),
+                CostCenter: rd.IsDBNull(6) ? null : rd.GetString(6),
+                Category: rd.IsDBNull(7) ? null : rd.GetString(7),
+                Subcategory: rd.IsDBNull(8) ? null : rd.GetString(8),
+                Service: rd.IsDBNull(9) ? null : rd.GetString(9),
+                Quantity: rd.IsDBNull(10) ? null : rd.GetDecimal(10),
+                Unit: rd.IsDBNull(11) ? null : rd.GetString(11),
+                Rate: rd.IsDBNull(12) ? null : rd.GetDecimal(12),
+                Pvp: rd.GetDecimal(13),
+                Year: rd.GetInt16(14),
+                Month: rd.GetByte(15)));
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<CasoRow>> GetCasosAsync(int clientId, CancellationToken ct)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await InformeValorSchema.EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT natural_key_hash, caso, fecha_registro, estado, sla_horas, duracion_cruda,
+                cumple, categoria, subcategoria, horario
+            FROM dbo.informe_valor_caso
+            WHERE client_id = @cid
+            ORDER BY row_id
+            """;
+        cmd.Parameters.Add(new SqlParameter("@cid", SqlDbType.Int) { Value = clientId });
+
+        var result = new List<CasoRow>();
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct))
+        {
+            result.Add(new CasoRow(
+                Hash: rd.GetString(0),
+                Caso: rd.IsDBNull(1) ? null : rd.GetString(1),
+                FechaRegistro: rd.IsDBNull(2) ? null : DateOnly.FromDateTime(rd.GetDateTime(2)),
+                Estado: rd.IsDBNull(3) ? null : rd.GetString(3),
+                SlaHoras: rd.IsDBNull(4) ? null : rd.GetDecimal(4),
+                DuracionCruda: rd.IsDBNull(5) ? null : rd.GetDecimal(5),
+                Cumple: rd.IsDBNull(6) ? null : rd.GetString(6),
+                Categoria: rd.IsDBNull(7) ? null : rd.GetString(7),
+                Subcategoria: rd.IsDBNull(8) ? null : rd.GetString(8),
+                Horario: rd.IsDBNull(9) ? null : rd.GetString(9)));
+        }
+        return result;
+    }
+
     private static async Task<int> CreateRunAsync(
         SqlConnection conn, SqlTransaction? tx, int clientId, string kind, string fileName, string? user,
         CancellationToken ct)

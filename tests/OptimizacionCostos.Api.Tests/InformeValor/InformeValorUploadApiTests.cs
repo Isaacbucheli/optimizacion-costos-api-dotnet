@@ -211,6 +211,12 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
 
         public Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<InsumoEstado>>([]);
+
+        public Task<IReadOnlyList<FacturacionRow>> GetFacturacionAsync(int clientId, CancellationToken ct)
+            => Task.FromResult<IReadOnlyList<FacturacionRow>>([]);
+
+        public Task<IReadOnlyList<CasoRow>> GetCasosAsync(int clientId, CancellationToken ct)
+            => Task.FromResult<IReadOnlyList<CasoRow>>([]);
     }
 
     /// <summary>Ensamblador falso que revienta si se lo llega a usar: ver el comentario de

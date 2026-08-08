@@ -1,0 +1,433 @@
+using System.Text.Json;
+using OptimizacionCostos.Api.Features.InformeValor;
+using OptimizacionCostos.Api.Features.InformeValor.Calculo;
+using OptimizacionCostos.Api.Features.InformeValor.Recolector;
+
+namespace OptimizacionCostos.Api.Tests.InformeValor.Calculo;
+
+/// <summary>
+/// Tarea 8 del plan de la entrega 2b: el ensamblador (produce <see cref="ModeloInformeValor"/>
+/// desde los cinco insumos crudos, resuelve D12) más los dos checks que el plan deja explícitamente
+/// sin cubrir por ningún test de C# hasta esta tarea: determinismo y el contrato de nombres contra
+/// la capa de dibujo (<c>render()</c> en <c>docs/Plantilla-Dashboard-BIT.html</c>).
+/// </summary>
+public sealed class InformeValorEnsambladorTests
+{
+    private static int _n;
+
+    private static FacturacionRow Factura(
+        string? subscriptionId, string? subscriptionName, decimal pvp, int anio, int mes,
+        string? categoria = "Cómputo", string? rg = "rg-1", string? recurso = "vm-1") => new(
+        Hash: $"h{++_n}", Tenant: null, SubscriptionName: subscriptionName, SubscriptionId: subscriptionId,
+        ResourceGroup: rg, ResourceName: recurso, CostCenter: null, Category: categoria,
+        Subcategory: null, Service: null, Quantity: null, Unit: null, Rate: null,
+        Pvp: pvp, Year: (short)anio, Month: (byte)mes);
+
+    private static CasoRow Caso(
+        string caso, int anio, int mes, int dia, string cumple = "SI", decimal sla = 8m, decimal duracion = 4m,
+        string categoria = "Cómputo", string subcategoria = "Consulta", string horario = "Hábil") => new(
+        Hash: $"h{++_n}", Caso: caso, FechaRegistro: new DateOnly(anio, mes, dia), Estado: "Cerrado",
+        SlaHoras: sla, DuracionCruda: duracion, Cumple: cumple, Categoria: categoria,
+        Subcategoria: subcategoria, Horario: horario);
+
+    private static RbacFila Rbac(
+        string id, string? subscriptionId, string? subscriptionName,
+        IReadOnlyList<string>? alcanza = null, IReadOnlyList<string?>? alcanzaNombres = null,
+        string rol = "Reader") => new(
+        PrincipalObjectId: id, Nombre: $"Persona {id}", Login: $"{id}@cliente.com", PrincipalType: "User",
+        Rol: rol, RoleKey: rol.ToLowerInvariant(), Scope: $"/subscriptions/{subscriptionId}",
+        ScopeLevel: "subscription", SubscriptionId: subscriptionId, SubscriptionName: subscriptionName,
+        SuscripcionesAlcanzadas: alcanza ?? (subscriptionId is not null ? [subscriptionId] : []),
+        SuscripcionesAlcanzadasNombres: alcanzaNombres ?? (subscriptionName is not null ? [subscriptionName] : []),
+        CuentaHabilitada: true, UltimoLoginTexto: "2026-01-01T00:00:00Z", ViaGrupoId: null,
+        RoleClass: null, IsCustomRole: false);
+
+    private static AdvisorFila Advisor(
+        string? subscriptionId, string subscriptionName, string recurso = "vm-1", string grupo = "rg-1",
+        int pilar = 1, string nombrePilar = "Confiabilidad", int? impacto = 1, decimal? ahorro = null,
+        string recomendacion = "Recomendación") => new(
+        PillarNumber: pilar, Pilar: nombrePilar, ImpactNumber: impacto,
+        Impacto: impacto switch { 1 => "Alto", 2 => "Medio", 3 => "Bajo", _ => "" },
+        Recomendacion: recomendacion, RecomendacionEn: null, CanonicalId: 1, MatrixCode: null,
+        Source: null, SubscriptionId: subscriptionId, SubscriptionName: subscriptionName,
+        ResourceGroup: grupo, ResourceName: recurso, ResourceType: "Microsoft.Compute/virtualMachines",
+        AhorroAnual: ahorro, MonedaAhorro: ahorro is null ? null : "USD");
+
+    private static RetiroFila Retiro(DateOnly? fecha = null) => new(
+        AnnouncementKey: "anuncio-1", Caracteristica: "Característica de prueba", FechaRetiro: fecha,
+        Titulo: null, AccionRecomendada: null, RecursosAfectados: 1);
+
+    private static MatrizFila Matriz(string ambito = "Seguridad", int avance = 50) => new(
+        CanonicalId: 1, MatrixCode: null, PillarNumber: 3, Ambito: ambito, Hallazgo: "Hallazgo de prueba",
+        Fecha: null, ImpactNumber: 1, Prioridad: "1", EsfuerzoTexto: null, AvancePct: avance,
+        Registro: null, ResourceCount: 1, Excluida: false);
+
+    private static InsumosBd Insumos(
+        IReadOnlyList<AdvisorFila>? advisor = null, IReadOnlyList<MatrizFila>? matriz = null,
+        IReadOnlyList<RbacFila>? rbac = null, IReadOnlyList<RetiroFila>? retiros = null) => new(
+        Advisor: advisor ?? [], Matriz: matriz ?? [], Rbac: rbac ?? [], Retiros: retiros ?? [],
+        EstadoRbac: new EstadoRbacResultado(
+            DisponibilidadRbac.Completo, new EjesRbac(EstadoCuentaMedido: true, UltimoLoginMedido: true),
+            FechaCorrida: new DateTime(2026, 1, 1), Motivo: "completo"),
+        SeguridadGestionadaExternamente: false, SeguridadGestionadaNota: null,
+        LeidoEn: new DateTime(2026, 1, 1));
+
+    private static ContextoInformeValor Contexto(int anio, int mesInicio, int mesFin)
+    {
+        var finMes = DateTime.DaysInMonth(anio, mesFin);
+        var corteInstante = new DateTimeOffset(anio, mesFin, finMes, 0, 0, 0, TimeSpan.Zero);
+        return new(
+            PeriodStart: new DateOnly(anio, mesInicio, 1),
+            PeriodEnd: new DateOnly(anio, mesFin, finMes),
+            Corte: Fechas.ResolverFechaEnGuayaquil(corteInstante),
+            MesesParcialesForzados: []);
+    }
+
+    // ===================================================================================
+    // 5a. Determinismo: mismo insumo, misma fecha de corte, dos corridas, modelos idénticos.
+    // ===================================================================================
+
+    /// <summary>
+    /// Fixture deliberadamente rica en diccionarios y conjuntos (donde el plan avisa que "se
+    /// escapa" el orden): tres suscripciones de facturación en RBAC (una alcanzada solo por
+    /// herencia), dos categorías de facturación, dos pilares de Advisor con reserva y savings
+    /// plan en la misma suscripción (fuerza <c>CompromisoPorSuscripcion</c>), dos ámbitos de
+    /// matriz. Si algo en el ensamblador iterara un <c>Dictionary</c>/<c>HashSet</c> sin un orden
+    /// explícito y ese orden no fuera estable entre corridas, este fixture es donde se notaría.
+    /// </summary>
+    private static (
+        IReadOnlyList<FacturacionRow> Facturacion, int FilasAntesDeFusionar, IReadOnlyList<CasoRow> Casos,
+        InsumosBd InsumosBd, string Cliente, ContextoInformeValor Contexto) FixtureRica()
+    {
+        var facturacion = new List<FacturacionRow>
+        {
+            Factura("sub-a", "Suscripción A", 1000m, 2026, 1, categoria: "Cómputo"),
+            Factura("sub-a", "Suscripción A", 1100m, 2026, 2, categoria: "Cómputo"),
+            Factura("sub-b", "Suscripción B", 500m, 2026, 1, categoria: "Backup", recurso: "vm-2"),
+            Factura("sub-b", "Suscripción B", 480m, 2026, 2, categoria: "Backup", recurso: "vm-2"),
+            Factura(null, "(sin suscripción)", 90m, 2026, 1, categoria: null, recurso: "vm-3"),
+        };
+        var casos = new List<CasoRow>
+        {
+            Caso("C-1", 2026, 1, 5, cumple: "SI", categoria: "Cómputo", subcategoria: "Consulta"),
+            Caso("C-2", 2026, 1, 10, cumple: "NO", categoria: "Backup", subcategoria: "Falla de respaldo"),
+            Caso("C-3", 2026, 2, 2, cumple: "SIN EVALUAR", categoria: "Cómputo", subcategoria: ""),
+        };
+        var rbac = new List<RbacFila>
+        {
+            Rbac("owner-1", "sub-a", "Suscripción A", alcanza: ["sub-a", "sub-c"],
+                alcanzaNombres: ["Suscripción A", "Suscripción Heredada"], rol: "Owner"),
+            Rbac("reader-1", "sub-b", "Suscripción B"),
+        };
+        var advisor = new List<AdvisorFila>
+        {
+            Advisor("sub-a", "Suscripción A", recurso: "vm-1", pilar: 1, nombrePilar: "Confiabilidad",
+                ahorro: 300m, recomendacion: "Comprar una reserva de 1 año"),
+            Advisor("sub-a", "Suscripción A", recurso: "vm-4", pilar: 1, nombrePilar: "Confiabilidad",
+                ahorro: 200m, recomendacion: "Suscribir un Savings Plan"),
+            Advisor("sub-b", "Suscripción B", recurso: "vm-2", pilar: 3, nombrePilar: "Seguridad", impacto: 2),
+        };
+        var matriz = new List<MatrizFila> { Matriz("Seguridad", 40), Matriz("Confiabilidad", 90) };
+        var retiros = new List<RetiroFila> { Retiro(new DateOnly(2026, 6, 1)) };
+
+        return (
+            facturacion, FilasAntesDeFusionar: facturacion.Count + 3, casos,
+            Insumos(advisor, matriz, rbac, retiros), "Cliente de prueba", Contexto(2026, 1, 2));
+    }
+
+    [Fact]
+    public void Recalcular_con_el_mismo_insumo_y_la_misma_fecha_de_corte_da_el_mismo_modelo()
+    {
+        var (facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto) = FixtureRica();
+
+        // Dos listas DISTINTAS (no la misma referencia) con el mismo contenido: si algo mutara la
+        // entrada entre corridas, o si dos corridas de la MISMA lista dieran igual pero de una
+        // lista "nueva" no, este test lo notaria en vez de esconderlo por reusar la instancia.
+        var modelo1 = InformeValorEnsamblador.Ensamblar(
+            [.. facturacion], filasAntesDeFusionar, [.. casos], insumosBd, cliente, contexto);
+        var modelo2 = InformeValorEnsamblador.Ensamblar(
+            [.. facturacion], filasAntesDeFusionar, [.. casos], insumosBd, cliente, contexto);
+
+        var json1 = JsonSerializer.Serialize(modelo1, InformeValorJsonOptions.Instance);
+        var json2 = JsonSerializer.Serialize(modelo2, InformeValorJsonOptions.Instance);
+
+        // Comparar el TEXTO json, no los objetos: los records generan igualdad estructural por
+        // propiedad, pero para una propiedad de tipo lista/diccionario esa igualdad cae en
+        // Object.Equals (referencia), así que dos corridas que arman listas nuevas siempre
+        // "difieren" aunque el contenido sea idéntico. El JSON expone el orden real de arreglos y
+        // de claves de diccionario, que es exactamente lo que el plan pide vigilar.
+        Assert.Equal(json1, json2);
+    }
+
+    // ===================================================================================
+    // D12: las tres cifras de suscripciones se concilian (Tarea 8, punto 2 del encargo).
+    // ===================================================================================
+
+    /// <summary>
+    /// Ejemplo numérico para la lista de divergencias: facturación ve 3 suscripciones (sub-a,
+    /// sub-b, "(sin suscripción)"), RBAC ve 3 (sub-a directa, sub-b directa, sub-c heredada) y
+    /// Advisor ve 2 (sub-a, sub-b). Hoy el informe publicaría "3 suscripciones" en Cobertura del
+    /// servicio (toma solo <c>f.subs.length</c>, D12) sin mencionar que RBAC alcanza una cuarta
+    /// (sub-c) que ni facturación ni Advisor ven. El conjunto unión correcto es 4: sub-a y sub-b
+    /// (las tres fuentes), sub-c (solo RBAC, heredada) y "(sin suscripción)" (solo facturación).
+    /// </summary>
+    [Fact]
+    public void La_cobertura_publica_el_conjunto_union_declarando_que_fuente_cubre_cada_suscripcion()
+    {
+        var (facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto) = FixtureRica();
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto);
+
+        var cobertura = modelo.Meta.Cobertura;
+        // sub-a, sub-b, sub-c y "(sin suscripción)": union de 4, no los 3 que hoy publica
+        // facturación (f.subs.length) ni los 2 de la intersección de las tres fuentes.
+        Assert.Equal(4, cobertura.Total);
+
+        var subA = cobertura.Suscripciones.Single(s => s.Id == "sub-a");
+        Assert.Equal("Suscripción A", subA.Nombre);
+        Assert.True(subA.Facturacion); Assert.True(subA.Rbac); Assert.True(subA.Advisor);
+
+        var subB = cobertura.Suscripciones.Single(s => s.Id == "sub-b");
+        Assert.True(subB.Facturacion); Assert.True(subB.Rbac); Assert.True(subB.Advisor);
+
+        // sub-c: alcanzada SOLO por herencia en RBAC (nunca es la suscripcion propia de ninguna
+        // fila). Antes de exponer SuscripcionesAlcanzadasNombres esto hubiera mostrado el id crudo.
+        var subC = cobertura.Suscripciones.Single(s => s.Id == "sub-c");
+        Assert.Equal("Suscripción Heredada", subC.Nombre);
+        Assert.False(subC.Facturacion); Assert.True(subC.Rbac); Assert.False(subC.Advisor);
+    }
+
+    /// <summary>
+    /// La fila de facturación sin <c>subscription_id</c> SÍ tiene nombre (el sentinela
+    /// "(sin suscripción)" que ya pone el recolector/parser): D12 la concilia por ese nombre, como
+    /// su propia entrada, en vez de perderla o fundirla con otra.
+    /// </summary>
+    [Fact]
+    public void Una_fila_de_facturacion_sin_id_de_suscripcion_concilia_por_su_nombre()
+    {
+        var (facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto) = FixtureRica();
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto);
+
+        var sinSuscripcion = modelo.Meta.Cobertura.Suscripciones.Single(s => s.Id == "(sin suscripción)");
+        Assert.True(sinSuscripcion.Facturacion);
+        Assert.False(sinSuscripcion.Rbac);
+        Assert.False(sinSuscripcion.Advisor);
+    }
+
+    /// <summary>
+    /// Caso límite distinto del anterior: una fila que no trae NI id NI nombre de suscripción (los
+    /// dos en blanco, no solo el id) no tiene ninguna clave posible para conciliar y se excluye sin
+    /// romper el resto del cálculo — no se puede "adivinar" una suscripción de la nada.
+    /// </summary>
+    [Fact]
+    public void Una_fila_sin_id_ni_nombre_de_suscripcion_se_excluye_de_la_conciliacion()
+    {
+        var (facturacionBase, filasAntesDeFusionar, casos, insumosBd, cliente, contexto) = FixtureRica();
+        var facturacion = facturacionBase
+            .Append(Factura(subscriptionId: null, subscriptionName: null, 25m, 2026, 1))
+            .ToList();
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto);
+
+        // Sigue siendo 4 (sub-a, sub-b, sub-c, "(sin suscripción)"): la fila sin id ni nombre no
+        // agrega una quinta entrada ni se cuela dentro de ninguna de las cuatro existentes.
+        Assert.Equal(4, modelo.Meta.Cobertura.Total);
+    }
+
+    // ===================================================================================
+    // 5b. Contrato de nombres contra la capa de dibujo (render() en Plantilla-Dashboard-BIT.html).
+    // Extraído por lectura directa de render() y de las cinco funciones calcXxx que definen los
+    // objetos que consume (Tarea 8): cada aserción de abajo es un ".campo" que render() lee en
+    // alguna parte. Los que NO se pueden cubrir así están documentados al final de la clase.
+    // ===================================================================================
+
+    private static JsonElement ModeloJson()
+    {
+        var (facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto) = FixtureRica();
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto);
+        var json = JsonSerializer.Serialize(modelo, InformeValorJsonOptions.Instance);
+        return JsonDocument.Parse(json).RootElement;
+    }
+
+    private static void ExigeCampo(JsonElement obj, string campo) =>
+        Assert.True(obj.TryGetProperty(campo, out _), $"falta el campo \"{campo}\" que render() lee");
+
+    [Fact]
+    public void D_meta_expone_los_campos_que_render_lee()
+    {
+        var meta = ModeloJson().GetProperty("meta");
+        foreach (var campo in new[] { "cliente", "periodo", "corte" }) ExigeCampo(meta, campo);
+    }
+
+    /// <summary>
+    /// D.tickets (Operación): TODOS los campos que <c>render()</c> lee de <c>t</c>, salvo <c>si</c>
+    /// y <c>no</c> — ver el comentario de clase, sección "No cubierto por este test".
+    /// </summary>
+    [Fact]
+    public void D_tickets_expone_los_campos_que_render_lee()
+    {
+        var t = ModeloJson().GetProperty("tickets");
+        foreach (var campo in new[]
+        {
+            "n", "pct", "cerrados", "media", "mediana", "p90", "mediaOk", "enDias", "cats", "meses",
+            "racha", "rachaCasos", "frentes", "nFrentes", "nFrentesR", "casosR", "hor", "desde",
+            "hasta", "fuera", "lista",
+        }) ExigeCampo(t, campo);
+
+        var cat = t.GetProperty("cats")[0];
+        foreach (var campo in new[] { "n", "c", "f", "med" }) ExigeCampo(cat, campo);
+        var frente = t.GetProperty("frentes")[0];
+        foreach (var campo in new[] { "n", "c", "r" }) ExigeCampo(frente, campo);
+    }
+
+    /// <summary>
+    /// D.fact (Consumo): TODOS los campos que <c>render()</c> lee de <c>f</c>, salvo
+    /// <c>cargaAcum</c> — ver "No cubierto por este test".
+    /// </summary>
+    [Fact]
+    public void D_fact_expone_los_campos_que_render_lee()
+    {
+        var f = ModeloJson().GetProperty("fact");
+        foreach (var campo in new[]
+        {
+            "filas", "total", "meses", "ultCompleto", "parciales", "subs", "nIds", "nRg", "picoAct",
+            "picoMes", "nCats", "bajasDef", "prom", "ahorro", "cargaRet", "comp", "serie", "cc",
+        }) ExigeCampo(f, campo);
+
+        // ahorro/comp de ESTE fixture (2 meses) salen null: CalcularAhorro exige 6 meses no
+        // parciales y la comparativa exige que el mismo mes del año anterior este en rango. Sus
+        // campos internos se verifican aparte (ver D_ConsumoAhorro/D_ConsumoComparativa), por
+        // construccion directa, para no atar el contrato de nombres a que este fixture dispare esa
+        // regla de negocio en particular.
+    }
+
+    /// <summary>Campos de <c>f.ahorro</c> que <c>render()</c> lee, verificados por construcción
+    /// directa (D3 exige 6 meses no parciales para que el ensamblador lo calcule; no vale la pena
+    /// inflar el fixture de arriba solo para disparar esa regla).</summary>
+    [Fact]
+    public void D_ConsumoAhorro_expone_los_campos_que_render_lee()
+    {
+        var ahorro = new ConsumoAhorro("Backup", 5000m, "2025-10", 1800m, "2026-01", 3200m, 3, 38400m);
+        var json = JsonSerializer.Serialize(ahorro, InformeValorJsonOptions.Instance);
+        using var doc = JsonDocument.Parse(json);
+
+        foreach (var campo in new[] { "dif", "cat", "pico", "picoMes", "fin" }) ExigeCampo(doc.RootElement, campo);
+    }
+
+    /// <summary>Campos de <c>f.comp</c> que <c>render()</c> lee, mismo motivo que
+    /// <see cref="D_ConsumoAhorro_expone_los_campos_que_render_lee"/>.</summary>
+    [Fact]
+    public void D_ConsumoComparativa_expone_los_campos_que_render_lee()
+    {
+        var comp = new ConsumoComparativa("2025-01", "2026-01", [["Storage", 4000m, 3500m]]);
+        var json = JsonSerializer.Serialize(comp, InformeValorJsonOptions.Instance);
+        using var doc = JsonDocument.Parse(json);
+
+        foreach (var campo in new[] { "a", "b", "filas" }) ExigeCampo(doc.RootElement, campo);
+    }
+
+    [Fact]
+    public void D_rbac_expone_los_campos_que_render_lee()
+    {
+        var rb = ModeloJson().GetProperty("rbac");
+        foreach (var campo in new[]
+        {
+            "n", "ids", "subs", "crit", "idsU", "idsS", "nu", "ns", "priv", "sinLogin", "sinNombre",
+            "find", "spTop", "roles", "owner", "uaa",
+        }) ExigeCampo(rb, campo);
+
+        var hallazgo = rb.GetProperty("find")[0];
+        foreach (var campo in new[] { "s", "t", "a", "r", "e" }) ExigeCampo(hallazgo, campo);
+    }
+
+    /// <summary>
+    /// D.advisor (Postura): TODOS los campos que <c>render()</c> lee de <c>ad</c>, incluidos
+    /// <c>subs</c>/<c>tipos</c> como objetos con nombre (<c>sb.n</c>/<c>sb.c</c>,
+    /// <c>tp.n</c>/<c>tp.c</c>: el bug que esta tarea corrigió, ver el informe). <c>savLineas</c>
+    /// se verifica por nombre en vez de por posición — ver "No cubierto por este test".
+    /// </summary>
+    [Fact]
+    public void D_advisor_expone_los_campos_que_render_lee()
+    {
+        var ad = ModeloJson().GetProperty("advisor");
+        foreach (var campo in new[]
+        {
+            "n", "nRes", "high", "subs", "topSum", "descarte", "bruto", "real", "rets", "vencidos",
+            "proximos", "savLineas", "porSub", "cats", "tipos_rec", "tipos", "top", "det",
+        }) ExigeCampo(ad, campo);
+
+        var pilar = ad.GetProperty("cats")[0];
+        foreach (var campo in new[] { "n", "c", "h", "m", "l" }) ExigeCampo(pilar, campo);
+
+        // sb.n/sb.c y tp.n/tp.c: antes de la Tarea 8 estos dos eran arreglos posicionales
+        // [nombre, cantidad] y "sb.n" hubiera dado undefined en render() sin cambiar una sola
+        // línea de la plantilla.
+        var sub = ad.GetProperty("subs")[0];
+        Assert.True(sub.TryGetProperty("n", out _)); Assert.True(sub.TryGetProperty("c", out _));
+        var tipo = ad.GetProperty("tipos")[0];
+        Assert.True(tipo.TryGetProperty("n", out _)); Assert.True(tipo.TryGetProperty("c", out _));
+
+        var retiro = ad.GetProperty("rets")[0];
+        foreach (var campo in new[] { "f", "d", "c", "est" }) ExigeCampo(retiro, campo);
+
+        // porSub[clave].ri/.sp: la clave es el nombre de suscripcion (D13), el valor es un objeto.
+        var porSub = ad.GetProperty("porSub");
+        var primeraSuscripcionConCompromiso = porSub.EnumerateObject().First().Value;
+        Assert.True(primeraSuscripcionConCompromiso.TryGetProperty("ri", out _));
+        Assert.True(primeraSuscripcionConCompromiso.TryGetProperty("sp", out _));
+
+        // savLineas: NUEVO contrato por nombre (D7). rec/sub/monto son el equivalente con nombre
+        // de lo que el l[0]/l[1]/l[2] posicional de render() leía: ver "No cubierto" más abajo.
+        var linea = ad.GetProperty("savLineas")[0];
+        foreach (var campo in new[] { "rec", "sub", "monto", "tipo", "contada" }) ExigeCampo(linea, campo);
+    }
+
+    [Fact]
+    public void D_matriz_expone_los_campos_que_render_lee()
+    {
+        var mz = ModeloJson().GetProperty("matriz");
+        foreach (var campo in new[] { "n", "amb", "cerrados", "curso", "sinIniciar", "avance", "items", "horas" })
+            ExigeCampo(mz, campo);
+
+        var item = mz.GetProperty("items")[0];
+        foreach (var campo in new[] { "a", "t", "f", "i", "p", "e", "v", "n", "g" }) ExigeCampo(item, campo);
+        var ambito = mz.GetProperty("amb")[0];
+        foreach (var campo in new[] { "n", "c", "rec", "av" }) ExigeCampo(ambito, campo);
+    }
+
+    [Fact]
+    public void D_catSerie_es_un_diccionario_de_diccionarios_por_categoria_y_mes()
+    {
+        var catSerie = ModeloJson().GetProperty("catSerie");
+        Assert.True(catSerie.TryGetProperty("Cómputo", out var porMes));
+        Assert.True(porMes.TryGetProperty("2026-01", out _));
+    }
+
+    // ===================================================================================
+    // No cubierto por este test (según pide el punto 5 del encargo): tres nombres/formas que
+    // render(), TAL CUAL ESTÁ HOY (sin el patch que le corresponde a la entrega 3), no puede leer
+    // desde este modelo. Los tres son consecuencia DIRECTA de una decisión ya tomada (D2, D4, D7),
+    // no un olvido de esta tarea:
+    //
+    // 1. "tickets.si" / "tickets.no": D2 sustituyó el binario "cumple SLA sí/no" por tres estados
+    //    explícitos (cumple/noCumple/sinEvaluar) justamente porque el binario original mezclaba
+    //    "no cumple" con "no se evaluó". No hay un valor único en el modelo nuevo que sea
+    //    correcto publicar bajo el nombre viejo "si"/"no" sin reintroducir esa mezcla.
+    // 2. "fact.cargaAcum": D4 declaró que esta cifra desaparece, no se renombra (es la segunda
+    //    definición, incompatible, de "carga retirada" que traía la plantilla). No hay ningún
+    //    campo del modelo nuevo al que este nombre le corresponda.
+    // 3. "advisor.savLineas[].0/.1/.2" (acceso posicional): D7 cambió la forma de savLineas de
+    //    arreglo a objeto con nombre para poder llevar el veredicto "contada" junto a cada línea.
+    //    No es que falte un nombre: la propia noción de "nombre" no aplica al acceso posicional
+    //    que hace render() hoy. rec/sub/monto (ya cubiertos arriba) son el equivalente correcto,
+    //    pero llegar a ellos exige que render() cambie de l[0]/l[1]/l[2] a l.rec/l.sub/l.monto.
+    //
+    // Los tres son trabajo de la entrega 3 (parchear render() para consumir el modelo nuevo, no
+    // reproducir el defecto viejo), documentado también en el informe de esta tarea.
+    // ===================================================================================
+}

@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Features.Clients;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
+using OptimizacionCostos.Api.Features.InformeValor.Calculo;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 using OptimizacionCostos.Api.Features.Storage;
 
@@ -9,8 +11,9 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Api;
 
 /// <summary>
 /// Informe de valor del servicio administrado: carga de los insumos que no se pueden obtener
-/// desde la credencial del cliente (BITCOST y la mesa de servicio, más el RBAC de respaldo).
-/// El cálculo y la generación son de las entregas 2 y 3.
+/// desde la credencial del cliente (BITCOST y la mesa de servicio, más el RBAC de respaldo), y
+/// <see cref="Preview"/> (Tarea 8 de la entrega 2b), que calcula el modelo completo sin persistir
+/// nada. La generación del artefacto HTML y el archivo de entregas son de la entrega 3.
 ///
 /// Subir() a propósito NO recibe IFormFile en la firma, y además lleva
 /// [DisableFormValueModelBinding]. Un IFormFile como parámetro no alcanzaría solo con quitarlo:
@@ -33,7 +36,7 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Api;
 [RequireModule(Modules.InformeValor)]
 public sealed class InformeValorController(
     IInformeValorStore store, IAnalysisAccess access, ILogger<InformeValorController> logger,
-    IInsumosBdRecolector recolector) : ControllerBase
+    IInsumosBdRecolector recolector, IClientStore clientStore) : ControllerBase
 {
     // Un export de BITCOST de 24 meses de un cliente grande está entre 8 y 18 MB, así que el
     // tope compartido de UploadValidation (10 MiB) rechazaría un archivo legítimo.
@@ -138,6 +141,61 @@ public sealed class InformeValorController(
             },
             leido_en = insumos.LeidoEn,
         });
+    }
+
+    /// <summary>
+    /// Calcula el modelo completo del informe y lo devuelve sin persistir nada (Tarea 8 de la
+    /// entrega 2b: "el endpoint que devuelve el modelo"). Solo lee: hereda
+    /// <c>[RequireModule(Modules.InformeValor)]</c> de la clase (<c>ModuleAccess.View</c>), igual
+    /// que <see cref="Estado"/>/<see cref="InsumosBd"/> — spec, tabla de la API, <c>/preview</c> es
+    /// <c>View</c> aunque sea POST, porque no muta nada.
+    ///
+    /// <b>Serialización: <c>Ok(modelo)</c> normal, con la política global de <c>Program.cs</c>
+    /// (snake_case), nunca <see cref="InformeValorJsonOptions"/>.</b> Decisión explícita de la
+    /// Tarea 8, no un descuido: son dos consumidores con dos dueños distintos.
+    /// <see cref="InformeValorJsonOptions"/> existe para el HTML exportado de la entrega 3, que
+    /// reusa <c>render()</c> tal cual está y no se puede tocar; este endpoint alimenta la vista
+    /// React nueva de esa misma entrega, que sí se escribe desde cero y puede seguir la convención
+    /// del resto de la API. Ver el comentario de clase de <see cref="InformeValorJsonOptions"/>
+    /// para la duda que esto resuelve.
+    ///
+    /// <para>La fecha de corte llega como instante (<see cref="PreviewRequest.Corte"/>) y se
+    /// resuelve a fecha de Guayaquil UNA vez, acá — nunca <c>DateTime.Now</c>/<c>UtcNow</c> (Global
+    /// Constraints): dos llamadas con el mismo <see cref="PreviewRequest"/> tienen que devolver
+    /// exactamente el mismo modelo.</para>
+    /// </summary>
+    [HttpPost("clients/{clientId:int}/preview")]
+    public async Task<IActionResult> Preview(int clientId, [FromBody] PreviewRequest request, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+
+        if (request.PeriodEnd < request.PeriodStart)
+            return BadRequest(new { detail = "El rango del periodo es invalido: el fin es anterior al inicio." });
+
+        var contexto = new ContextoInformeValor(
+            request.PeriodStart, request.PeriodEnd,
+            Fechas.ResolverFechaEnGuayaquil(request.Corte),
+            request.MesesParcialesForzados);
+
+        var insumosBd = await recolector.LeerAsync(clientId, ct);
+        var facturacion = await store.GetFacturacionAsync(clientId, ct);
+        var casos = await store.GetCasosAsync(clientId, ct);
+        var estados = await store.GetEstadoAsync(clientId, ct);
+        var nombreCliente = await clientStore.GetNameAsync(clientId, ct) ?? $"Cliente {clientId}";
+
+        // D14: rows_processed + rows_merged de la ULTIMA carga de facturación (GetEstadoAsync ya
+        // filtra a la más reciente por kind). 0 si nunca se cargó nada, igual que un insumo
+        // ausente: ConsumoCalculador.Calcular devuelve null si además no hay ninguna fila en rango.
+        var filasAntesDeFusionar = estados
+            .Where(e => string.Equals(e.Kind, SqlInformeValorStore.KindFacturacion, StringComparison.OrdinalIgnoreCase))
+            .Select(e => e.Filas + e.RowsMerged)
+            .FirstOrDefault();
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, filasAntesDeFusionar, casos, insumosBd, nombreCliente, contexto);
+
+        return Ok(modelo);
     }
 
     [HttpPost("clients/{clientId:int}/insumos/{kind}")]
@@ -285,3 +343,24 @@ public sealed class InformeValorController(
         _ => Ok(),
     };
 }
+
+/// <summary>
+/// Cuerpo de <see cref="InformeValorController.Preview"/>. El rango y el corte SIEMPRE entran
+/// como parámetros (Global Constraints): nunca se completan con el reloj del servidor.
+///
+/// <para><see cref="Corte"/> es un instante (no una fecha ya resuelta): la resolución a fecha de
+/// Guayaquil pasa por <see cref="Fechas.ResolverFechaEnGuayaquil"/> dentro del controller, el único
+/// punto de conversión de zona horaria del módulo.</para>
+///
+/// <para><see cref="MesesParcialesForzados"/> es el tri-estado del spec §12.3.3: ausente/<c>null</c>
+/// en el JSON = heurística automática; <c>[]</c> = el consultor declaró "ningún mes parcial";
+/// una lista con elementos = exactamente esos meses. El binder de JSON ya distingue los tres
+/// (<c>null</c> y ausente bindean igual a <c>null</c> en C#, que es la heurística: es la lectura
+/// correcta, porque para quien llama "no mandé el campo" y "mandé null explícito" significan lo
+/// mismo, ninguna declaración).</para>
+/// </summary>
+public sealed record PreviewRequest(
+    DateOnly PeriodStart,
+    DateOnly PeriodEnd,
+    DateTimeOffset Corte,
+    IReadOnlyList<string>? MesesParcialesForzados);

@@ -249,6 +249,12 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
 
         public Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct)
             => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<FacturacionRow>> GetFacturacionAsync(int clientId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<CasoRow>> GetCasosAsync(int clientId, CancellationToken ct)
+            => throw new NotSupportedException();
     }
 
     /// <summary>Ensamblador falso: por defecto devuelve todo vacío (RBAC no disponible, sin datos);
