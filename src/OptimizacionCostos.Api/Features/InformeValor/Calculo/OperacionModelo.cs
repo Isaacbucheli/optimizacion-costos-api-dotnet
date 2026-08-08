@@ -43,7 +43,12 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// <see cref="SerieMensual"/> = [mes "aaaa-MM", total del mes, casos fuera de SLA del mes];
 /// <see cref="PorHorario"/> = [nombre del horario, cantidad de casos];
 /// <see cref="FueraDeSla"/> = [caso, fecha ISO o "", categoría, subcategoría, SLA en horas, duración en horas];
-/// <see cref="Detalle"/> = [caso, fecha ISO o "", categoría, subcategoría, SLA en horas, duración en horas, "SI"/"NO", horario].
+/// <see cref="Detalle"/> = [caso, fecha ISO o "", categoría, subcategoría, SLA en horas, duración en horas,
+/// "SI"/"NO"/"SIN EVALUAR", horario]. La séptima posición son los mismos tres estados de D2
+/// (<see cref="Cumple"/>/<see cref="NoCumple"/>/<see cref="SinEvaluar"/>), nunca el binario "SI"/"NO"
+/// que forzaba a los casos sin evaluar a mostrarse como cumplidos: es la posición exacta de la que
+/// habla el segundo defecto de D2 ("la tabla de detalle pinta 'Sí' todo lo que no sea 'NO'"), así
+/// que dejarla en dos valores reintroduciría ese defecto en el propio contrato.
 /// </para>
 /// </summary>
 public sealed record OperacionModelo(
