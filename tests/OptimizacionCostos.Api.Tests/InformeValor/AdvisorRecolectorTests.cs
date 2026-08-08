@@ -7,14 +7,21 @@ namespace OptimizacionCostos.Api.Tests.InformeValor;
 /// No tocan la base: verifican el texto del SQL expuesto (AdvisorRecolector.Sql) y las funciones
 /// de mapeo puras, mismo estilo que InformeValorSchemaTests y
 /// AccessReviewCompletitudTests.GetLatestFinishedRunAsync_filtra_estado_y_no_filtra_por_run_id.
+/// Desde la revisión de rama de la Entrega 2a, Sql es una función de la lista de suscripciones
+/// administradas y de la bandera de seguridad gestionada externamente (antes una constante fija).
 /// </summary>
 public sealed class AdvisorRecolectorTests
 {
+    private static readonly string[] UnaSuscripcion = ["sub-1"];
+
+    private static string Sql(bool seguridadGestionadaExternamente = false) =>
+        AdvisorRecolector.Sql(UnaSuscripcion, seguridadGestionadaExternamente);
+
     [Fact]
     public void El_sql_deriva_la_categoria_de_pillar_number_y_no_del_texto()
     {
-        Assert.Contains("pillar_number", AdvisorRecolector.Sql, StringComparison.Ordinal);
-        Assert.DoesNotContain("advisor_category", AdvisorRecolector.Sql, StringComparison.Ordinal);
+        Assert.Contains("pillar_number", Sql(), StringComparison.Ordinal);
+        Assert.DoesNotContain("advisor_category", Sql(), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -25,16 +32,54 @@ public sealed class AdvisorRecolectorTests
     [Fact]
     public void El_sql_excluye_los_hallazgos_cargados_a_mano()
     {
-        Assert.Contains("'importado'", AdvisorRecolector.Sql, StringComparison.Ordinal);
+        Assert.Contains("'importado'", Sql(), StringComparison.Ordinal);
     }
 
     [Fact]
     public void El_sql_lee_el_ahorro_por_las_dos_rutas_priorizando_la_del_sync()
     {
-        var i = AdvisorRecolector.Sql.IndexOf("annualSavingsAmount", StringComparison.Ordinal);
-        var j = AdvisorRecolector.Sql.IndexOf("Potential Annual Cost Savings", StringComparison.Ordinal);
+        var sql = Sql();
+        var i = sql.IndexOf("annualSavingsAmount", StringComparison.Ordinal);
+        var j = sql.IndexOf("Potential Annual Cost Savings", StringComparison.Ordinal);
         Assert.True(i > 0 && j > 0, "faltan las dos rutas del ahorro");
         Assert.True(i < j, "la ruta del sync tiene que ir primero en el COALESCE");
+    }
+
+    /// <summary>
+    /// CRÍTICO de la revisión de rama: mismo filtro que MatrizRecolector (ver su test análogo) y
+    /// por la misma razón — antes este recolector no traía la bandera, así que el lado de Advisor
+    /// del informe no podía replicar lo que ya hacen la pantalla WAF, el export a Excel y el
+    /// informe mensual del lado de la matriz.
+    /// </summary>
+    [Fact]
+    public void El_sql_excluye_el_pilar_de_seguridad_cuando_el_cliente_lo_gestiona_externamente()
+    {
+        var conFiltro = Sql(seguridadGestionadaExternamente: true);
+        var sinFiltro = Sql(seguridadGestionadaExternamente: false);
+
+        Assert.Contains("pillar_number<>3", conFiltro.Replace(" ", ""), StringComparison.Ordinal);
+        Assert.DoesNotContain("pillar_number<>3", sinFiltro.Replace(" ", ""), StringComparison.Ordinal);
+    }
+
+    /// <summary>IMPORTANTE 2: ver el test análogo de MatrizRecolectorTests.</summary>
+    [Fact]
+    public void El_sql_filtra_por_las_suscripciones_administradas()
+    {
+        var sql = AdvisorRecolector.Sql(["sub-a", "sub-b"], seguridadGestionadaExternamente: false);
+
+        Assert.Contains("f.subscription_id IN", sql, StringComparison.Ordinal);
+        Assert.Contains("@sub0", sql, StringComparison.Ordinal);
+        Assert.Contains("@sub1", sql, StringComparison.Ordinal);
+    }
+
+    /// <summary>Ver el test análogo de MatrizRecolectorTests: misma semántica, mismo motivo.</summary>
+    [Fact]
+    public async Task LeerAsync_sin_suscripciones_administradas_devuelve_vacio_sin_conexion()
+    {
+        var filas = await AdvisorRecolector.LeerAsync(
+            conn: null!, clientId: 7, suscripcionesAdministradas: [], seguridadGestionadaExternamente: false);
+
+        Assert.Empty(filas);
     }
 
     [Theory]

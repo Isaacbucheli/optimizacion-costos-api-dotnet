@@ -8,55 +8,77 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
 /// (el mismo del export de la matriz). Recibe una <see cref="SqlConnection"/> ya abierta: no
 /// asegura el schema WAF ni administra la conexión, eso es responsabilidad del ensamblador que lo
 /// llama junto a los demás recolectores del informe.
+///
+/// <para><b>Filtra seguridad gestionada externamente y suscripción administrada, igual que
+/// <see cref="MatrizRecolector"/> (ver el comentario de esa clase para el porqué de cada uno):
+/// misma bandera <c>security_managed_externally</c>, mismo <see cref="WafConstants.SecurityPillar"/>,
+/// misma lista de administradas.</b> Antes este recolector no traía ninguno de los dos, así que el
+/// lado de Advisor del informe no podía replicar lo que ya hacen la pantalla WAF, el export a Excel
+/// y el informe mensual del lado de la matriz.</para>
 /// </summary>
 public static class AdvisorRecolector
 {
     /// <summary>
-    /// Sentinela que el importador de la matriz Excel escribe en subscription_id para los
+    /// SQL dinámico (ver <see cref="MatrizRecolector.Sql"/>): los filtros de seguridad y de
+    /// suscripción administrada cambian el WHERE según el cliente.
+    ///
+    /// <para>Sentinela que el importador de la matriz Excel escribe en subscription_id para los
     /// hallazgos cargados a mano (ver <see cref="WafConstants.ManualSubscriptionId"/>). Sin
     /// excluirlos el informe publica "(matriz historica)" como si fuera una suscripción real del
     /// cliente, con su propio porcentaje sobre el total. El literal queda fijo en el SQL (no es
-    /// un parámetro) a propósito: el test de esta clase inspecciona el texto de <see cref="Sql"/>
-    /// para confirmar que el filtro sigue ahí.
+    /// un parámetro) a propósito: el test de esta clase inspecciona el texto para confirmar que el
+    /// filtro sigue ahí.</para>
     /// </summary>
-    internal const string Sql = """
-        SELECT
-            c.pillar_number,
-            r.impact_number,
-            c.advisor_name,
-            c.advisor_name_en,
-            r.canonical_id,
-            r.matrix_code,
-            r.source,
-            f.subscription_id,
-            f.subscription_name,
-            f.resource_name,
-            f.resource_type,
-            TRY_CAST(COALESCE(
-                JSON_VALUE(f.additional_info, '$.extendedProperties.annualSavingsAmount'),
-                JSON_VALUE(f.additional_info, '$."Potential Annual Cost Savings"')
-            ) AS DECIMAL(18,2)) AS ahorro_anual,
-            JSON_VALUE(f.additional_info, '$.extendedProperties.savingsCurrency') AS moneda_ahorro
-        FROM dbo.waf_resource_finding f
-        INNER JOIN dbo.waf_recommendation r ON r.recommendation_id = f.recommendation_id
-        INNER JOIN dbo.waf_recommendation_canonical c ON c.canonical_id = r.canonical_id
-        WHERE r.client_id = @clientId
-          AND r.is_active = 1
-          AND COALESCE(r.is_dismissed, 0) = 0
-          AND f.status = 'active'
-          AND f.subscription_id <> 'importado'
-        ORDER BY c.pillar_number, r.impact_number, f.subscription_name, f.resource_name
-        """;
+    internal static string Sql(IReadOnlyList<string> suscripcionesAdministradas, bool seguridadGestionadaExternamente)
+    {
+        var secFilter = seguridadGestionadaExternamente ? $" AND c.pillar_number <> {WafConstants.SecurityPillar}" : "";
+        var subFilter = WafSubscriptionFilter.FindingPredicate("f", suscripcionesAdministradas);
+        return $"""
+            SELECT
+                c.pillar_number,
+                r.impact_number,
+                c.advisor_name,
+                c.advisor_name_en,
+                r.canonical_id,
+                r.matrix_code,
+                r.source,
+                f.subscription_id,
+                f.subscription_name,
+                f.resource_name,
+                f.resource_type,
+                TRY_CAST(COALESCE(
+                    JSON_VALUE(f.additional_info, '$.extendedProperties.annualSavingsAmount'),
+                    JSON_VALUE(f.additional_info, '$."Potential Annual Cost Savings"')
+                ) AS DECIMAL(18,2)) AS ahorro_anual,
+                JSON_VALUE(f.additional_info, '$.extendedProperties.savingsCurrency') AS moneda_ahorro
+            FROM dbo.waf_resource_finding f
+            INNER JOIN dbo.waf_recommendation r ON r.recommendation_id = f.recommendation_id
+            INNER JOIN dbo.waf_recommendation_canonical c ON c.canonical_id = r.canonical_id
+            WHERE r.client_id = @clientId
+              AND r.is_active = 1
+              AND COALESCE(r.is_dismissed, 0) = 0
+              AND f.status = 'active'
+              AND f.subscription_id <> 'importado'{secFilter}{subFilter}
+            ORDER BY c.pillar_number, r.impact_number, f.subscription_name, f.resource_name
+            """;
+    }
 
     /// <summary>Texto de "sin suscripción" cuando subscription_name viene vacío en la base.</summary>
     private const string SinSuscripcion = "(sin suscripción)";
 
+    /// <param name="suscripcionesAdministradas">Ver <see cref="MatrizRecolector.LeerAsync"/>: misma
+    /// lista, mismo motivo para devolver vacío sin consultar cuando no hay ninguna.</param>
+    /// <param name="seguridadGestionadaExternamente">Ver el comentario de clase.</param>
     public static async Task<IReadOnlyList<AdvisorFila>> LeerAsync(
-        SqlConnection conn, int clientId, CancellationToken ct = default)
+        SqlConnection conn, int clientId, IReadOnlyList<string> suscripcionesAdministradas,
+        bool seguridadGestionadaExternamente, CancellationToken ct = default)
     {
+        if (suscripcionesAdministradas.Count == 0) return [];
+
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = Sql;
+        cmd.CommandText = Sql(suscripcionesAdministradas, seguridadGestionadaExternamente);
         cmd.Parameters.Add(new SqlParameter("@clientId", clientId));
+        WafSubscriptionFilter.AddParameters(cmd, suscripcionesAdministradas);
 
         var items = new List<AdvisorFila>();
         await using var rd = await cmd.ExecuteReaderAsync(ct);
