@@ -30,9 +30,12 @@ public static class ConsumoCalculador
 
     /// <summary>
     /// D0: <paramref name="filas"/> se restringe al rango de <paramref name="contexto"/> antes de
-    /// agrupar nada. D14: <paramref name="filasAntesDeFusionar"/> es <c>rows_processed +
-    /// rows_merged</c> de la bitácora de ingesta (ver <see cref="ConsumoModelo.Filas"/>): no se
-    /// recalcula desde <paramref name="filas"/>, que ya llega fusionada.
+    /// agrupar nada; <see cref="ConsumoModelo.FilasEnRango"/> publica cuántas quedaron. D14:
+    /// <paramref name="filasAntesDeFusionar"/> es <c>rows_processed + rows_merged</c> de la
+    /// bitácora de ingesta, de TODA la carga (ver <see cref="ConsumoModelo.Filas"/>): no se
+    /// recalcula desde <paramref name="filas"/>, que ya llega fusionada, y no se filtra por rango
+    /// porque no se puede (el conteo de fusionadas no está partido por mes). Las dos cifras se
+    /// publican juntas, cada una rotulada por lo que cuenta.
     ///
     /// <para>Devuelve <c>null</c> cuando, tras el filtro de rango, no queda ningún mes con datos.
     /// Igual que <c>calcFact</c>, esta calculadora no distingue "no hay insumo cargado" de "el
@@ -102,7 +105,7 @@ public static class ConsumoCalculador
         var mk = meses.Keys.OrderBy(x => x, StringComparer.Ordinal).ToList();
 
         var autoParciales = DetectarParcialesAutomaticos(mk, meses);
-        var parcial = ResolverParciales(contexto.MesesParcialesForzados, autoParciales, mk);
+        var (parcial, parcialesInexistentes) = ResolverParciales(contexto.MesesParcialesForzados, autoParciales, mk);
 
         string? ultCompleto = null;
         for (var i = mk.Count - 1; i >= 0; i--)
@@ -132,11 +135,13 @@ public static class ConsumoCalculador
 
         return new ConsumoModelo(
             Filas: filasAntesDeFusionar,
+            FilasEnRango: enRango.Count,
             Total: Redondeo.ComoJs(mk.Sum(m => meses[m])),
             SerieMensual: serieMensual,
             UltimoMesCompleto: ultCompleto,
             MesesParciales: mk.Where(parcial.Contains).ToList(),
             MesesParcialesDetectadosAuto: autoParciales,
+            MesesParcialesInexistentes: parcialesInexistentes,
             Suscripciones: ordenSubs
                 .OrderByDescending(s => subs[s])
                 .Select(s => (IReadOnlyList<object?>)[s, Redondeo.ComoJs(subs[s])])
@@ -199,16 +204,21 @@ public static class ConsumoCalculador
     }
 
     /// <summary>Tri-estado de <see cref="ContextoInformeValor.MesesParcialesForzados"/>: ver su
-    /// propio docstring. Un mes forzado que no existe en <paramref name="mk"/> se ignora en
-    /// silencio, igual que <c>calcFact</c> (<c>if(meses[m]!==undefined)</c>) — no hay, en este
-    /// contrato, ningún campo para publicar un aviso de eso; queda anotado como duda para la
-    /// Tarea 8 en el reporte de esta entrega.</summary>
-    private static HashSet<string> ResolverParciales(IReadOnlyList<string>? forzados, List<string> auto, List<string> mk)
+    /// propio docstring. Un mes forzado que no existe en <paramref name="mk"/> no se aplica (igual
+    /// que <c>calcFact</c>, <c>if(meses[m]!==undefined)</c>) pero SÍ se reporta: a diferencia de la
+    /// plantilla, que lo descarta en silencio, acá se devuelve por separado para que
+    /// <see cref="ConsumoModelo.MesesParcialesInexistentes"/> lo publique (spec §12.3.3). Solo
+    /// aplica cuando <paramref name="forzados"/> trae una lista con elementos: con <c>null</c>
+    /// (heurística) o lista vacía (ninguno) no hay nada que el consultor haya declarado mal.
+    /// </summary>
+    private static (HashSet<string> Parcial, List<string> Inexistentes) ResolverParciales(
+        IReadOnlyList<string>? forzados, List<string> auto, List<string> mk)
     {
-        if (forzados is null) return [.. auto];
-        if (forzados.Count == 0) return [];
+        if (forzados is null) return ([.. auto], []);
+        if (forzados.Count == 0) return ([], []);
         var existentes = mk.ToHashSet();
-        return forzados.Where(existentes.Contains).ToHashSet();
+        var inexistentes = forzados.Where(m => !existentes.Contains(m)).Distinct().ToList();
+        return (forzados.Where(existentes.Contains).ToHashSet(), inexistentes);
     }
 
     /// <summary>

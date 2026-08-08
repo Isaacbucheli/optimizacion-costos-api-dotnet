@@ -48,6 +48,10 @@ public sealed class ConsumoCalculadorTests
         Assert.NotNull(modelo);
         Assert.Equal(100m, modelo!.Total);
         Assert.Equal("2026-01", Assert.Single(modelo.SerieMensual)[0]);
+        // Punto C: FilasEnRango cuenta solo lo que paso el filtro D0 (1 fila), distinto del
+        // parametro filasAntesDeFusionar (2, la carga completa) que sigue publicandose en Filas.
+        Assert.Equal(1, modelo.FilasEnRango);
+        Assert.Equal(2, modelo.Filas);
     }
 
     [Fact]
@@ -66,6 +70,7 @@ public sealed class ConsumoCalculadorTests
 
         Assert.Equal(30m, modelo!.Total);
         Assert.Equal(3, modelo.SerieMensual.Count);
+        Assert.Equal(3, modelo.FilasEnRango);
     }
 
     [Fact]
@@ -111,6 +116,9 @@ public sealed class ConsumoCalculadorTests
         var modelo = ConsumoCalculador.Calcular(filas, Contexto(2026, 1, 2026, 1), filasAntesDeFusionar: 9137);
 
         Assert.Equal(9137, modelo!.Filas);
+        // Punto C: FilasEnRango es independiente del parametro, sale de contar la lista de entrada
+        // ya filtrada por D0 (las 2 filas de este caso, ambas en rango).
+        Assert.Equal(2, modelo.FilasEnRango);
     }
 
     // ---------------------------------------------------------------- D4 ----
@@ -384,6 +392,7 @@ public sealed class ConsumoCalculadorTests
         Assert.Equal(["2026-04"], modelo!.MesesParciales);
         Assert.Equal(["2026-04"], modelo.MesesParcialesDetectadosAuto);
         Assert.Equal("2026-03", modelo.UltimoMesCompleto);
+        Assert.Empty(modelo.MesesParcialesInexistentes); // sin declaracion del consultor, nada que avisar
     }
 
     [Fact]
@@ -395,6 +404,7 @@ public sealed class ConsumoCalculadorTests
         Assert.Empty(modelo!.MesesParciales);
         Assert.Equal(["2026-04"], modelo.MesesParcialesDetectadosAuto); // el diagnostico se sigue calculando
         Assert.Equal("2026-04", modelo.UltimoMesCompleto);
+        Assert.Empty(modelo.MesesParcialesInexistentes);
     }
 
     [Fact]
@@ -406,15 +416,35 @@ public sealed class ConsumoCalculadorTests
         Assert.Equal(["2026-03"], modelo!.MesesParciales);
         Assert.Equal(["2026-04"], modelo.MesesParcialesDetectadosAuto);
         Assert.Equal("2026-04", modelo.UltimoMesCompleto); // abril no esta forzado: cuenta como cerrado
+        Assert.Empty(modelo.MesesParcialesInexistentes); // "2026-03" existe: no hay nada que avisar
     }
 
+    /// <summary>Punto B del feedback de la coordinacion (spec §12.3.3): un mes forzado que no
+    /// existe no se aplica al calculo, pero SI se reporta, a diferencia del silencio de
+    /// calcFact.</summary>
     [Fact]
-    public void Forzados_con_un_mes_que_no_existe_en_el_insumo_se_ignora_sin_reventar()
+    public void Forzados_con_un_mes_que_no_existe_no_se_aplica_y_queda_reportado()
     {
         var modelo = ConsumoCalculador.Calcular(
             EscenarioParaHeuristica(), Contexto(2026, 1, 2026, 4, forzados: ["2099-12"]), filasAntesDeFusionar: 4);
 
-        Assert.Empty(modelo!.MesesParciales);
+        Assert.Empty(modelo!.MesesParciales); // no se aplica: "2099-12" no existe en el insumo
+        Assert.Equal(["2099-12"], modelo.MesesParcialesInexistentes); // pero queda avisado
+    }
+
+    /// <summary>Mezcla: un mes real (se aplica), uno inexistente repetido dos veces (se avisa una
+    /// sola vez) y la heuristica queda de lado por completo, igual que con cualquier lista no
+    /// vacia.</summary>
+    [Fact]
+    public void Forzados_mixtos_aplica_los_que_existen_y_deduplica_los_que_avisa()
+    {
+        var modelo = ConsumoCalculador.Calcular(
+            EscenarioParaHeuristica(),
+            Contexto(2026, 1, 2026, 4, forzados: ["2026-02", "2099-12", "2099-12"]),
+            filasAntesDeFusionar: 4);
+
+        Assert.Equal(["2026-02"], modelo!.MesesParciales);
+        Assert.Equal(["2099-12"], modelo.MesesParcialesInexistentes);
     }
 
     // ---------------------------------------------------------------- Conteos generales ----

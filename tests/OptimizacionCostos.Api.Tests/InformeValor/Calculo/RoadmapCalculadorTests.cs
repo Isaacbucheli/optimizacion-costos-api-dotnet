@@ -42,6 +42,9 @@ public sealed class RoadmapCalculadorTests
         Assert.Equal(50, item.AvancePct);
         Assert.Equal("en curso", item.Registro);
         Assert.Equal(3, item.RecomendacionesAsociadas); // = ResourceCount
+        // Esfuerzo queda null aunque EsfuerzoTexto ("2-3 dias") venga con contenido: no medido,
+        // nunca un cero inventado. Ver Horas_pendientes_* mas abajo.
+        Assert.Null(item.Esfuerzo);
     }
 
     [Fact]
@@ -168,15 +171,32 @@ public sealed class RoadmapCalculadorTests
         Assert.Equal(2, modelo!.Ambitos[0].Recomendaciones);
     }
 
+    /// <summary>Esfuerzo es siempre null hoy (brecha de datos: EsfuerzoTexto es texto libre sin
+    /// parser numerico). Con al menos un item sin iniciar y sin esfuerzo medido, HorasPendientes
+    /// tiene que ser null, no 0: un cero ahi se leeria como "no hace falta esfuerzo" cuando la
+    /// verdad es "no se midio".</summary>
     [Fact]
-    public void Horas_pendientes_suma_el_esfuerzo_de_los_no_iniciados()
+    public void Horas_pendientes_es_null_si_algun_item_sin_iniciar_no_tiene_esfuerzo_medido()
     {
-        // Esfuerzo queda en 0 (brecha de datos: EsfuerzoTexto es texto libre sin parser numerico,
-        // ver la nota de divergencia); la formula de la suma es la correcta y queda lista para
-        // cuando exista una columna numerica real.
         var filas = new[]
         {
             Fila(1, "A", "Sin iniciar", 0, esfuerzoTexto: "2-3 dias"),
+            Fila(2, "A", "En curso", 50, esfuerzoTexto: "1 dia"), // no cuenta: no esta "sin iniciar"
+        };
+
+        var modelo = RoadmapCalculador.Calcular(filas);
+
+        Assert.Null(modelo!.HorasPendientes);
+    }
+
+    /// <summary>Sin ningun item sin iniciar, 0 es un hecho (no hay nada pendiente), no una
+    /// ausencia de dato: la formula lo distingue del caso de arriba.</summary>
+    [Fact]
+    public void Horas_pendientes_es_cero_real_cuando_no_hay_items_sin_iniciar()
+    {
+        var filas = new[]
+        {
+            Fila(1, "A", "Cerrado", 100, esfuerzoTexto: "2-3 dias"),
             Fila(2, "A", "En curso", 50, esfuerzoTexto: "1 dia"),
         };
 

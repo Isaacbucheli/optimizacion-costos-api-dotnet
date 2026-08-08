@@ -20,10 +20,10 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// esto, fuera de esta entrega 2b). Parsear "2-3 días" con la misma heurística numérica que usa la
 /// plantilla (que sencillamente toma el primer número que encuentra) confundiría DÍAS con HORAS y
 /// publicaría un número con la unidad equivocada, más engañoso que no publicar nada: por eso
-/// <see cref="RoadmapItem.Esfuerzo"/> queda en cero hasta que exista la columna real, y
-/// <see cref="RoadmapModelo.HorasPendientes"/> hereda ese cero a través de la MISMA fórmula de
-/// siempre (para que arranque a funcionar solo en cuanto la columna exista, sin tocar este
-/// archivo).</para>
+/// <see cref="RoadmapItem.Esfuerzo"/> queda en <c>null</c> ("no medido") hasta que exista la columna
+/// real, nunca en <c>0</c> ("no hace falta esfuerzo"). <see cref="RoadmapModelo.HorasPendientes"/>
+/// respeta esa misma señal en <see cref="CalcularHorasPendientes"/>: no sustituye el hueco por un
+/// cero que parecería una medición.</para>
 /// </summary>
 public static class RoadmapCalculador
 {
@@ -50,7 +50,7 @@ public static class RoadmapCalculador
                 Fecha: f.Fecha?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                 Impacto: f.ImpactNumber ?? 0,
                 Prioridad: f.Prioridad,
-                Esfuerzo: 0m, // ver el docstring de la clase: brecha de dato, no un calculo pendiente
+                Esfuerzo: null, // ver el docstring de la clase: brecha de dato, no un calculo pendiente
                 AvancePct: f.AvancePct,
                 RecomendacionesAsociadas: f.ResourceCount,
                 Registro: f.Registro));
@@ -86,7 +86,28 @@ public static class RoadmapCalculador
             EnCurso: items.Count(i => i.AvancePct is > 0 and < 100),
             SinIniciar: items.Count(i => i.AvancePct <= 0),
             AvancePromedio: Redondeo.ComoJs(avancePromedioCrudo * 10) / 10.0,
-            HorasPendientes: items.Where(i => i.AvancePct <= 0).Sum(i => i.Esfuerzo));
+            HorasPendientes: CalcularHorasPendientes(items));
+    }
+
+    /// <summary>
+    /// <c>null</c>-safe a propósito (ver el docstring de la clase): una suma parcial que ignora los
+    /// ítems sin medir se leería como el total. Tres casos:
+    /// <list type="bullet">
+    /// <item>Sin ítems sin iniciar: <c>0</c> real (no hay nada pendiente, no es una ausencia).</item>
+    /// <item>Con ítems sin iniciar pero al menos uno sin <see cref="RoadmapItem.Esfuerzo"/> medido:
+    /// <c>null</c> (hoy siempre cae acá, porque <see cref="Calcular"/> nunca mide ninguno).</item>
+    /// <item>Con ítems sin iniciar y TODOS con esfuerzo medido: la suma real. Este camino no lo
+    /// ejercita ningún dato de hoy —<see cref="Calcular"/> no tiene de dónde sacar un esfuerzo
+    /// medido—, pero la fórmula ya queda lista para cuando exista la columna numérica del spec, sin
+    /// tener que tocar este método otra vez.</item>
+    /// </list>
+    /// </summary>
+    private static decimal? CalcularHorasPendientes(List<RoadmapItem> items)
+    {
+        var sinIniciar = items.Where(i => i.AvancePct <= 0).ToList();
+        if (sinIniciar.Count == 0) return 0m;
+        if (sinIniciar.Any(i => i.Esfuerzo is null)) return null;
+        return sinIniciar.Sum(i => i.Esfuerzo);
     }
 
     private static string Recortar(string texto, int max) => texto.Length <= max ? texto : texto[..max];

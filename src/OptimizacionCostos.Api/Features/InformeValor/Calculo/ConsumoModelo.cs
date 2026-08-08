@@ -27,11 +27,24 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// <see cref="Serie"/> ya excluya los meses parciales antes de publicarlo, no dejarlo para
 /// <c>render()</c>.</para>
 ///
-/// <para><b>D14: <see cref="Filas"/> es el conteo histórico, antes de fusionar.</b> La plantilla
+/// <para><b>D14: dos cifras de "filas", cada una rotulada por lo que cuenta.</b> La plantilla
 /// publica "revisado línea por línea sobre N registros" con el N de las filas aceptadas ANTES de
-/// fusionar por clave natural. La Tarea 3 lo lee de <c>informe_valor_ingesta</c>
-/// (<c>rows_processed + rows_merged</c>, columna agregada en la Tarea 1 de esta entrega), no lo
-/// recalcula contando filas de <c>informe_valor_facturacion</c> (que ya están fusionadas).</para>
+/// fusionar por clave natural, del archivo COMPLETO (la plantilla nunca filtra por período, D0). En
+/// C# eso ya no es una sola cifra honesta: D0 filtra por rango, y el conteo de fusionadas
+/// (<c>rows_merged</c>) no se puede partir por mes, así que no hay forma de reconstruir "cuántas
+/// filas, antes de fusionar, cayeron en este rango". Publicar solo el número de la bitácora (todo
+/// el archivo) en un informe de un rango corto exagera cuánto se revisó PARA ESE PERÍODO; publicar
+/// solo el conteo en rango subestima cuánto se revisó en total, porque ya está fusionado. Las dos
+/// cifras son ciertas y ninguna sola alcanza, así que se publican las dos, cada una con su propio
+/// nombre: <see cref="Filas"/> (toda la carga, como antes) y <see cref="FilasEnRango"/> (nuevo).
+/// </para>
+///
+/// <para><b>El aviso de mes forzado inexistente (spec §12.3.3) tiene campo propio.</b>
+/// <see cref="MesesParcialesInexistentes"/> publica los meses de
+/// <see cref="ContextoInformeValor.MesesParcialesForzados"/> que el consultor declaró pero que no
+/// existen en el insumo filtrado: antes se ignoraban en silencio (igual que <c>calcFact</c>), y
+/// ese silencio es justo lo que este módulo viene a eliminar. Vacío cuando no hay ninguno, no
+/// cuando el campo no se calculó.</para>
 ///
 /// <para><b>Filas posicionales</b> (arreglos JSON, no objetos: sobreviven intactas a cualquier
 /// política de nombres, y <c>render()</c> ya las lee por posición). <see cref="SerieMensual"/> =
@@ -42,12 +55,22 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// mensual, total anual]. <see cref="PorCentroCosto"/> = [centro de costo, monto].</para>
 /// </summary>
 public sealed record ConsumoModelo(
+    /// <summary>Filas aceptadas antes de fusionar, de TODA la carga (D14, sin filtrar por rango:
+    /// ver el docstring de la clase). No es reconstruible por período porque <c>rows_merged</c> no
+    /// se persiste por mes.</summary>
     [property: JsonPropertyName("filas")] int Filas,
+    /// <summary>Filas de facturación (ya fusionadas) que cayeron dentro de
+    /// <see cref="ContextoInformeValor.PeriodStart"/>/<see cref="ContextoInformeValor.PeriodEnd"/>
+    /// (D0). Subestima la revisión real de ese período porque ya está fusionado, pero es
+    /// reconciliable: cualquiera puede volver a contar las filas de ese rango y llegar al mismo
+    /// número. Contraparte de <see cref="Filas"/>, no un reemplazo.</summary>
+    [property: JsonPropertyName("filasEnRango")] int FilasEnRango,
     [property: JsonPropertyName("total")] decimal Total,
     [property: JsonPropertyName("meses")] IReadOnlyList<IReadOnlyList<object?>> SerieMensual,
     [property: JsonPropertyName("ultCompleto")] string? UltimoMesCompleto,
     [property: JsonPropertyName("parciales")] IReadOnlyList<string> MesesParciales,
     [property: JsonPropertyName("autoParciales")] IReadOnlyList<string> MesesParcialesDetectadosAuto,
+    [property: JsonPropertyName("parcialesInexistentes")] IReadOnlyList<string> MesesParcialesInexistentes,
     [property: JsonPropertyName("subs")] IReadOnlyList<IReadOnlyList<object?>> Suscripciones,
     [property: JsonPropertyName("nRecursos")] int NumRecursos,
     [property: JsonPropertyName("nIds")] int NumIdentidades,

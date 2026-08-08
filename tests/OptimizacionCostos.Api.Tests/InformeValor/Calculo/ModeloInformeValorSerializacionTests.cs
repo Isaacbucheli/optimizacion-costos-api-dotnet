@@ -68,10 +68,13 @@ public sealed class ModeloInformeValorSerializacionTests
         Cerrados: 1, EnCurso: 2, SinIniciar: 2, AvancePromedio: 42.5, HorasPendientes: 12m);
 
     private static readonly ConsumoModelo Consumo = new(
-        Filas: 14111, Total: 250000m,
+        // FilasEnRango y MesesParcialesInexistentes: campos agregados por la Tarea 3 despues de
+        // esta fixture (D14 rotulado, spec 12.3.3); valores de ejemplo, no afectan estas pruebas.
+        Filas: 14111, FilasEnRango: 500, Total: 250000m,
         SerieMensual: [["2026-01", 20000m, 0]],
         UltimoMesCompleto: "2026-01",
         MesesParciales: ["2026-02"], MesesParcialesDetectadosAuto: ["2026-02"],
+        MesesParcialesInexistentes: [],
         Suscripciones: [["Suscripción Producción", 200000m]],
         NumRecursos: 120, NumIdentidades: 130, NumGruposRecursos: 15, NumCategorias: 9,
         PicoRecursosActivos: 125, MesDePicoActivos: "2026-01",

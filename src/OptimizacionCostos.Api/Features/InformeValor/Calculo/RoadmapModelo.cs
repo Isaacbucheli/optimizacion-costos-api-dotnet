@@ -35,7 +35,13 @@ public sealed record RoadmapModelo(
     [property: JsonPropertyName("curso")] int EnCurso,
     [property: JsonPropertyName("sinIniciar")] int SinIniciar,
     [property: JsonPropertyName("avance")] double AvancePromedio,
-    [property: JsonPropertyName("horas")] decimal HorasPendientes);
+    /// <summary>Ver <see cref="RoadmapItem.Esfuerzo"/>: <c>null</c> cuando ningún ítem sin iniciar
+    /// tiene esfuerzo medido (el caso de hoy, siempre); un número real solo cuando TODOS los ítems
+    /// sin iniciar lo tienen, para que la suma nunca quede corta en silencio. Nunca <c>0</c> como
+    /// sustituto de "no lo sé": si no hay ningún ítem sin iniciar, <c>0</c> es un hecho (no hay
+    /// nada pendiente) y se publica tal cual; si hay ítems pendientes pero falta el dato de
+    /// alguno, se publica <c>null</c>, no una suma parcial que parecería el total.</summary>
+    [property: JsonPropertyName("horas")] decimal? HorasPendientes);
 
 /// <summary>Un hallazgo de la matriz (<c>items</c> de <c>calcMatriz</c>).</summary>
 public sealed record RoadmapItem(
@@ -44,7 +50,14 @@ public sealed record RoadmapItem(
     [property: JsonPropertyName("f")] string? Fecha,
     [property: JsonPropertyName("i")] int Impacto,
     [property: JsonPropertyName("p")] string? Prioridad,
-    [property: JsonPropertyName("e")] decimal Esfuerzo,
+    /// <summary><c>null</c> = "no medido", nunca "cero esfuerzo": <c>EsfuerzoTexto</c>
+    /// (<see cref="MatrizFila.EsfuerzoTexto"/>) es texto libre sin parser numérico todavía (ver el
+    /// docstring de <see cref="RoadmapCalculador"/>), así que hoy este campo es siempre
+    /// <c>null</c>. Antes de este campo ser nullable, la Tarea 7 publicaba <c>0</c> acá: el mismo
+    /// defecto de fondo que <see cref="SeguridadModelo.SinActividadSesion"/> (D9), una cifra
+    /// correcta en su tipo pero leída al revés porque un cero no declara si es una medición o una
+    /// ausencia.</summary>
+    [property: JsonPropertyName("e")] decimal? Esfuerzo,
     [property: JsonPropertyName("v")] int AvancePct,
     [property: JsonPropertyName("n")] int RecomendacionesAsociadas,
     [property: JsonPropertyName("g")] string? Registro);
