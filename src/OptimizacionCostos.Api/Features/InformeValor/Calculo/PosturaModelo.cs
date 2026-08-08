@@ -28,17 +28,20 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// produce <see cref="AhorroRealizable"/> (el máximo entre reserva y savings plan de esa
 /// suscripción), nunca de una comparación ad-hoc en la capa de dibujo.</para>
 ///
-/// <para><b>D11: el gap de datos que este contrato no puede cerrar solo.</b> La identidad de un
-/// recurso tiene que ser la terna suscripción + grupo de recursos + nombre, igual que en
-/// facturación (dos recursos homónimos en suscripciones o grupos distintos no son el mismo
-/// recurso). <see cref="AdvisorFila"/> (Recolector, entrega 2a) NO trae <c>resource_group</c>: la
-/// tabla <c>waf_resource_finding</c> sí lo tiene (columna existente, usada por
-/// <c>MatrizRecolector</c>/otras consultas del módulo WAF) pero <c>AdvisorRecolector.Sql()</c> no
-/// lo selecciona hoy. Sin ese campo, <see cref="NumRecursos"/> solo puede identificar por
-/// suscripción + nombre, una terna incompleta que sigue colisionando homónimos dentro de la misma
-/// suscripción. Se deja documentado como pendiente para quien implemente la Tarea 6: hace falta
-/// agregar <c>resource_group</c> a la consulta y al record antes de que D11 se pueda cumplir del
-/// todo acá (ver el informe de esta entrega, sección de dudas).</para>
+/// <para><b>D11: el gap de datos, cerrado en la Tarea 6.</b> La identidad de un recurso es la
+/// terna suscripción + grupo de recursos + nombre, igual que en facturación (dos recursos
+/// homónimos en suscripciones o grupos distintos no son el mismo recurso). <see cref="AdvisorFila"/>
+/// ya trae <see cref="AdvisorFila.ResourceGroup"/> (agregado en la Tarea 6 junto con la columna en
+/// <c>AdvisorRecolector.Sql()</c>: la tabla <c>waf_resource_finding</c> siempre tuvo
+/// <c>resource_group</c>, usada por <c>MatrizRecolector</c>/otras consultas del módulo WAF, pero
+/// <c>AdvisorRecolector</c> no la seleccionaba). <see cref="NumRecursos"/> identifica por la terna
+/// completa (restringida a filas con <see cref="AdvisorFila.ResourceName"/> no vacío): dos
+/// recursos con el mismo nombre en grupos o suscripciones distintos ya no colisionan. Queda una
+/// limitación aparte, sin campo en este contrato para cerrarla del todo: el numerador de "recursos
+/// que acumulan X recomendaciones en promedio" también debería restringirse a filas con recurso,
+/// pero ese numerador es <see cref="Total"/>, que tiene que seguir contando TODAS las filas para no
+/// perder su coherencia con <see cref="Alto"/>+<see cref="Medio"/>+<see cref="Bajo"/> (ver el
+/// informe de la Tarea 6, sección de dudas).</para>
 ///
 /// <para><b>Filas posicionales</b> (arreglos JSON: sobreviven intactas a cualquier política de
 /// nombres). <see cref="Suscripciones"/>/<see cref="TiposRecurso"/> = [nombre, cantidad].
