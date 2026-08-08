@@ -51,7 +51,8 @@ public sealed class InformeValorJsonOptionsTests
     [Fact]
     public void Los_nombres_de_propiedad_del_modelo_no_pasan_por_snake_case()
     {
-        var meta = new InformeValorMeta("Cliente Demo", "Enero-Diciembre 2026", "2026-12-31");
+        var meta = new InformeValorMeta(
+            "Cliente Demo", "Enero-Diciembre 2026", "2026-12-31", new InformeValorCobertura(0, []));
 
         var json = JsonSerializer.Serialize(meta, InformeValorJsonOptions.Instance);
 
@@ -68,7 +69,7 @@ public sealed class InformeValorJsonOptionsTests
     public void El_modelo_completo_serializa_con_las_siete_claves_de_D()
     {
         var modelo = new ModeloInformeValor(
-            new InformeValorMeta("Cliente", "2026", "2026-12-31"),
+            new InformeValorMeta("Cliente", "2026", "2026-12-31", new InformeValorCobertura(0, [])),
             Operacion: null, Consumo: null, Seguridad: null, Postura: null, Roadmap: null, CatSerie: null);
 
         var json = JsonSerializer.Serialize(modelo, InformeValorJsonOptions.Instance);
@@ -94,7 +95,8 @@ public sealed class InformeValorJsonOptionsTests
             ["Redes y Conectividad"] = new Dictionary<string, decimal> { ["2026-01"] = 500m, ["2026-02"] = 480.5m },
         };
         var modelo = new ModeloInformeValor(
-            new InformeValorMeta("Cliente", "2026", "2026-12-31"), null, null, null, null, null, catSerie);
+            new InformeValorMeta("Cliente", "2026", "2026-12-31", new InformeValorCobertura(0, [])),
+            null, null, null, null, null, catSerie);
 
         var json = JsonSerializer.Serialize(modelo, InformeValorJsonOptions.Instance);
 

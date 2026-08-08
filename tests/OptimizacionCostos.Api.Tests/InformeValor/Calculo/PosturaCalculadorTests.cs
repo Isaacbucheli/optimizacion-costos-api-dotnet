@@ -4,7 +4,7 @@ using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 namespace OptimizacionCostos.Api.Tests.InformeValor.Calculo;
 
 /// <summary>
-/// Tarea 6 del plan de la entrega 2b sobre <see cref="PosturaCalculadora"/>: D7 (la tabla de
+/// Tarea 6 del plan de la entrega 2b sobre <see cref="PosturaCalculador"/>: D7 (la tabla de
 /// criterio técnico suma su propio total), D8 (categoría e impacto salen de los campos numéricos),
 /// D11 (la identidad de un recurso es suscripción + grupo + nombre) y D13 (fechas, claves de
 /// diccionario), más la seguridad gestionada externamente agregada tras la revisión del encargo
@@ -12,7 +12,7 @@ namespace OptimizacionCostos.Api.Tests.InformeValor.Calculo;
 /// híbrida): las decisiones existen justamente para que la calculadora NO reproduzca lo que hace
 /// la plantilla en estos casos, así que la plantilla no sirve de referencia para ellos.
 /// </summary>
-public sealed class PosturaCalculadoraTests
+public sealed class PosturaCalculadorTests
 {
     private static readonly DateOnly Corte = new(2026, 4, 1);
 
@@ -38,7 +38,7 @@ public sealed class PosturaCalculadoraTests
         new(PeriodStart: corte, PeriodEnd: corte, Corte: corte, MesesParcialesForzados: null);
 
     /// <summary>
-    /// Envoltorio de <see cref="PosturaCalculadora.Calcular"/> con los dos parámetros de seguridad
+    /// Envoltorio de <see cref="PosturaCalculador.Calcular"/> con los dos parámetros de seguridad
     /// gestionada externamente por defecto (false/null, el caso "no gestiona aparte"): la mayoría
     /// de los casos de este archivo no le importan a esa señal, así que la fijan solo los tests de
     /// la sección dedicada.
@@ -46,7 +46,7 @@ public sealed class PosturaCalculadoraTests
     private static PosturaModelo? Calcular(
         IReadOnlyList<AdvisorFila> advisor, IReadOnlyList<RetiroFila> retiros, ContextoInformeValor contexto,
         bool seguridadGestionadaExternamente = false, string? seguridadGestionadaNota = null) =>
-        PosturaCalculadora.Calcular(advisor, retiros, seguridadGestionadaExternamente, seguridadGestionadaNota, contexto);
+        PosturaCalculador.Calcular(advisor, retiros, seguridadGestionadaExternamente, seguridadGestionadaNota, contexto);
 
     // ================= D7: la tabla de criterio técnico suma su propio total =================
 
@@ -636,8 +636,8 @@ public sealed class PosturaCalculadoraTests
 
         var modelo = Calcular(filas, [], Contexto(Corte))!;
 
-        Assert.Equal(new object?[] { "Sub B", 2 }, modelo.Suscripciones[0]);
-        Assert.Equal(new object?[] { "Sub A", 1 }, modelo.Suscripciones[1]);
+        Assert.Equal(new PosturaConteo("Sub B", 2), modelo.Suscripciones[0]);
+        Assert.Equal(new PosturaConteo("Sub A", 1), modelo.Suscripciones[1]);
     }
 
     [Fact]
@@ -650,8 +650,8 @@ public sealed class PosturaCalculadoraTests
         var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(15, modelo.TiposRecurso.Count); // 14 + "Otros tipos"
-        Assert.Equal("Otros tipos", modelo.TiposRecurso[^1][0]);
-        Assert.Equal(2, modelo.TiposRecurso[^1][1]); // los 2 que sobraron de 16
+        Assert.Equal("Otros tipos", modelo.TiposRecurso[^1].Nombre);
+        Assert.Equal(2, modelo.TiposRecurso[^1].Cantidad); // los 2 que sobraron de 16
     }
 
     [Fact]

@@ -19,7 +19,7 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// casos. <see cref="ContextoInformeValor.PeriodStart"/>/<see cref="ContextoInformeValor.PeriodEnd"/>
 /// se reciben por uniformidad con los otros cuatro bloques, no porque este los necesite.</para>
 /// </summary>
-public static class PosturaCalculadora
+public static class PosturaCalculador
 {
     private const string TipoReserva = "RI";
     private const string TipoSavingsPlan = "SP";
@@ -146,7 +146,7 @@ public static class PosturaCalculadora
     /// con el sentinela "(sin suscripción)" del recolector, y <see cref="AgruparTiposRecurso"/>
     /// filtra los tipos vacíos antes de llamar acá.
     /// </summary>
-    private static List<IReadOnlyList<object?>> Agrupar(IEnumerable<string> claves)
+    private static List<PosturaConteo> Agrupar(IEnumerable<string> claves)
     {
         var vistos = new List<string>();
         var conteos = new Dictionary<string, int>();
@@ -158,7 +158,7 @@ public static class PosturaCalculadora
 
         return vistos
             .OrderByDescending(k => conteos[k])
-            .Select(k => (IReadOnlyList<object?>)new object?[] { k, conteos[k] })
+            .Select(k => new PosturaConteo(k, conteos[k]))
             .ToList();
     }
 
@@ -169,14 +169,14 @@ public static class PosturaCalculadora
     /// pero se filtra por si alguna vez llega vacío, igual que <c>.filter(Boolean)</c> en la
     /// plantilla (paridad, no una decisión: nunca se observó un caso real).
     /// </summary>
-    private static List<IReadOnlyList<object?>> AgruparTiposRecurso(IReadOnlyList<AdvisorFila> advisor)
+    private static List<PosturaConteo> AgruparTiposRecurso(IReadOnlyList<AdvisorFila> advisor)
     {
         var agrupado = Agrupar(advisor.Select(a => a.ResourceType).Where(t => !string.IsNullOrWhiteSpace(t)));
         if (agrupado.Count <= MaximoTiposRecurso) return agrupado;
 
         var primeros = agrupado.Take(MaximoTiposRecurso).ToList();
-        var otros = agrupado.Skip(MaximoTiposRecurso).Sum(fila => (int)fila[1]!);
-        primeros.Add(new object?[] { OtrosTipos, otros });
+        var otros = agrupado.Skip(MaximoTiposRecurso).Sum(fila => fila.Cantidad);
+        primeros.Add(new PosturaConteo(OtrosTipos, otros));
         return primeros;
     }
 
@@ -384,9 +384,11 @@ public static class PosturaCalculadora
     /// <see cref="RetiroFila"/> ya llega agrupado por anuncio desde el recolector (no hace falta
     /// re-agrupar acá) y con <see cref="RetiroFila.FechaRetiro"/> tipado como
     /// <see cref="DateOnly"/>? —no como texto de un export en formato de Estados Unidos—, así que
-    /// <see cref="Fechas.TryParseFormatoEeuu"/> no hace falta en este camino (queda documentado en
-    /// el informe de la Tarea 6). La clasificación compara contra <paramref name="corte"/>, nunca
-    /// contra el reloj del sistema.
+    /// este camino no necesita parsear una fecha de origen ambigua: el problema que resolvía D13
+    /// para Advisor ya lo cerró el recolector de la entrega 2a, tipando la columna en la base en
+    /// vez de dejarla como texto (confirmado en la Tarea 8: sin llamador, se borró el parser que
+    /// hubiera hecho falta si esta ruta siguiera recibiendo texto crudo). La clasificación compara
+    /// contra <paramref name="corte"/>, nunca contra el reloj del sistema.
     /// </summary>
     private static (List<PosturaRetiro> items, int vencidos, int proximos) CalcularRetiros(
         IReadOnlyList<RetiroFila> retiros, DateOnly corte)

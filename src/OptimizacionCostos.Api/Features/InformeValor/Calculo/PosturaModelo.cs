@@ -61,18 +61,22 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// hacerla desaparecer.</para>
 ///
 /// <para><b>Filas posicionales</b> (arreglos JSON: sobreviven intactas a cualquier política de
-/// nombres). <see cref="Suscripciones"/>/<see cref="TiposRecurso"/> = [nombre, cantidad].
-/// <see cref="Top"/> = [recomendación, pilar, impacto, recursos]. <see cref="Detalle"/> =
-/// [recomendación, pilar, impacto, suscripción, recursos]. <see cref="Pilares"/>, en cambio, es
-/// una lista de objetos con nombre (<see cref="PosturaPilar"/>): <c>render()</c> ya lee sus
-/// campos por nombre (<c>c.h</c>, <c>c.m</c>, <c>c.l</c>), no por posición.</para>
+/// nombres). <see cref="Top"/> = [recomendación, pilar, impacto, recursos]. <see cref="Detalle"/> =
+/// [recomendación, pilar, impacto, suscripción, recursos]. <see cref="Pilares"/>,
+/// <see cref="Suscripciones"/> y <see cref="TiposRecurso"/>, en cambio, son listas de objetos con
+/// nombre: <c>render()</c> ya lee sus campos por nombre (<c>c.h</c>/<c>c.m</c>/<c>c.l</c> en
+/// <c>cats</c>, pero también <c>sb.n</c>/<c>sb.c</c> en <c>subs</c> y <c>tp.n</c>/<c>tp.c</c> en
+/// <c>tipos</c>: <c>calcAdvisor</c> construye los tres con el mismo helper <c>grp()</c>, que
+/// siempre devuelve objetos, nunca arreglos posicionales — a diferencia de <c>top</c>/<c>det</c>,
+/// que sí son arreglos en el propio JavaScript). Publicar <c>subs</c>/<c>tipos</c> como arreglos
+/// habría dejado <c>sb.n</c> en <c>undefined</c> en cualquier vista que reusara esa lectura.</para>
 /// </summary>
 public sealed record PosturaModelo(
     [property: JsonPropertyName("n")] int Total,
     [property: JsonPropertyName("tipos_rec")] int TiposDeRecomendacion,
     [property: JsonPropertyName("cats")] IReadOnlyList<PosturaPilar> Pilares,
-    [property: JsonPropertyName("subs")] IReadOnlyList<IReadOnlyList<object?>> Suscripciones,
-    [property: JsonPropertyName("tipos")] IReadOnlyList<IReadOnlyList<object?>> TiposRecurso,
+    [property: JsonPropertyName("subs")] IReadOnlyList<PosturaConteo> Suscripciones,
+    [property: JsonPropertyName("tipos")] IReadOnlyList<PosturaConteo> TiposRecurso,
     [property: JsonPropertyName("top")] IReadOnlyList<IReadOnlyList<object?>> Top,
     [property: JsonPropertyName("topSum")] int TopSuma,
     [property: JsonPropertyName("det")] IReadOnlyList<IReadOnlyList<object?>> Detalle,
@@ -100,6 +104,19 @@ public sealed record PosturaPilar(
     [property: JsonPropertyName("h")] int Alto,
     [property: JsonPropertyName("m")] int Medio,
     [property: JsonPropertyName("l")] int Bajo);
+
+/// <summary>
+/// Un conteo con nombre (<c>subs</c>/<c>tipos</c> de <c>calcAdvisor</c>, la versión sin desglose de
+/// impacto del mismo helper <c>grp()</c> que arma <see cref="PosturaPilar"/>). Se corrigió acá
+/// (revisión del contrato contra <c>render()</c>, no una de las cuatro decisiones de la Tarea 6):
+/// el contrato original publicaba estas dos listas como arreglos posicionales <c>[nombre,
+/// cantidad]</c>, pero <c>render()</c> los lee por nombre (<c>sb.n</c>/<c>sb.c</c>,
+/// <c>tp.n</c>/<c>tp.c</c>), igual que <c>cats</c>. Con la forma vieja, cualquier lectura de
+/// <c>ad.subs[0].n</c> daba <c>undefined</c>.
+/// </summary>
+public sealed record PosturaConteo(
+    [property: JsonPropertyName("n")] string Nombre,
+    [property: JsonPropertyName("c")] int Cantidad);
 
 /// <summary>
 /// Una línea de la tabla de criterio técnico (<c>savLineas</c> de <c>calcAdvisor</c>).

@@ -43,7 +43,7 @@ public sealed class ConsumoCalculadorTests
         };
         var contexto = Contexto(2026, 1, 2026, 2);
 
-        var modelo = ConsumoCalculador.Calcular(filas, contexto, filasAntesDeFusionar: 2);
+        var modelo = ConsumoCalculador.Calcular(filas, filasAntesDeFusionar: 2, contexto: contexto);
 
         Assert.NotNull(modelo);
         Assert.Equal(100m, modelo!.Total);
@@ -66,7 +66,7 @@ public sealed class ConsumoCalculadorTests
         };
         var contexto = Contexto(2026, 1, 2026, 3);
 
-        var modelo = ConsumoCalculador.Calcular(filas, contexto, filasAntesDeFusionar: 4);
+        var modelo = ConsumoCalculador.Calcular(filas, filasAntesDeFusionar: 4, contexto: contexto);
 
         Assert.Equal(30m, modelo!.Total);
         Assert.Equal(3, modelo.SerieMensual.Count);
@@ -79,7 +79,7 @@ public sealed class ConsumoCalculadorTests
         var filas = new[] { Fila("vm-1", 100m, 2025, 12) };
         var contexto = Contexto(2026, 1, 2026, 1);
 
-        Assert.Null(ConsumoCalculador.Calcular(filas, contexto, filasAntesDeFusionar: 1));
+        Assert.Null(ConsumoCalculador.Calcular(filas, filasAntesDeFusionar: 1, contexto: contexto));
     }
 
     /// <summary>
@@ -97,12 +97,14 @@ public sealed class ConsumoCalculadorTests
             Fila("vm-1", 1200m, 2026, 1, categoria: "Storage"),
         };
 
-        var conAmbosMeses = ConsumoCalculador.Calcular(filas, Contexto(2025, 1, 2026, 1), filasAntesDeFusionar: 2);
+        var conAmbosMeses = ConsumoCalculador.Calcular(
+            filas, filasAntesDeFusionar: 2, contexto: Contexto(2025, 1, 2026, 1));
         Assert.NotNull(conAmbosMeses!.Comparativa);
         Assert.Equal("2025-01", conAmbosMeses.Comparativa!.MesBase);
         Assert.Equal("2026-01", conAmbosMeses.Comparativa.MesComparado);
 
-        var soloUltimoMes = ConsumoCalculador.Calcular(filas, Contexto(2026, 1, 2026, 1), filasAntesDeFusionar: 2);
+        var soloUltimoMes = ConsumoCalculador.Calcular(
+            filas, filasAntesDeFusionar: 2, contexto: Contexto(2026, 1, 2026, 1));
         Assert.Null(soloUltimoMes!.Comparativa);
     }
 
@@ -113,7 +115,8 @@ public sealed class ConsumoCalculadorTests
     {
         var filas = new[] { Fila("vm-1", 100m, 2026, 1), Fila("vm-2", 50m, 2026, 1) };
 
-        var modelo = ConsumoCalculador.Calcular(filas, Contexto(2026, 1, 2026, 1), filasAntesDeFusionar: 9137);
+        var modelo = ConsumoCalculador.Calcular(
+            filas, filasAntesDeFusionar: 9137, contexto: Contexto(2026, 1, 2026, 1));
 
         Assert.Equal(9137, modelo!.Filas);
         // Punto C: FilasEnRango es independiente del parametro, sale de contar la lista de entrada
@@ -137,7 +140,8 @@ public sealed class ConsumoCalculadorTests
             Fila("vm-b", 50m, 2026, 1), Fila("vm-b", 70m, 2026, 2),
         };
 
-        var modelo = ConsumoCalculador.Calcular(filas, Contexto(2026, 1, 2026, 3), filasAntesDeFusionar: 5);
+        var modelo = ConsumoCalculador.Calcular(
+            filas, filasAntesDeFusionar: 5, contexto: Contexto(2026, 1, 2026, 3));
 
         Assert.Equal(1, modelo!.BajasDefinitivas);
         Assert.Equal(70m, modelo.CargaRetirada);
@@ -164,7 +168,8 @@ public sealed class ConsumoCalculadorTests
     public void D5_las_bajas_del_mes_parcial_se_excluyen_del_conteo()
     {
         var contexto = Contexto(2026, 1, 2026, 4, forzados: ["2026-04"]);
-        var modelo = ConsumoCalculador.Calcular(EscenarioMesParcialAlFinal(), contexto, filasAntesDeFusionar: 9);
+        var modelo = ConsumoCalculador.Calcular(
+            EscenarioMesParcialAlFinal(), filasAntesDeFusionar: 9, contexto: contexto);
 
         // Sin el fix, abril mostraria baja=1 (vm-drops-abr-artefacto "desaparece"): es exactamente
         // el defecto que D5 corrige.
@@ -175,7 +180,8 @@ public sealed class ConsumoCalculadorTests
     public void D5_las_bajas_de_un_mes_no_parcial_se_cuentan_normal_control()
     {
         var contexto = Contexto(2026, 1, 2026, 4, forzados: ["2026-04"]);
-        var modelo = ConsumoCalculador.Calcular(EscenarioMesParcialAlFinal(), contexto, filasAntesDeFusionar: 9);
+        var modelo = ConsumoCalculador.Calcular(
+            EscenarioMesParcialAlFinal(), filasAntesDeFusionar: 9, contexto: contexto);
 
         // Marzo NO es parcial: vm-drops-mar realmente dejo de facturar ahi, y tiene que contar.
         Assert.Equal(1, (int)SerieDelMes(modelo!, "2026-03")[3]!);
@@ -185,7 +191,8 @@ public sealed class ConsumoCalculadorTests
     public void D5_el_monto_retirado_del_mes_parcial_tambien_se_excluye()
     {
         var contexto = Contexto(2026, 1, 2026, 4, forzados: ["2026-04"]);
-        var modelo = ConsumoCalculador.Calcular(EscenarioMesParcialAlFinal(), contexto, filasAntesDeFusionar: 9);
+        var modelo = ConsumoCalculador.Calcular(
+            EscenarioMesParcialAlFinal(), filasAntesDeFusionar: 9, contexto: contexto);
 
         Assert.Equal(0m, (decimal)SerieDelMes(modelo!, "2026-04")[5]!); // indice 5 = monto retirado del mes
     }
@@ -198,7 +205,8 @@ public sealed class ConsumoCalculadorTests
     public void D4_D6_un_recurso_que_solo_falta_en_el_mes_parcial_no_es_baja_definitiva()
     {
         var contexto = Contexto(2026, 1, 2026, 4, forzados: ["2026-04"]);
-        var modelo = ConsumoCalculador.Calcular(EscenarioMesParcialAlFinal(), contexto, filasAntesDeFusionar: 9);
+        var modelo = ConsumoCalculador.Calcular(
+            EscenarioMesParcialAlFinal(), filasAntesDeFusionar: 9, contexto: contexto);
 
         Assert.Equal("2026-03", modelo!.UltimoMesCompleto);
         Assert.Equal(1, modelo.BajasDefinitivas); // solo vm-drops-mar
@@ -221,7 +229,7 @@ public sealed class ConsumoCalculadorTests
         };
         var contexto = Contexto(2026, 1, 2026, 4, forzados: []); // ninguno parcial, ver el analisis en el reporte
 
-        var modelo = ConsumoCalculador.Calcular(filas, contexto, filasAntesDeFusionar: 8);
+        var modelo = ConsumoCalculador.Calcular(filas, filasAntesDeFusionar: 8, contexto: contexto);
 
         Assert.Equal(1, (int)SerieDelMes(modelo!, "2026-02")[3]!); // la desconexion de febrero
         Assert.Equal(0, modelo!.BajasDefinitivas); // vuelve a facturar: no es una baja definitiva
@@ -246,7 +254,7 @@ public sealed class ConsumoCalculadorTests
         // forzados=[] para aislar D3 de la heuristica automatica de meses parciales (D0/deteccion),
         // que con solo una categoria puede marcar un mes por su cuenta: ver el reporte de la tarea.
         var modelo = ConsumoCalculador.Calcular(
-            filas, Contexto(2026, 1, 2026, 6, forzados: []), filasAntesDeFusionar: 6);
+            filas, filasAntesDeFusionar: 6, contexto: Contexto(2026, 1, 2026, 6, forzados: []));
 
         Assert.Null(modelo!.Ahorro);
     }
@@ -264,7 +272,7 @@ public sealed class ConsumoCalculadorTests
     {
         var filas = MesesDeCategoria("Redes", 500m, 900m, 500m, 490m, 510m, 495m);
         var modelo = ConsumoCalculador.Calcular(
-            filas, Contexto(2026, 1, 2026, 6, forzados: []), filasAntesDeFusionar: 6);
+            filas, filasAntesDeFusionar: 6, contexto: Contexto(2026, 1, 2026, 6, forzados: []));
 
         Assert.Null(modelo!.Ahorro);
     }
@@ -280,7 +288,7 @@ public sealed class ConsumoCalculadorTests
     {
         var filas = MesesDeCategoria("Backup", 1000m, 1050m, 980m, 1020m, 1010m, 990m, 380m, 390m, 370m);
         var modelo = ConsumoCalculador.Calcular(
-            filas, Contexto(2026, 1, 2026, 9, forzados: []), filasAntesDeFusionar: 9);
+            filas, filasAntesDeFusionar: 9, contexto: Contexto(2026, 1, 2026, 9, forzados: []));
 
         var ahorro = modelo!.Ahorro;
         Assert.NotNull(ahorro);
@@ -304,7 +312,7 @@ public sealed class ConsumoCalculadorTests
     {
         var filas = MesesDeCategoria("Backup", 1000m, 1050m, 980m, 1020m, 1010m, 990m, 700m, 380m, 370m);
         var modelo = ConsumoCalculador.Calcular(
-            filas, Contexto(2026, 1, 2026, 9, forzados: []), filasAntesDeFusionar: 9);
+            filas, filasAntesDeFusionar: 9, contexto: Contexto(2026, 1, 2026, 9, forzados: []));
 
         var ahorro = modelo!.Ahorro;
         Assert.NotNull(ahorro);
@@ -318,7 +326,7 @@ public sealed class ConsumoCalculadorTests
     {
         var filas = MesesDeCategoria("Backup", 1000m, 1000m, 1000m, 300m, 300m);
         var modelo = ConsumoCalculador.Calcular(
-            filas, Contexto(2026, 1, 2026, 5, forzados: []), filasAntesDeFusionar: 5);
+            filas, filasAntesDeFusionar: 5, contexto: Contexto(2026, 1, 2026, 5, forzados: []));
 
         Assert.Null(modelo!.Ahorro);
     }
@@ -337,7 +345,7 @@ public sealed class ConsumoCalculadorTests
             .Concat(MesesDeCategoria("Compute", 500m, 520m, 510m, 530m, 515m, 505m, 900m, 920m, 910m))
             .ToList();
         var modelo = ConsumoCalculador.Calcular(
-            filas, Contexto(2026, 1, 2026, 9, forzados: []), filasAntesDeFusionar: 18);
+            filas, filasAntesDeFusionar: 18, contexto: Contexto(2026, 1, 2026, 9, forzados: []));
 
         var ahorro = modelo!.Ahorro;
         Assert.NotNull(ahorro);
@@ -359,7 +367,7 @@ public sealed class ConsumoCalculadorTests
             .Concat(MesesDeCategoria("Compute", 500m, 520m, 510m, 530m, 515m, 505m, 1200m, 1200m, 1200m))
             .ToList();
         var modelo = ConsumoCalculador.Calcular(
-            filas, Contexto(2026, 1, 2026, 9, forzados: []), filasAntesDeFusionar: 18);
+            filas, filasAntesDeFusionar: 18, contexto: Contexto(2026, 1, 2026, 9, forzados: []));
 
         Assert.Null(modelo!.Ahorro);
     }
@@ -387,7 +395,7 @@ public sealed class ConsumoCalculadorTests
     public void Forzados_nulo_aplica_la_heuristica_automatica()
     {
         var modelo = ConsumoCalculador.Calcular(
-            EscenarioParaHeuristica(), Contexto(2026, 1, 2026, 4, forzados: null), filasAntesDeFusionar: 4);
+            EscenarioParaHeuristica(), filasAntesDeFusionar: 4, contexto: Contexto(2026, 1, 2026, 4, forzados: null));
 
         Assert.Equal(["2026-04"], modelo!.MesesParciales);
         Assert.Equal(["2026-04"], modelo.MesesParcialesDetectadosAuto);
@@ -399,7 +407,7 @@ public sealed class ConsumoCalculadorTests
     public void Forzados_lista_vacia_declara_ningun_mes_parcial_aunque_la_heuristica_marque_uno()
     {
         var modelo = ConsumoCalculador.Calcular(
-            EscenarioParaHeuristica(), Contexto(2026, 1, 2026, 4, forzados: []), filasAntesDeFusionar: 4);
+            EscenarioParaHeuristica(), filasAntesDeFusionar: 4, contexto: Contexto(2026, 1, 2026, 4, forzados: []));
 
         Assert.Empty(modelo!.MesesParciales);
         Assert.Equal(["2026-04"], modelo.MesesParcialesDetectadosAuto); // el diagnostico se sigue calculando
@@ -411,7 +419,7 @@ public sealed class ConsumoCalculadorTests
     public void Forzados_con_meses_manda_sobre_la_heuristica()
     {
         var modelo = ConsumoCalculador.Calcular(
-            EscenarioParaHeuristica(), Contexto(2026, 1, 2026, 4, forzados: ["2026-03"]), filasAntesDeFusionar: 4);
+            EscenarioParaHeuristica(), filasAntesDeFusionar: 4, contexto: Contexto(2026, 1, 2026, 4, forzados: ["2026-03"]));
 
         Assert.Equal(["2026-03"], modelo!.MesesParciales);
         Assert.Equal(["2026-04"], modelo.MesesParcialesDetectadosAuto);
@@ -426,7 +434,7 @@ public sealed class ConsumoCalculadorTests
     public void Forzados_con_un_mes_que_no_existe_no_se_aplica_y_queda_reportado()
     {
         var modelo = ConsumoCalculador.Calcular(
-            EscenarioParaHeuristica(), Contexto(2026, 1, 2026, 4, forzados: ["2099-12"]), filasAntesDeFusionar: 4);
+            EscenarioParaHeuristica(), filasAntesDeFusionar: 4, contexto: Contexto(2026, 1, 2026, 4, forzados: ["2099-12"]));
 
         Assert.Empty(modelo!.MesesParciales); // no se aplica: "2099-12" no existe en el insumo
         Assert.Equal(["2099-12"], modelo.MesesParcialesInexistentes); // pero queda avisado
@@ -440,8 +448,8 @@ public sealed class ConsumoCalculadorTests
     {
         var modelo = ConsumoCalculador.Calcular(
             EscenarioParaHeuristica(),
-            Contexto(2026, 1, 2026, 4, forzados: ["2026-02", "2099-12", "2099-12"]),
-            filasAntesDeFusionar: 4);
+            filasAntesDeFusionar: 4,
+            contexto: Contexto(2026, 1, 2026, 4, forzados: ["2026-02", "2099-12", "2099-12"]));
 
         Assert.Equal(["2026-02"], modelo!.MesesParciales);
         Assert.Equal(["2099-12"], modelo.MesesParcialesInexistentes);
@@ -458,7 +466,7 @@ public sealed class ConsumoCalculadorTests
             Fila("vm-2", 50m, 2026, 1, categoria: "Storage", rg: "rg-a"),
             Fila("vm-1", 100m, 2026, 2, categoria: "Cómputo", rg: "rg-a"),
         };
-        var modelo = ConsumoCalculador.Calcular(filas, Contexto(2026, 1, 2026, 2), filasAntesDeFusionar: 3);
+        var modelo = ConsumoCalculador.Calcular(filas, filasAntesDeFusionar: 3, contexto: Contexto(2026, 1, 2026, 2));
 
         Assert.Equal(2, modelo!.NumRecursos); // vm-1, vm-2
         Assert.Equal(2, modelo.NumIdentidades); // sub-1|rg-a|vm-1, sub-1|rg-a|vm-2
@@ -477,7 +485,7 @@ public sealed class ConsumoCalculadorTests
             Fila("vm-1", 1000m, 2025, 1, categoria: null),
             Fila("vm-1", 1200m, 2026, 1, categoria: null),
         };
-        var modelo = ConsumoCalculador.Calcular(filas, Contexto(2025, 1, 2026, 1), filasAntesDeFusionar: 2);
+        var modelo = ConsumoCalculador.Calcular(filas, filasAntesDeFusionar: 2, contexto: Contexto(2025, 1, 2026, 1));
 
         var fila = Assert.Single(modelo!.Comparativa!.Filas);
         Assert.Equal("(sin categoría)", fila[0]);

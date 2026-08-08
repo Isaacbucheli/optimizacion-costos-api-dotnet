@@ -28,6 +28,13 @@ public static class ConsumoCalculador
     private const decimal UmbralHeuristicaMesParcial = 0.75m;
     private const decimal UmbralCaidaSostenida = 0.6m;
 
+    /// <summary>Balde residual de <c>calcFact</c>/<c>catSerie</c> (D1) para una fila sin categoría.
+    /// <c>internal</c> porque el ensamblador de la Tarea 8 lo reusa para <c>D.catSerie</c>: son la
+    /// misma fuente (facturación) y la misma columna, y un texto duplicado a mano es exactamente
+    /// el riesgo de que las dos agrupaciones diverjan en silencio si alguien cambia una sola
+    /// copia.</summary>
+    internal const string SinCategoria = "(sin categoría)";
+
     /// <summary>
     /// D0: <paramref name="filas"/> se restringe al rango de <paramref name="contexto"/> antes de
     /// agrupar nada; <see cref="ConsumoModelo.FilasEnRango"/> publica cuántas quedaron. D14:
@@ -40,9 +47,15 @@ public static class ConsumoCalculador
     /// <para>Devuelve <c>null</c> cuando, tras el filtro de rango, no queda ningún mes con datos.
     /// Igual que <c>calcFact</c>, esta calculadora no distingue "no hay insumo cargado" de "el
     /// insumo cargado no se solapa con el rango pedido": las dos producen <c>null</c>.</para>
+    ///
+    /// <para><paramref name="contexto"/> va último, alineado con <c>OperacionCalculador.Calcular</c>
+    /// y <c>PosturaCalculador.Calcular</c> (Tarea 8, unificación de firmas): las tres funciones que
+    /// reciben <see cref="ContextoInformeValor"/> lo reciben en la misma posición, para que el
+    /// ensamblador llame a los cinco bloques con una convención predecible en vez de una por
+    /// bloque.</para>
     /// </summary>
     public static ConsumoModelo? Calcular(
-        IReadOnlyList<FacturacionRow> filas, ContextoInformeValor contexto, int filasAntesDeFusionar)
+        IReadOnlyList<FacturacionRow> filas, int filasAntesDeFusionar, ContextoInformeValor contexto)
     {
         var enRango = filas.Where(f => EnRango(f.Year, f.Month, contexto.PeriodStart, contexto.PeriodEnd)).ToList();
         if (enRango.Count == 0) return null;
@@ -79,7 +92,7 @@ public static class ConsumoCalculador
             if (rg.Length > 0) rgs.Add(rg);
             resAll.Add(res);
 
-            var cat = string.IsNullOrWhiteSpace(f.Category) ? "(sin categoría)" : f.Category!;
+            var cat = string.IsNullOrWhiteSpace(f.Category) ? SinCategoria : f.Category!;
             if (!cats.TryGetValue(cat, out var porMes))
             {
                 porMes = [];
@@ -171,7 +184,11 @@ public static class ConsumoCalculador
         acumulado[clave] = acumulado.GetValueOrDefault(clave) + monto;
     }
 
-    private static bool EnRango(short anio, byte mes, DateOnly inicio, DateOnly fin)
+    /// <summary><c>internal</c> porque el ensamblador de la Tarea 8 filtra por el mismo rango D0
+    /// para conciliar suscripciones (D12) y para <c>D.catSerie</c>: es la única definición de "en
+    /// rango" del módulo, para que las dos lecturas de <c>facturacion</c> (esta y la del
+    /// ensamblador) nunca puedan discrepar sobre qué filas cuentan.</summary>
+    internal static bool EnRango(short anio, byte mes, DateOnly inicio, DateOnly fin)
     {
         var clave = anio * 12 + mes;
         var claveInicio = inicio.Year * 12 + inicio.Month;
@@ -179,7 +196,9 @@ public static class ConsumoCalculador
         return clave >= claveInicio && clave <= claveFin;
     }
 
-    private static string Ym(short anio, byte mes) =>
+    /// <summary><c>internal</c> por el mismo motivo que <see cref="EnRango"/>: <c>D.catSerie</c> se
+    /// arma en el ensamblador sobre las mismas claves "aaaa-MM".</summary>
+    internal static string Ym(short anio, byte mes) =>
         anio.ToString("D4", CultureInfo.InvariantCulture) + "-" + mes.ToString("D2", CultureInfo.InvariantCulture);
 
     /// <summary>

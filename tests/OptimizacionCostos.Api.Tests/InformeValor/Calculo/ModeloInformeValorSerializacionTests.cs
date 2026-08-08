@@ -46,8 +46,8 @@ public sealed class ModeloInformeValorSerializacionTests
     private static readonly PosturaModelo Postura = new(
         Total: 30, TiposDeRecomendacion: 8,
         Pilares: [new PosturaPilar("Seguridad", 12, 5, 4, 3)],
-        Suscripciones: [["Suscripción Producción", 20]],
-        TiposRecurso: [["virtualMachines", 10]],
+        Suscripciones: [new PosturaConteo("Suscripción Producción", 20)],
+        TiposRecurso: [new PosturaConteo("virtualMachines", 10)],
         Top: [["Habilitar copia de seguridad", "Confiabilidad", "High", 6]],
         TopSuma: 6,
         Detalle: [["Habilitar copia de seguridad", "Confiabilidad", "High", "Suscripción Producción", 6]],
@@ -87,8 +87,16 @@ public sealed class ModeloInformeValorSerializacionTests
         Comparativa: new ConsumoComparativa("2025-01", "2026-01", [["Storage", 4000m, 3500m]]),
         PorCentroCosto: [["TI", 100000m]]);
 
+    private static readonly InformeValorCobertura Cobertura = new(
+        Total: 2,
+        Suscripciones:
+        [
+            new CoberturaSuscripcion("sub-1", "Suscripción Producción", Facturacion: true, Rbac: true, Advisor: true),
+            new CoberturaSuscripcion("sub-2", "Suscripción Secundaria", Facturacion: true, Rbac: false, Advisor: false),
+        ]);
+
     private static ModeloInformeValor ModeloCompleto() => new(
-        new InformeValorMeta("Cliente Demo", "Enero 2026", "2026-01-31"),
+        new InformeValorMeta("Cliente Demo", "Enero 2026", "2026-01-31", Cobertura),
         Operacion, Consumo, Seguridad, Postura, Roadmap,
         CatSerie: new Dictionary<string, IReadOnlyDictionary<string, decimal>>
         {
@@ -124,6 +132,25 @@ public sealed class ModeloInformeValorSerializacionTests
 
         Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("rbac").GetProperty("sinLogin").ValueKind);
         Assert.False(doc.RootElement.GetProperty("rbac").GetProperty("ultimoLoginMedido").GetBoolean());
+    }
+
+    /// <summary>D12 (Tarea 8): la cobertura vive DENTRO de <c>meta</c>, no como una octava clave de
+    /// nivel superior (ver el comentario de clase de <see cref="ModeloInformeValor"/>), y publica
+    /// qué fuente cubre cada suscripción del conjunto unión.</summary>
+    [Fact]
+    public void La_cobertura_vive_dentro_de_meta_y_declara_que_fuente_cubre_cada_suscripcion()
+    {
+        var json = JsonSerializer.Serialize(ModeloCompleto(), InformeValorJsonOptions.Instance);
+        using var doc = JsonDocument.Parse(json);
+
+        var cobertura = doc.RootElement.GetProperty("meta").GetProperty("cobertura");
+        Assert.Equal(2, cobertura.GetProperty("total").GetInt32());
+        var subs = cobertura.GetProperty("suscripciones");
+        var sub2 = subs.EnumerateArray().Single(s => s.GetProperty("id").GetString() == "sub-2");
+        Assert.Equal("Suscripción Secundaria", sub2.GetProperty("nombre").GetString());
+        Assert.True(sub2.GetProperty("facturacion").GetBoolean());
+        Assert.False(sub2.GetProperty("rbac").GetBoolean());
+        Assert.False(sub2.GetProperty("advisor").GetBoolean());
     }
 
     /// <summary>El diccionario de compromiso por suscripción (D13, misma clase de riesgo que
