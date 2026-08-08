@@ -23,6 +23,7 @@ public static class InformeValorSchema
                 rows_total INT NOT NULL CONSTRAINT DF_iv_ingesta_total DEFAULT 0,
                 rows_processed INT NOT NULL CONSTRAINT DF_iv_ingesta_proc DEFAULT 0,
                 rows_skipped INT NOT NULL CONSTRAINT DF_iv_ingesta_skip DEFAULT 0,
+                rows_merged INT NOT NULL CONSTRAINT DF_iv_ingesta_merged DEFAULT 0,
                 truncated_values INT NOT NULL CONSTRAINT DF_iv_ingesta_trunc DEFAULT 0,
                 status NVARCHAR(30) NOT NULL,
                 error_message NVARCHAR(1000) NULL,
@@ -104,6 +105,15 @@ public static class InformeValorSchema
             );
             CREATE UNIQUE INDEX UX_iv_rbac_key ON dbo.informe_valor_rbac (client_id, natural_key_hash);
         END
+        """,
+        // soft-migration ingesta (tablas preexistentes de la entrega 1, ya en PR): la calculadora
+        // publica "revisado línea por línea sobre N registros" y en la plantilla ese N son las
+        // filas aceptadas ANTES de fusionar (ver BitcostParser.ParseResult.RowsMerged). Sin esta
+        // columna la cifra sale por debajo del histórico y no hay forma de reproducirla desde la
+        // base para una carga ya hecha antes de este fix.
+        """
+        IF COL_LENGTH('dbo.informe_valor_ingesta', 'rows_merged') IS NULL
+            ALTER TABLE dbo.informe_valor_ingesta ADD rows_merged INT NOT NULL CONSTRAINT DF_iv_ingesta_merged DEFAULT 0;
         """,
     ];
 

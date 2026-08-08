@@ -170,7 +170,8 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         await InformeValorSchema.EnsureSchemaAsync(conn, ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT i.kind, i.source_file_name, i.completed_at, i.rows_processed, i.status, i.warnings_json
+            SELECT i.kind, i.source_file_name, i.completed_at, i.rows_processed, i.rows_merged,
+                i.status, i.warnings_json
             FROM dbo.informe_valor_ingesta i
             INNER JOIN (
                 SELECT kind, MAX(ingesta_id) AS ingesta_id
@@ -183,15 +184,16 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         await using var rd = await cmd.ExecuteReaderAsync(ct);
         while (await rd.ReadAsync(ct))
         {
-            var warnings = rd.IsDBNull(5)
+            var warnings = rd.IsDBNull(6)
                 ? []
-                : JsonSerializer.Deserialize<List<string>>(rd.GetString(5)) ?? [];
+                : JsonSerializer.Deserialize<List<string>>(rd.GetString(6)) ?? [];
             result.Add(new InsumoEstado(
                 rd.GetString(0), true,
                 rd.IsDBNull(1) ? null : rd.GetString(1),
                 rd.IsDBNull(2) ? null : rd.GetDateTime(2),
                 rd.GetInt32(3),
-                rd.IsDBNull(4) ? null : rd.GetString(4),
+                rd.GetInt32(4),
+                rd.IsDBNull(5) ? null : rd.GetString(5),
                 warnings));
         }
         return result;
@@ -229,7 +231,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         cmd.CommandText = """
             UPDATE dbo.informe_valor_ingesta
             SET status = @s, rows_total = @tot, rows_processed = @proc, rows_skipped = @skip,
-                truncated_values = @trunc, warnings_json = @w, completed_at = @now
+                rows_merged = @merged, truncated_values = @trunc, warnings_json = @w, completed_at = @now
             WHERE ingesta_id = @id
             """;
         cmd.Parameters.Add(new SqlParameter("@s", SqlDbType.NVarChar, 30)
@@ -237,6 +239,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         cmd.Parameters.Add(new SqlParameter("@tot", SqlDbType.Int) { Value = parsed.RowsTotal });
         cmd.Parameters.Add(new SqlParameter("@proc", SqlDbType.Int) { Value = inserted });
         cmd.Parameters.Add(new SqlParameter("@skip", SqlDbType.Int) { Value = parsed.RowsSkipped });
+        cmd.Parameters.Add(new SqlParameter("@merged", SqlDbType.Int) { Value = parsed.RowsMerged });
         cmd.Parameters.Add(new SqlParameter("@trunc", SqlDbType.Int) { Value = parsed.TruncatedValues });
         cmd.Parameters.Add(new SqlParameter("@w", SqlDbType.NVarChar, 4000) { Value = (object?)warnings ?? DBNull.Value });
         // Hora fresca: usar el @now del inicio dejaba Fin anterior a Inicio.

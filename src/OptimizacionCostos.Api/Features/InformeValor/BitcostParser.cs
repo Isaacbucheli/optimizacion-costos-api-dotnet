@@ -28,7 +28,8 @@ public static class BitcostParser
     {
         var acumulado = new Dictionary<string, FacturacionRow>(StringComparer.Ordinal);
         var warnings = new List<string>();
-        int total = 0, skipped = 0, truncated = 0, fusionadas = 0;
+        int total = 0, skipped = 0, truncated = 0, fusionadas = 0,
+            pvpInvalido = 0, qtyInvalido = 0, rateInvalido = 0;
         string[]? hdr = null;
         int cTen = -1, cSubN = -1, cSubI = -1, cRg = -1, cRes = -1, cCc = -1,
             cCat = -1, cSub = -1, cSrv = -1, cQty = -1, cUni = -1, cRate = -1, cPvp = -1, cAnio = -1, cMes = -1;
@@ -61,7 +62,20 @@ public static class BitcostParser
             var rg = Get(row, cRg);
             if (res.Length == 0 && rg.Length == 0) { skipped++; continue; }
 
-            if (!TryDecimal(Get(row, cPvp), out var pvp)) { skipped++; continue; }
+            // El PVP vacío es una fila sin costo (posible, no es un defecto): solo cuenta como
+            // "no convertible" cuando SÍ había algo escrito y ese algo no se pudo leer como
+            // número. Es la señal que distingue "esta fila no tiene costo" de "esta fila tiene
+            // un formato de PVP que la conversión no entiende" (p. ej. separador de miles antes
+            // de este fix): sin la distinción, las dos se funden en el mismo "skipped" genérico y
+            // el consultor no tiene cómo notar que el gasto total quedó corto por un defecto de
+            // formato en vez de por filas legítimamente sin costo.
+            var pvpRaw = Get(row, cPvp);
+            if (!TryDecimal(pvpRaw, out var pvp))
+            {
+                skipped++;
+                if (pvpRaw.Length > 0) pvpInvalido++;
+                continue;
+            }
             if (!short.TryParse(Get(row, cAnio), NumberStyles.Integer, CultureInfo.InvariantCulture, out var anio)
                 || anio < 2000 || anio > 2100) { skipped++; continue; }
             var mes = Mes(Get(row, cMes));
@@ -69,8 +83,24 @@ public static class BitcostParser
 
             var subI = Get(row, cSubI); var cc = Get(row, cCc); var cat = Get(row, cCat);
             var sub = Get(row, cSub); var srv = Get(row, cSrv); var uni = Get(row, cUni);
-            decimal? qty = TryDecimal(Get(row, cQty), out var q) ? q : null;
-            decimal? rate = TryDecimal(Get(row, cRate), out var t) ? t : null;
+
+            // Cantidad y Tarifa son opcionales: una celda vacía es "no aplica" y no cuenta como
+            // defecto. Una celda CON contenido que no se pudo convertir sí se cuenta y se avisa,
+            // en vez de volverse null en silencio como antes de este fix (mismo criterio que el
+            // PVP de arriba, sin ser un motivo de descarte porque estos dos campos no bloquean la
+            // fila).
+            var qtyRaw = Get(row, cQty);
+            decimal? qty = null;
+            if (qtyRaw.Length > 0)
+            {
+                if (TryDecimal(qtyRaw, out var q)) qty = q; else qtyInvalido++;
+            }
+            var rateRaw = Get(row, cRate);
+            decimal? rate = null;
+            if (rateRaw.Length > 0)
+            {
+                if (TryDecimal(rateRaw, out var t)) rate = t; else rateInvalido++;
+            }
 
             var hash = NaturalKey.Hash(subI, rg, res, cc, cat, sub, srv, uni,
                 anio.ToString(CultureInfo.InvariantCulture), mes.ToString(CultureInfo.InvariantCulture));
@@ -120,6 +150,12 @@ public static class BitcostParser
         if (hdr is null) throw new InvalidOperationException(ErrorFormatoBitcost);
         if (fusionadas > 0) warnings.Add(
             $"{fusionadas} filas se fusionaron con otra de la misma clave natural: se sumaron sus cantidades e importes.");
+        if (pvpInvalido > 0) warnings.Add(
+            $"{pvpInvalido} filas se descartaron porque el PVP no se pudo convertir a número.");
+        if (qtyInvalido > 0) warnings.Add(
+            $"{qtyInvalido} valores de Cantidad no se pudieron convertir a número y quedaron sin valor.");
+        if (rateInvalido > 0) warnings.Add(
+            $"{rateInvalido} valores de Tarifa no se pudieron convertir a número y quedaron sin valor.");
         if (truncated > 0) warnings.Add($"{truncated} valores se recortaron por exceder el largo de su columna.");
 
         return new ParseResult<FacturacionRow>(

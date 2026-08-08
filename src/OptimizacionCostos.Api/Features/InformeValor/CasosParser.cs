@@ -20,7 +20,8 @@ public static class CasosParser
     {
         var rows = new Dictionary<string, CasoRow>(StringComparer.Ordinal);
         var warnings = new List<string>();
-        int total = 0, skipped = 0, truncated = 0, fechasMalas = 0, duplicadas = 0;
+        int total = 0, skipped = 0, truncated = 0, fechasMalas = 0, duplicadas = 0,
+            slaInvalido = 0, duracionInvalida = 0;
         string[]? hdr = null;
         int cCaso = -1, cFecha = -1, cEstado = -1, cSla = -1, cDur = -1, cCumple = -1, cCat = -1, cSub = -1, cHor = -1;
 
@@ -65,13 +66,29 @@ public static class CasosParser
             // tiene que reflejarla para que total = guardadas + descartadas le cierre al consultor.
             if (rows.ContainsKey(hash)) { duplicadas++; skipped++; continue; }
 
+            // SLA y Duración son opcionales: celda vacía es "no aplica", no un defecto. Celda CON
+            // contenido que no convierte sí se cuenta y se avisa (mismo criterio que Cantidad y
+            // Tarifa en BitcostParser), en vez de volverse null en silencio.
+            var slaRaw = Get(row, cSla);
+            decimal? sla = null;
+            if (slaRaw.Length > 0)
+            {
+                if (TryDecimal(slaRaw, out var s)) sla = s; else slaInvalido++;
+            }
+            var durRaw = Get(row, cDur);
+            decimal? dur = null;
+            if (durRaw.Length > 0)
+            {
+                if (TryDecimal(durRaw, out var d)) dur = d; else duracionInvalida++;
+            }
+
             rows[hash] = new CasoRow(
                 hash,
                 Trunc(caso, 120, ref truncated),
                 fecha,
                 Trunc(estado, 120, ref truncated),
-                TryDecimal(Get(row, cSla), out var sla) ? sla : null,
-                TryDecimal(Get(row, cDur), out var dur) ? dur : null,
+                sla,
+                dur,
                 Trunc(Get(row, cCumple), 20, ref truncated),
                 Trunc(Get(row, cCat), 200, ref truncated),
                 Trunc(Get(row, cSub), 300, ref truncated),
@@ -81,6 +98,10 @@ public static class CasosParser
         if (hdr is null) throw new InvalidOperationException(ErrorFormatoMesaServicio);
         if (fechasMalas > 0) warnings.Add($"{fechasMalas} casos tienen una fecha de registro que no se pudo leer.");
         if (duplicadas > 0) warnings.Add($"{duplicadas} filas se descartaron por ser idénticas a otra.");
+        if (slaInvalido > 0) warnings.Add(
+            $"{slaInvalido} valores de SLA (horas) no se pudieron convertir a número y quedaron sin valor.");
+        if (duracionInvalida > 0) warnings.Add(
+            $"{duracionInvalida} valores de Duración no se pudieron convertir a número y quedaron sin valor.");
         if (truncated > 0) warnings.Add($"{truncated} valores se recortaron por exceder el largo de su columna.");
 
         // CasosParser nunca fusiona (ver el comentario de la clave natural más arriba): una

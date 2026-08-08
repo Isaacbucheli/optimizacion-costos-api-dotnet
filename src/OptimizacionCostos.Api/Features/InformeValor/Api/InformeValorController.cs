@@ -200,14 +200,14 @@ public sealed class InformeValorController(
             {
                 var parsed = BitcostParser.Parse(ms);
                 var id = await store.ReplaceFacturacionAsync(clientId, name, user, parsed, ct);
-                return Ok(Resumen(id, parsed.RowsTotal, parsed.Rows.Count, parsed.RowsSkipped, parsed.Warnings));
+                return Ok(Resumen(id, parsed.RowsTotal, parsed.Rows.Count, parsed.RowsSkipped, parsed.RowsMerged, parsed.Warnings));
             }
 
             if (string.Equals(kind, SqlInformeValorStore.KindCasos, StringComparison.OrdinalIgnoreCase))
             {
                 var parsed = CasosParser.Parse(ms);
                 var id = await store.ReplaceCasosAsync(clientId, name, user, parsed, ct);
-                return Ok(Resumen(id, parsed.RowsTotal, parsed.Rows.Count, parsed.RowsSkipped, parsed.Warnings));
+                return Ok(Resumen(id, parsed.RowsTotal, parsed.Rows.Count, parsed.RowsSkipped, parsed.RowsMerged, parsed.Warnings));
             }
 
             return BadRequest(new { detail = "La carga del insumo de RBAC llega en la entrega 2." });
@@ -246,11 +246,18 @@ public sealed class InformeValorController(
     private static bool ExtensionValida(string? fileName) =>
         fileName is not null && fileName.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase);
 
-    private static object Resumen(int id, int total, int procesadas, int descartadas, IReadOnlyList<string> warnings) =>
+    /// <summary>
+    /// rows_merged solo es distinto de cero en facturación (BitcostParser fusiona filas con la
+    /// misma clave natural; CasosParser nunca). Va junto a los otros tres para que el consultor
+    /// pueda leerlos juntos sin contradicción: rows_total = rows_processed + rows_skipped +
+    /// rows_merged.
+    /// </summary>
+    private static object Resumen(
+        int id, int total, int procesadas, int descartadas, int fusionadas, IReadOnlyList<string> warnings) =>
         new
         {
             ingesta_id = id, rows_total = total, rows_processed = procesadas,
-            rows_skipped = descartadas, warnings,
+            rows_skipped = descartadas, rows_merged = fusionadas, warnings,
         };
 
     private static object Describe(string kind, bool obligatorio, IReadOnlyDictionary<string, InsumoEstado> cargados)
@@ -264,6 +271,7 @@ public sealed class InformeValorController(
             source_file_name = e?.SourceFileName,
             cargado_en = e?.CargadoEn,
             filas = e?.Filas ?? 0,
+            rows_merged = e?.RowsMerged ?? 0,
             status = e?.Status,
             warnings = e?.Warnings ?? [],
         };
