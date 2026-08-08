@@ -64,4 +64,27 @@ public sealed class EstadoRbacTests
         Assert.True(r.Ejes.EstadoCuentaMedido);
         Assert.True(r.Ejes.UltimoLoginMedido);
     }
+
+    /// <summary>
+    /// IMPORTANTE 5 de la revisión de rama: los cinco motivos le decían al consultor que suba el
+    /// Excel de RBAC, y InformeValorController.Subir rechaza ese kind con un 400 ("llega en la
+    /// entrega 2"). Ningún motivo debería prometer una carga que hoy falla. Cubre los cinco casos
+    /// de Resolver que producen un Motivo (NoDisponible x3, ParcialFaltaIdentidad x2); el sexto
+    /// (Completo) no tiene nada que prometer.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(TodosLosMotivos))]
+    public void Ningun_motivo_promete_subir_el_excel_de_rbac(string motivo)
+    {
+        Assert.DoesNotContain("sube", motivo, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static IEnumerable<object[]> TodosLosMotivos()
+    {
+        yield return [EstadoRbac.Resolver(null, tieneSuscripcionesAdministradas: false).Motivo];
+        yield return [EstadoRbac.Resolver(null, tieneSuscripcionesAdministradas: true).Motivo];
+        yield return [EstadoRbac.Resolver(Snap("partial", ("error", "ok")), true).Motivo];
+        yield return [EstadoRbac.Resolver(Snap("partial", ("ok", "no_aplica")), true).Motivo];
+        yield return [EstadoRbac.Resolver(Snap("partial", ("ok", "sin_licencia_p1")), true).Motivo];
+    }
 }
