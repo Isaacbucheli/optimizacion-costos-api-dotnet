@@ -24,6 +24,22 @@ public static class AccessReviewAccountBuilder
         && s.Credentials.All(c => c.GraphStatus is "ok" or "sin_licencia_p1");
 
     /// <summary>
+    /// El último inicio de sesión se pudo medir: exige el directorio completo
+    /// (<see cref="GraphComplete"/>) y que ninguna credencial esté sin licencia P1, que es la que
+    /// expone ese dato puntual. Más estricta que <see cref="GraphComplete"/>, que sí acepta la
+    /// falta de licencia porque el resto del directorio (nombres, tipos, cuentas) no depende de
+    /// ella.
+    ///
+    /// <para>Vivía duplicada: como variable local (<c>signInOk</c>) en
+    /// <see cref="AccessReviewFindingsBuilder.Build"/> y, con el mismo cuerpo, como
+    /// <c>EstadoRbac.LoginMedido</c> en el módulo de informe de valor. Se promueve acá, al lado de
+    /// <see cref="GraphComplete"/>/<see cref="ArmComplete"/>, para que exista una sola definición
+    /// (mismo patrón que esas dos).</para>
+    /// </summary>
+    public static bool SignInComplete(AccessReviewSnapshot s) =>
+        GraphComplete(s) && s.Credentials.All(c => c.GraphStatus != "sin_licencia_p1");
+
+    /// <summary>
     /// El inventario de ARM se leyó completo para todas las credenciales. Vivía private dentro
     /// de AccessReviewDeltaBuilder; se promueve acá para que exista una sola definición, al
     /// lado de GraphComplete, que es su gemela para el eje de identidad.

@@ -43,17 +43,6 @@ public sealed record EstadoRbacResultado(
 /// </summary>
 public static class EstadoRbac
 {
-    /// <summary>
-    /// El último inicio de sesión se pudo medir: exige el directorio completo
-    /// (<see cref="AccessReviewAccountBuilder.GraphComplete"/>) y que ninguna credencial esté sin
-    /// licencia P1, que es la que expone ese dato puntual. Más estricto que
-    /// <c>GraphComplete</c>, que sí acepta la falta de licencia porque el resto del directorio
-    /// (nombres, tipos, cuentas) no depende de ella.
-    /// </summary>
-    public static bool LoginMedido(AccessReviewSnapshot s) =>
-        AccessReviewAccountBuilder.GraphComplete(s)
-        && s.Credentials.All(c => c.GraphStatus != "sin_licencia_p1");
-
     /// <param name="snapshot">La corrida finalizada más reciente del cliente (<c>ok</c> o
     /// <c>partial</c>), o null si todavía no hay ninguna.</param>
     /// <param name="tieneSuscripcionesAdministradas">Sin corrida propia que lo indique (un cliente
@@ -101,7 +90,7 @@ public static class EstadoRbac
 
         var ejes = new EjesRbac(
             AccessReviewAccountBuilder.GraphComplete(snapshot),
-            LoginMedido(snapshot));
+            AccessReviewAccountBuilder.SignInComplete(snapshot));
 
         if (ejes.EstadoCuentaMedido && ejes.UltimoLoginMedido)
         {
