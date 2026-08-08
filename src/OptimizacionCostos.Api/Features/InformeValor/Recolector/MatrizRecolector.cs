@@ -20,10 +20,35 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
 /// mismo criterio de "pilar entero afuera". El filtro por suscripción administrada tampoco es de
 /// pantalla: sin él, una recomendación cuyos hallazgos viven todos en una suscripción que el
 /// usuario dejó de administrar queda activa para siempre (<c>SqlWafIngestionStore</c> solo resuelve
-/// hallazgos de las suscripciones que la corrida de ingesta escaneó). Se reusa
-/// <see cref="WafSubscriptionFilter.ExistsPredicate"/>/<see cref="WafSubscriptionFilter.ResourceCountExpr"/>
-/// con la lista de administradas en vez de la selección de la UI: misma mecánica, otro insumo.
+/// hallazgos de las suscripciones que la corrida de ingesta escaneó).
 /// </para>
+///
+/// <para><b>Excepción de la re-revisión (IMPORTANTE 1): los hallazgos cargados a mano quedan
+/// EXENTOS del filtro de suscripciones administradas, no sujetos a él.</b> Un hallazgo con
+/// <c>subscription_id = 'importado'</c> (<see cref="WafConstants.ManualSubscriptionId"/>, el que
+/// escribe <c>ClosedXmlWafImporter.CreateManualFindingsAsync</c> al cargar el Excel histórico de la
+/// matriz) no pertenece a ninguna suscripción real del cliente: no tiene sentido preguntarle si
+/// está administrada, así que cuenta como si lo estuviera siempre. Sin esta excepción, una
+/// recomendación cuyos hallazgos activos son 100% importados desaparecía de la matriz del informe
+/// en cuanto el cliente tuviera alguna suscripción real administrada (el filtro exige que ALGÚN
+/// hallazgo esté en esa lista, y 'importado' nunca puede estarlo), y en las recomendaciones mixtas
+/// (parte real, parte importada) el conteo de recursos contaba de menos por el mismo motivo. Por
+/// eso <see cref="Sql"/> ya NO reusa <see cref="WafSubscriptionFilter.ExistsPredicate"/>/
+/// <see cref="WafSubscriptionFilter.ResourceCountExpr"/> tal cual (esos expulsarían 'importado', que
+/// nunca puede estar en una lista de suscripciones reales): <see cref="ExistsPredicateConExcepcionManual"/>/
+/// <see cref="ResourceCountExprConExcepcionManual"/> son variantes locales que aceptan
+/// "administrada O importada" en vez de solo "administrada", reusando de
+/// <see cref="WafSubscriptionFilter"/> solo lo genérico (<c>ParamNames</c>/<c>AddParameters</c>).
+/// </para>
+///
+/// <para>Contraste a propósito con <see cref="AdvisorRecolector"/>, que SÍ excluye 'importado' del
+/// todo (<c>f.subscription_id &lt;&gt; 'importado'</c>): ahí el hallazgo se publica fila por fila
+/// con su propia suscripción y tipo de recurso en un desglose que agrupa por esos dos campos, y
+/// dejarlo entrar mostraría "(matriz historica)" como si fuera una suscripción real del cliente, con
+/// su propio porcentaje sobre el total. Acá en la matriz el hallazgo nunca se expone individual:
+/// solo decide si la recomendación entra y cuánto suma el conteo de recursos, así que no hay ningún
+/// campo ficticio que se filtre a otro lado. Mismo dato (<c>subscription_id = 'importado'</c>), dos
+/// decisiones distintas, las dos correctas en su contexto: no unificarlas.</para>
 /// </summary>
 public static class MatrizRecolector
 {
@@ -35,8 +60,8 @@ public static class MatrizRecolector
     internal static string Sql(IReadOnlyList<string> suscripcionesAdministradas, bool seguridadGestionadaExternamente)
     {
         var secFilter = seguridadGestionadaExternamente ? $" AND c.pillar_number <> {WafConstants.SecurityPillar}" : "";
-        var subFilter = WafSubscriptionFilter.ExistsPredicate("r", suscripcionesAdministradas);
-        var resourceCountExpr = WafSubscriptionFilter.ResourceCountExpr("r", suscripcionesAdministradas);
+        var subFilter = ExistsPredicateConExcepcionManual("r", suscripcionesAdministradas);
+        var resourceCountExpr = ResourceCountExprConExcepcionManual("r", suscripcionesAdministradas);
         return $"""
             SELECT
                 r.canonical_id,
@@ -62,11 +87,46 @@ public static class MatrizRecolector
             """;
     }
 
+    /// <summary>
+    /// Como <see cref="WafSubscriptionFilter.ExistsPredicate"/>, pero con la excepción de la
+    /// re-revisión (IMPORTANTE 1, ver el comentario de clase): un hallazgo con
+    /// <c>subscription_id = 'importado'</c> cuenta como si estuviera en la lista de administradas,
+    /// aunque nunca pueda estar literalmente en ella. El EXISTS pasa a exigir "hallazgo activo
+    /// administrado O importado" en vez de solo "administrado".
+    /// </summary>
+    private static string ExistsPredicateConExcepcionManual(string recAlias, IReadOnlyList<string> administradas) =>
+        $"""
+        {"\n"}  AND EXISTS (
+               SELECT 1 FROM dbo.waf_resource_finding wsf
+               WHERE wsf.recommendation_id = {recAlias}.recommendation_id
+                 AND wsf.status = 'active'
+                 AND (wsf.subscription_id IN ({WafSubscriptionFilter.ParamNames(administradas)})
+                      OR wsf.subscription_id = '{WafConstants.ManualSubscriptionId}'))
+        """;
+
+    /// <summary>Misma excepción que <see cref="ExistsPredicateConExcepcionManual"/>, para que el
+    /// conteo de recursos de una recomendación mixta (parte real, parte importada) no cuente de
+    /// menos: un hallazgo importado suma igual que uno en una suscripción administrada.</summary>
+    private static string ResourceCountExprConExcepcionManual(string recAlias, IReadOnlyList<string> administradas) =>
+        $"""
+        (SELECT COUNT(*) FROM dbo.waf_resource_finding wsc
+         WHERE wsc.recommendation_id = {recAlias}.recommendation_id
+           AND wsc.status = 'active'
+           AND (wsc.subscription_id IN ({WafSubscriptionFilter.ParamNames(administradas)})
+                OR wsc.subscription_id = '{WafConstants.ManualSubscriptionId}'))
+        """;
+
     /// <param name="suscripcionesAdministradas">Ids de <c>client_azure_subscriptions</c> activas y
-    /// administradas del cliente (ver <c>SqlInsumosBdRecolector.SuscripcionesAdministradasAsync</c>,
-    /// predicado único del módulo). Vacía → sin nada que reportar: se devuelve sin consultar, porque
-    /// <see cref="WafSubscriptionFilter"/> trata una lista vacía como "sin selección" (todo pasa), el
-    /// significado opuesto al que necesita este filtro.</param>
+    /// administradas del cliente (ver <c>SqlInsumosBdRecolector.SuscripcionesAdministradasAsync</c>).
+    /// No es la única copia de este predicado en el módulo: <see cref="RetirosRecolector"/> mantiene
+    /// la suya porque la forma de su consulta es distinta (EXISTS correlacionado contra
+    /// <c>boletin_retirement.subscription_id</c>, no un SELECT plano) — mismas columnas y
+    /// condiciones, SQL escrito dos veces a propósito, no una desprolijidad. Vacía → sin nada que
+    /// reportar: se devuelve sin consultar, porque <see cref="WafSubscriptionFilter"/> trata una
+    /// lista vacía como "sin selección" (todo pasa), el significado opuesto al que necesita este
+    /// filtro. Los hallazgos con <c>subscription_id = 'importado'</c> están exentos de este filtro
+    /// (ver <see cref="ExistsPredicateConExcepcionManual"/> y el comentario de clase): no cuentan
+    /// como administrados, pero tampoco quedan fuera de alcance por no estarlo.</param>
     /// <param name="seguridadGestionadaExternamente">Ver el comentario de clase.</param>
     public static async Task<IReadOnlyList<MatrizFila>> LeerAsync(
         SqlConnection conn, int clientId, IReadOnlyList<string> suscripcionesAdministradas,

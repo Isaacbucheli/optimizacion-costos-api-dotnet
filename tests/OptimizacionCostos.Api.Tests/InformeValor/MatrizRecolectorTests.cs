@@ -95,6 +95,31 @@ public sealed class MatrizRecolectorTests
     }
 
     /// <summary>
+    /// IMPORTANTE 1 de la re-revisión: los hallazgos cargados a mano (subscription_id = 'importado',
+    /// ver ClosedXmlWafImporter.CreateManualFindingsAsync) no pertenecen a ninguna suscripción real
+    /// del cliente. El filtro de suscripciones administradas los tenía que dejar pasar siempre y en
+    /// cambio los expulsaba: una recomendación con todos sus hallazgos en 'importado' desaparecía de
+    /// la matriz del informe en cuanto el cliente tenía alguna suscripción real administrada, y en
+    /// las recomendaciones mixtas (parte real, parte importada) el conteo de recursos contaba de
+    /// menos por el mismo motivo.
+    /// </summary>
+    [Fact]
+    public void El_filtro_de_administradas_no_excluye_los_hallazgos_importados()
+    {
+        var sql = MatrizRecolector.Sql(["sub-a", "sub-b"], seguridadGestionadaExternamente: false)
+            .Replace(" ", "");
+
+        // La condición de administradas sigue exigiéndose en el EXISTS y en el conteo (no se
+        // reemplazó, se le agregó una excepción)...
+        Assert.Contains("wsf.subscription_idIN(@sub0,@sub1)", sql, StringComparison.Ordinal);
+        Assert.Contains("wsc.subscription_idIN(@sub0,@sub1)", sql, StringComparison.Ordinal);
+        // ...pero un hallazgo 'importado' basta por sí solo, sin estar en esa lista, en los dos
+        // lugares (el EXISTS que decide si la recomendación entra, y el conteo de recursos).
+        Assert.Contains("ORwsf.subscription_id='importado'", sql, StringComparison.Ordinal);
+        Assert.Contains("ORwsc.subscription_id='importado'", sql, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Lista vacía = nada administrado = nada que reportar, no "sin filtro" (que es lo que
     /// significa una lista vacía para WafSubscriptionFilter cuando la usa la pantalla WAF).
     /// LeerAsync corta antes de construir o correr el SQL.
