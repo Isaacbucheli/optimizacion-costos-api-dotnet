@@ -93,6 +93,15 @@ public sealed record MatrizFila(
 /// informe tendría que portar el regex de la plantilla sobre el nombre del rol en inglés, y
 /// contradeciría a Revisión de accesos justo en los roles personalizados: <c>IsCustomRole</c> es
 /// exactamente la señal de que ese regex no los puede reconocer.
+///
+/// <para><see cref="SuscripcionesAlcanzadasNombres"/> (Tarea 8 del informe de valor) es el nombre
+/// de cada id de <see cref="SuscripcionesAlcanzadas"/>, posición a posición: viene de
+/// <see cref="OptimizacionCostos.Api.Features.Cdc.AccessReview.AccessAssignmentRow.SeenInSubscriptionNames"/>,
+/// que ya calculaba <c>AccessReviewAssignments.Distinct</c> para resolver el ambiente y hasta esta
+/// tarea no exponía. Sin este campo, el bloque de seguridad solo puede nombrar una suscripción
+/// alcanzada si ALGUNA fila la trae como su propia <see cref="SubscriptionId"/>/<see cref="SubscriptionName"/>
+/// primaria — falso para una suscripción alcanzada solo por herencia de <c>root</c>/
+/// <c>management_group</c> que nunca aparece como scope directo de ninguna asignación.</para>
 /// </summary>
 public sealed record RbacFila(
     string PrincipalObjectId,
@@ -106,6 +115,7 @@ public sealed record RbacFila(
     string? SubscriptionId,
     string? SubscriptionName,
     IReadOnlyList<string> SuscripcionesAlcanzadas,
+    IReadOnlyList<string?> SuscripcionesAlcanzadasNombres,
     bool? CuentaHabilitada,
     string? UltimoLoginTexto,
     string? ViaGrupoId,

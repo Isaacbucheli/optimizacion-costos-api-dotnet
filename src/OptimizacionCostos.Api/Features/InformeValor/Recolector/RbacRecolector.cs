@@ -51,10 +51,13 @@ public static class RbacRecolector
         ScopeLevel: a.ScopeLevel,
         SubscriptionId: a.SubscriptionId,
         SubscriptionName: a.SubscriptionName,
-        // SeenInSubscriptions ya viene lleno por AccessReviewAssignments.Distinct (root y
-        // management_group con el conjunto completo, el resto con su propia suscripción). El
-        // fallback es solo para una fila cruda que llegara sin pasar por el dedup.
+        // SeenInSubscriptions/SeenInSubscriptionNames ya vienen llenos por
+        // AccessReviewAssignments.Distinct (root y management_group con el conjunto completo, el
+        // resto con su propia suscripción), en el mismo orden el uno respecto del otro. El
+        // fallback es solo para una fila cruda que llegara sin pasar por el dedup: ahí el único
+        // dato disponible es la suscripción propia de la fila.
         SuscripcionesAlcanzadas: a.SeenInSubscriptions ?? [a.SubscriptionId],
+        SuscripcionesAlcanzadasNombres: a.SeenInSubscriptionNames ?? [a.SubscriptionName],
         CuentaHabilitada: a.AccountEnabled,
         UltimoLoginTexto: a.LastSignIn?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
         ViaGrupoId: a.ViaGroupId,

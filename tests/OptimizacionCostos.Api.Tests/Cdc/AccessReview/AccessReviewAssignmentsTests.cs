@@ -33,6 +33,25 @@ public class AccessReviewAssignmentsTests
         Assert.Equal(3, unica.SeenInSubscriptions!.Count);
     }
 
+    /// <summary>
+    /// Informe de valor (Tarea 8): el nombre de cada suscripción alcanzada viaja junto al id, en la
+    /// misma posición. Antes de esta tarea la clase ya calculaba estos nombres (los necesitaba para
+    /// resolver Environment más abajo) pero los descartaba después de usarlos.
+    /// </summary>
+    [Fact]
+    public void Cada_suscripcion_alcanzada_conserva_su_nombre_en_la_misma_posicion()
+    {
+        var efectivas = AccessReviewAssignments.Distinct([Row("s1"), Row("s2"), Row("s3")]);
+
+        var unica = Assert.Single(efectivas);
+        Assert.Equal(unica.SeenInSubscriptions!.Count, unica.SeenInSubscriptionNames!.Count);
+        var nombrePorId = unica.SeenInSubscriptions!.Zip(unica.SeenInSubscriptionNames!)
+            .ToDictionary(par => par.First, par => par.Second);
+        Assert.Equal("Sub s1", nombrePorId["s1"]);
+        Assert.Equal("Sub s2", nombrePorId["s2"]);
+        Assert.Equal("Sub s3", nombrePorId["s3"]);
+    }
+
     [Fact]
     public void Dos_vias_al_mismo_acceso_siguen_siendo_dos_filas()
     {

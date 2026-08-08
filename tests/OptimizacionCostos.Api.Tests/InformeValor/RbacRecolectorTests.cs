@@ -86,6 +86,35 @@ public sealed class RbacRecolectorTests
         Assert.Equal("root", fila.ScopeLevel);
     }
 
+    /// <summary>
+    /// Tarea 8 del informe de valor: el nombre de cada suscripción alcanzada viaja junto al id, en
+    /// la misma posición, aunque ninguna fila cruda tenga esa suscripción como propia (acá "s3" y
+    /// "s2" solo se ven por herencia de root; "s1" es la única con una fila directa). Antes de
+    /// exponer este campo, RbacRecolector solo entregaba los ids: el nombre de una suscripción
+    /// alcanzada exclusivamente por herencia no tenía dónde vivir.
+    /// </summary>
+    [Fact]
+    public void Una_asignacion_de_root_tambien_devuelve_el_nombre_de_cada_suscripcion_alcanzada()
+    {
+        var crudas = new[]
+        {
+            Row(scope: "/", scopeLevel: "root", sub: "s3", subName: "Zulu", roleDef: RoleDefPrefixadoPor("s3")),
+            Row(scope: "/", scopeLevel: "root", sub: "s1", subName: "Alfa", roleDef: RoleDefPrefixadoPor("s1")),
+            Row(scope: "/", scopeLevel: "root", sub: "s2", subName: "Bravo", roleDef: RoleDefPrefixadoPor("s2")),
+        };
+
+        var efectivas = AccessReviewAssignments.Distinct(crudas);
+        var fila = Assert.Single(RbacRecolector.Mapear(Snap(efectivas)));
+
+        Assert.Equal(fila.SuscripcionesAlcanzadas.Count, fila.SuscripcionesAlcanzadasNombres.Count);
+        var nombrePorId = fila.SuscripcionesAlcanzadas
+            .Zip(fila.SuscripcionesAlcanzadasNombres)
+            .ToDictionary(par => par.First, par => par.Second);
+        Assert.Equal("Alfa", nombrePorId["s1"]);
+        Assert.Equal("Bravo", nombrePorId["s2"]);
+        Assert.Equal("Zulu", nombrePorId["s3"]);
+    }
+
     /// <summary>Guarda de la regla anterior: fuera de root/management_group, el alcance es la
     /// suscripción propia, no "todas las que vio la corrida".</summary>
     [Fact]
@@ -94,6 +123,7 @@ public sealed class RbacRecolectorTests
         var fila = RbacRecolector.MapearFila(Row(scope: "/subscriptions/s1", scopeLevel: "subscription", sub: "s1"));
 
         Assert.Equal(["s1"], fila.SuscripcionesAlcanzadas);
+        Assert.Equal(["Sub s1"], fila.SuscripcionesAlcanzadasNombres);
     }
 
     [Fact]

@@ -105,17 +105,21 @@ public static class SeguridadCalculador
 
     /// <summary>D12: agrupa por el conjunto COMPLETO de suscripciones que alcanza cada fila
     /// (<see cref="RbacFila.SuscripcionesAlcanzadas"/>), no por su <see cref="RbacFila.SubscriptionId"/>
-    /// primario — ese campo es arbitrario para asignaciones heredadas de root/management group.
-    /// El nombre visible se resuelve contra cualquier fila que SÍ tenga ese id como su propia
-    /// suscripción primaria; si ninguna la tiene (una suscripción alcanzada solo por herencia,
-    /// nunca vista de forma directa), se muestra el id crudo en vez de perder la fila.</summary>
+    /// primario — ese campo es arbitrario para asignaciones heredadas de root/management group. El
+    /// nombre visible sale de <see cref="RbacFila.SuscripcionesAlcanzadasNombres"/> (Tarea 8: la
+    /// misma fuente que ya resolvía el ambiente en <c>AccessReviewAssignments.Distinct</c>, antes
+    /// descartada), zipeado posición a posición contra los ids de la fila que los trae. Ya no hace
+    /// falta buscar una fila cuyo id PROPIO coincida: cualquier fila que alcance ese id ya declara
+    /// su nombre. Si ninguna fila trae nombre para un id alcanzado (el insumo no lo midió), se
+    /// muestra el id crudo en vez de perder la fila.</summary>
     private static IReadOnlyList<IReadOnlyList<object?>> CalcularSuscripciones(
         IReadOnlyList<RbacFila> usr, IReadOnlyList<RbacFila> sps)
     {
-        var nombrePorId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var f in usr.Concat(sps))
-            if (f.SubscriptionId is { Length: > 0 } id && f.SubscriptionName is { Length: > 0 } nombre)
-                nombrePorId.TryAdd(id, nombre);
+        var nombrePorId = usr.Concat(sps)
+            .SelectMany(f => f.SuscripcionesAlcanzadas.Zip(f.SuscripcionesAlcanzadasNombres))
+            .Where(par => !string.IsNullOrEmpty(par.First) && !string.IsNullOrEmpty(par.Second))
+            .GroupBy(par => par.First, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First().Second!, StringComparer.OrdinalIgnoreCase);
 
         var usrPorId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var spPorId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);

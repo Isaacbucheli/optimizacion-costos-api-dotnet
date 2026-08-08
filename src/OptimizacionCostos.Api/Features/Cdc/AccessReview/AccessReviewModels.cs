@@ -29,7 +29,18 @@ public sealed record AccessAssignmentRow(
     /// <see cref="AccessReviewAssignments.Distinct"/>, que es el único lugar que conoce TODAS las
     /// suscripciones alcanzadas por un acceso heredado. Null en filas crudas: ahí se cae al nombre de
     /// la suscripción, que para un scope de suscripción o menor es el dato correcto.</summary>
-    string? Environment = null);
+    string? Environment = null,
+    /// <summary>Nombre de cada suscripción de <see cref="SeenInSubscriptions"/>, en la misma
+    /// posición (índice a índice). Lo llena <see cref="AccessReviewAssignments.Distinct"/> con el
+    /// mismo dato que ya usaba, sin exponer, para resolver <see cref="Environment"/>: cada
+    /// repetición cruda de una asignación heredada trae el nombre de la suscripción bajo la que
+    /// ARM la reportó, así que el nombre de una suscripción alcanzada solo por herencia (nunca vista
+    /// como scope directo de ninguna fila) ya está disponible acá, no hace falta reconstruirlo
+    /// buscando otra fila cuyo <see cref="SubscriptionId"/> coincida. Puede traer <c>null</c> en una
+    /// posición puntual si esa repetición en particular no vino con nombre; <c>null</c> en la lista
+    /// completa (no solo una posición) en filas crudas, igual que <see cref="SeenInSubscriptions"/>.
+    /// </summary>
+    IReadOnlyList<string?>? SeenInSubscriptionNames = null);
 
 public sealed record AccessGuestRow(
     string ObjectId, string? DisplayName, string? Email, string? ExternalDomain,

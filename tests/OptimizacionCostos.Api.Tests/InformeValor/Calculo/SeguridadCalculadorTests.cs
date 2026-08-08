@@ -20,7 +20,7 @@ public sealed class SeguridadCalculadorTests
         string? id = null, string? nombre = "Persona", string? login = "persona@cliente.com",
         string principalType = "User", string rol = "Reader",
         string? subscriptionId = "sub-1", string? subscriptionName = "Suscripción Uno",
-        IReadOnlyList<string>? alcanza = null,
+        IReadOnlyList<string>? alcanza = null, IReadOnlyList<string?>? alcanzaNombres = null,
         bool? cuentaHabilitada = true, string? ultimoLogin = "2026-01-01T00:00:00Z") =>
         new(
             PrincipalObjectId: id ?? $"id-{++_n}",
@@ -28,6 +28,12 @@ public sealed class SeguridadCalculadorTests
             RoleKey: rol.ToLowerInvariant(), Scope: $"/subscriptions/{subscriptionId}", ScopeLevel: "subscription",
             SubscriptionId: subscriptionId, SubscriptionName: subscriptionName,
             SuscripcionesAlcanzadas: alcanza ?? (subscriptionId is not null ? [subscriptionId] : []),
+            // Por defecto (sin alcanza/alcanzaNombres explícitos) espeja la suscripción propia, el
+            // caso de una fila directa. Con alcanza explícito y alcanzaNombres omitido, solo se
+            // conoce el nombre de la PRIMERA (la propia): las pruebas de D12 que declaran una
+            // segunda suscripción alcanzada por herencia pasan alcanzaNombres explícito cuando les
+            // importa si esa segunda tiene nombre o no.
+            SuscripcionesAlcanzadasNombres: alcanzaNombres ?? (subscriptionName is not null ? [subscriptionName] : []),
             CuentaHabilitada: cuentaHabilitada, UltimoLoginTexto: ultimoLogin, ViaGrupoId: null,
             RoleClass: null, IsCustomRole: false);
 
@@ -204,18 +210,49 @@ public sealed class SeguridadCalculadorTests
         Assert.Equal(2, (int)subB[1]!); // el owner heredado + el reader directo
     }
 
+    /// <summary>
+    /// Caso genuino de "nadie lo midió": ninguna fila trae nombre para "sub-fantasma" (nombre
+    /// explícito null en esa posición), así que cae al id crudo. Antes de la Tarea 8 esto pasaba
+    /// SIEMPRE que una suscripción alcanzada no fuera la propia de ninguna fila, aunque el dato
+    /// existiera (ver el siguiente test); ahora solo pasa cuando de verdad no hay nombre en ningún
+    /// lado.
+    /// </summary>
     [Fact]
-    public void D12_Una_suscripcion_alcanzada_sin_nombre_propio_conocido_cae_al_id_como_texto()
+    public void D12_Una_suscripcion_alcanzada_sin_nombre_conocido_en_ningun_lado_cae_al_id_como_texto()
     {
         var filas = new[]
         {
             Fila(id: "owner-1", rol: "Owner", subscriptionId: "sub-conocida", subscriptionName: "Suscripción Conocida",
-                alcanza: ["sub-conocida", "sub-fantasma"]),
+                alcanza: ["sub-conocida", "sub-fantasma"], alcanzaNombres: ["Suscripción Conocida", null]),
         };
 
         var m = SeguridadCalculador.Calcular(filas, Completo)!;
 
         Assert.Contains(m.Suscripciones, s => (string)s[0]! == "sub-fantasma");
+    }
+
+    /// <summary>
+    /// El caso que la Tarea 8 corrige: "sub-heredada" se alcanza SOLO por herencia de management
+    /// group (ninguna fila la tiene como suscripción propia), pero el recolector SÍ trae su nombre
+    /// (así llega en la práctica: cada repetición cruda de ARM incluye el nombre de la suscripción
+    /// bajo la que se descubrió la asignación heredada, aunque esa suscripción nunca tenga una
+    /// asignación directa). Antes de exponer <see cref="RbacFila.SuscripcionesAlcanzadasNombres"/>,
+    /// este caso no se podía distinguir del anterior y el id crudo era la única salida posible.
+    /// </summary>
+    [Fact]
+    public void D12_Una_suscripcion_alcanzada_solo_por_herencia_resuelve_su_nombre_si_el_recolector_lo_trae()
+    {
+        var filas = new[]
+        {
+            Fila(id: "owner-1", rol: "Owner", subscriptionId: "sub-conocida", subscriptionName: "Suscripción Conocida",
+                alcanza: ["sub-conocida", "sub-heredada"],
+                alcanzaNombres: ["Suscripción Conocida", "Suscripción Heredada"]),
+        };
+
+        var m = SeguridadCalculador.Calcular(filas, Completo)!;
+
+        Assert.Contains(m.Suscripciones, s => (string)s[0]! == "Suscripción Heredada");
+        Assert.DoesNotContain(m.Suscripciones, s => (string)s[0]! == "sub-heredada");
     }
 
     [Fact]
