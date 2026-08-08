@@ -12,9 +12,11 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// deshabilitadas") se suprimen —cifra en <c>null</c>, sin línea en <see cref="SeguridadModelo.Hallazgos"/>—
 /// cuando su eje (<see cref="EjesRbac.UltimoLoginMedido"/>/<see cref="EjesRbac.EstadoCuentaMedido"/>)
 /// no se midió, en vez de fabricar una afirmación de seguridad sobre el 100% del universo. El
-/// hallazgo de "identidades sin nombre" se extiende con el mismo criterio (ver el comentario de
-/// <see cref="ConstruirHallazgos"/>): no está nombrado en D9, pero depende exactamente del mismo
-/// eje por el mismo motivo, documentado como divergencia adicional en el reporte de la tarea.</para>
+/// hallazgo de "identidades sin nombre" se extiende con el mismo criterio (ver
+/// <see cref="SeguridadModelo.SinNombreResuelto"/> y el comentario de <see cref="ConstruirHallazgos"/>):
+/// D9 no lo nombra porque el análisis adversarial que lo encontró no llegó a él, no porque lo
+/// hubiera descartado — depende exactamente del mismo eje (<c>GraphComplete</c>) por el mismo
+/// motivo que "cuentas deshabilitadas".</para>
 ///
 /// <para><b>D12</b> (las tres cifras de suscripciones se concilian) es del ensamblador, según el
 /// propio contrato de <see cref="SeguridadModelo"/>: este bloque solo publica <em>su</em> vista de
@@ -64,7 +66,11 @@ public static class SeguridadCalculador
         int? disab = ejes.EstadoCuentaMedido
             ? filas.Count(f => f.CuentaHabilitada == false)
             : null;
-        var sinNombre = filas.Count(f => string.IsNullOrWhiteSpace(f.Nombre));
+        // Mismo eje que disab (D9 extendido: ver el comentario de clase): sin Graph, un cero
+        // acá no significaría "todas resolvieron nombre" sino "no se pudo medir nada".
+        int? sinNombre = ejes.EstadoCuentaMedido
+            ? filas.Count(f => string.IsNullOrWhiteSpace(f.Nombre))
+            : null;
 
         var hallazgos = ConstruirHallazgos(
             filas, usr, sps, owner, uaa, contrib, sinLogin, sinNombre, disab, spTop, ejes);
@@ -143,7 +149,7 @@ public static class SeguridadCalculador
 
     private static List<SeguridadHallazgo> ConstruirHallazgos(
         IReadOnlyList<RbacFila> filas, IReadOnlyList<RbacFila> usr, IReadOnlyList<RbacFila> sps,
-        int owner, int uaa, int contrib, int? sinLogin, int sinNombre, int? disab,
+        int owner, int uaa, int contrib, int? sinLogin, int? sinNombre, int? disab,
         IReadOnlyList<object?>? spTop, EjesRbac ejes)
     {
         var f = new List<SeguridadHallazgo>();
@@ -179,8 +185,9 @@ public static class SeguridadCalculador
                 "Plan definido"));
 
         // D9 extendido (ver el comentario de clase): el nombre depende del mismo eje que el
-        // estado de cuenta (GraphComplete), así que se suprime con el mismo criterio.
-        if (ejes.EstadoCuentaMedido && sinNombre > 0)
+        // estado de cuenta (GraphComplete), así que se suprime con el mismo criterio (sinNombre
+        // es null en ese caso, igual que disab y sinLogin).
+        if (ejes.EstadoCuentaMedido && sinNombre is > 0)
             f.Add(new("Alta", "Identidades que no resuelven nombre en Entra",
                 $"{sinNombre} de {filas.Count} asignaciones",
                 "Otorgar Directory.Read.All a la cuenta de auditoría para que cada revisión futura salga con nombre y correo.",

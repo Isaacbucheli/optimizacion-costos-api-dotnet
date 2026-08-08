@@ -19,7 +19,16 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// <see cref="CuentasDeshabilitadas"/> como <c>int?</c> —<c>null</c> significa "no medido, no
 /// publicar la cifra ni el hallazgo", nunca cero disfrazado— más los dos banderas explícitas
 /// <see cref="UltimoLoginMedido"/>/<see cref="EstadoCuentaMedido"/> para que quien dibuje decida
-/// entre mostrar el número o la línea de alcance sin tener que inferirlo de un <c>null</c>.</para>
+/// entre mostrar el número o la línea de alcance sin tener que inferirlo de un <c>null</c>.
+///
+/// <see cref="SinNombreResuelto"/> sigue el mismo patrón aunque D9 no lo nombre explícitamente:
+/// depende del mismo eje que <see cref="CuentasDeshabilitadas"/>
+/// (<see cref="EstadoCuentaMedido"/>, que en el recolector es <c>GraphComplete</c> — el nombre
+/// resuelto no depende de la licencia P1, así que no comparte eje con
+/// <see cref="SinActividadSesion"/>). Sin Graph, TODAS las identidades llegarían sin nombre y el
+/// hallazgo "no resuelven nombre" sería tan fabricado como los otros dos: mismo <c>int?</c>, mismo
+/// significado de <c>null</c>, para que un cero no tenga que significar a la vez "todas resolvieron
+/// nombre" y "no se pudo medir nada".</para>
 ///
 /// <para><b>D12 (las tres cifras de suscripciones se concilian) es del ensamblador, no de este
 /// bloque</b>: la conciliación cruza suscripciones de facturación, RBAC y Advisor/Matriz a la vez,
@@ -45,7 +54,7 @@ public sealed record SeguridadModelo(
     [property: JsonPropertyName("priv")] int Privilegiados,
     [property: JsonPropertyName("sinLogin")] int? SinActividadSesion,
     [property: JsonPropertyName("ultimoLoginMedido")] bool UltimoLoginMedido,
-    [property: JsonPropertyName("sinNombre")] int SinNombreResuelto,
+    [property: JsonPropertyName("sinNombre")] int? SinNombreResuelto,
     [property: JsonPropertyName("disab")] int? CuentasDeshabilitadas,
     [property: JsonPropertyName("estadoCuentaMedido")] bool EstadoCuentaMedido,
     // SuscripcionTopServicePrincipal = [nombre, asignaciones de usuario, asignaciones de SP], o

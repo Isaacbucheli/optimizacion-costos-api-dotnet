@@ -108,20 +108,20 @@ public sealed class SeguridadCalculadorTests
     /// ("el resto del directorio") depende de <c>GraphComplete</c>, el mismo booleano que
     /// <see cref="EstadoRbac.Resolver"/> asigna a <see cref="EjesRbac.EstadoCuentaMedido"/>. Sin
     /// Graph, TODAS las identidades llegarían sin nombre y el hallazgo "no resuelven nombre"
-    /// dispararía sobre el 100%, igual de fabricado que los otros dos. Se documenta como
-    /// divergencia adicional en el reporte, no en D9 en sí.
+    /// dispararía sobre el 100%, igual de fabricado que los otros dos. Confirmado como extensión
+    /// de D9: <see cref="SeguridadModelo.SinNombreResuelto"/> es <c>int?</c>, igual que
+    /// <see cref="SeguridadModelo.SinActividadSesion"/> y <see cref="SeguridadModelo.CuentasDeshabilitadas"/>
+    /// — un cero no puede significar a la vez "todas resolvieron nombre" y "no se pudo medir".
     /// </summary>
     [Fact]
-    public void D9_extendido_EstadoCuentaMedido_false_tampoco_emite_el_hallazgo_de_sin_nombre()
+    public void D9_extendido_EstadoCuentaMedido_false_SinNombreResuelto_es_null_y_no_hay_hallazgo()
     {
         var filas = Enumerable.Range(0, 5).Select(i => Fila(id: $"u{i}", nombre: null)).ToList();
         var ejes = new EjesRbac(EstadoCuentaMedido: false, UltimoLoginMedido: true);
 
         var m = SeguridadCalculador.Calcular(filas, ejes)!;
 
-        // El conteo crudo se mantiene (el campo NO es nullable en el contrato): lo que se
-        // suprime es el hallazgo/recomendación, no el dato.
-        Assert.Equal(5, m.SinNombreResuelto);
+        Assert.Null(m.SinNombreResuelto);
         Assert.DoesNotContain(m.Hallazgos, h => h.Titulo.Contains("no resuelven nombre"));
     }
 
