@@ -22,10 +22,11 @@ public sealed class RbacRecolectorTests
         string scopeLevel = "subscription", string roleDef = "def-1", string roleName = "Rol",
         string? displayName = "Ana Perez", string? login = "ana@x.com",
         string? viaGroupId = null, string sub = "s1", string? subName = null,
-        bool? accountEnabled = true, DateTimeOffset? lastSignIn = null) =>
+        bool? accountEnabled = true, DateTimeOffset? lastSignIn = null,
+        string? roleClass = null, bool isCustomRole = false) =>
         new(sub, subName ?? $"Sub {sub}", null, scope, scopeLevel, roleName, roleDef, principal, type,
             displayName, login, "Member", viaGroupId, viaGroupId is null ? null : "Grupo",
-            accountEnabled, lastSignIn, "enabled", null, false);
+            accountEnabled, lastSignIn, "enabled", roleClass, isCustomRole);
 
     private static AccessReviewSnapshot Snap(IEnumerable<AccessAssignmentRow> assignments) =>
         new(new AccessRunRef(1, 7, "ok", null, null, null, null),
@@ -131,6 +132,33 @@ public sealed class RbacRecolectorTests
         Assert.Equal("s1", fila.SubscriptionId);
         Assert.Equal("Sub Uno", fila.SubscriptionName);
         Assert.Equal("g1", fila.ViaGrupoId);
+    }
+
+    /// <summary>
+    /// IMPORTANTE 3 de la revisión de rama: sin estos dos campos, la calculadora tendría que
+    /// portar el regex de la plantilla sobre el nombre del rol en inglés en vez de reusar la
+    /// clasificación por permisos reales que ya hace Revisión de accesos
+    /// (AccessReviewRoleClassifier) — y contradecirla justo en los roles personalizados.
+    /// </summary>
+    [Fact]
+    public void Mapea_la_clasificacion_de_rol_y_si_es_personalizado()
+    {
+        var fila = RbacRecolector.MapearFila(Row(
+            roleClass: AccessReviewRoleClassifier.OtorgaAccesos, isCustomRole: true));
+
+        Assert.Equal(AccessReviewRoleClassifier.OtorgaAccesos, fila.RoleClass);
+        Assert.True(fila.IsCustomRole);
+    }
+
+    /// <summary>Rol no resoluble en la suscripción (o corrida vieja, anterior a que se guardara la
+    /// clasificación): RoleClass viaja null, no una cadena vacía ni un valor inventado.</summary>
+    [Fact]
+    public void Sin_clasificacion_de_rol_RoleClass_es_nulo_y_no_es_personalizado_por_defecto()
+    {
+        var fila = RbacRecolector.MapearFila(Row());
+
+        Assert.Null(fila.RoleClass);
+        Assert.False(fila.IsCustomRole);
     }
 
     [Fact]

@@ -57,5 +57,7 @@ public static class RbacRecolector
         SuscripcionesAlcanzadas: a.SeenInSubscriptions ?? [a.SubscriptionId],
         CuentaHabilitada: a.AccountEnabled,
         UltimoLoginTexto: a.LastSignIn?.UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
-        ViaGrupoId: a.ViaGroupId);
+        ViaGrupoId: a.ViaGroupId,
+        RoleClass: a.RoleClass,
+        IsCustomRole: a.IsCustomRole);
 }

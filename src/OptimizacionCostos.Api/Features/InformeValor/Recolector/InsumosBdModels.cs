@@ -80,6 +80,13 @@ public sealed record MatrizFila(
 /// <see cref="UltimoLoginTexto"/> es la fecha en ISO 8601 UTC tal cual, sin frase relativa ("hace
 /// N días") ni clasificación de actividad: esa decisión depende de la fecha de corte del informe,
 /// que solo conoce la calculadora.
+/// <see cref="RoleClass"/> e <see cref="IsCustomRole"/> son la clasificación que Revisión de
+/// accesos ya calcula por los permisos reales del rol (<c>AccessReviewRoleClassifier</c>: owner,
+/// otorga_accesos, escritura_total, escritura_servicio, lectura, o null si el rol no era
+/// resoluble) y persiste en <c>cdc_access_assignment</c>. Sin estos dos campos, la calculadora del
+/// informe tendría que portar el regex de la plantilla sobre el nombre del rol en inglés, y
+/// contradeciría a Revisión de accesos justo en los roles personalizados: <c>IsCustomRole</c> es
+/// exactamente la señal de que ese regex no los puede reconocer.
 /// </summary>
 public sealed record RbacFila(
     string PrincipalObjectId,
@@ -95,7 +102,9 @@ public sealed record RbacFila(
     IReadOnlyList<string> SuscripcionesAlcanzadas,
     bool? CuentaHabilitada,
     string? UltimoLoginTexto,
-    string? ViaGrupoId);
+    string? ViaGrupoId,
+    string? RoleClass,
+    bool IsCustomRole);
 
 /// <summary>
 /// Un retiro de Azure vigente para un cliente, agrupado por anuncio (<see cref="AnnouncementKey"/>):
