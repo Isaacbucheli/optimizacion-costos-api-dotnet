@@ -28,6 +28,17 @@ public static class AdvisorRecolector
     /// cliente, con su propio porcentaje sobre el total. El literal queda fijo en el SQL (no es
     /// un parámetro) a propósito: el test de esta clase inspecciona el texto para confirmar que el
     /// filtro sigue ahí.</para>
+    ///
+    /// <para><c>ahorro_anual</c> lee el monto por dos rutas (sync de Advisor vía
+    /// <c>extendedProperties.annualSavingsAmount</c>, o CSV histórico vía
+    /// <c>"Potential Annual Cost Savings"</c>), y <c>moneda_ahorro</c> tiene que leer la moneda por
+    /// las MISMAS dos rutas o la ruta del CSV queda con monto y sin moneda. La clave de la ruta del
+    /// CSV es <c>"Potential Cost Savings Currency"</c> (nivel superior de <c>additional_info</c>,
+    /// como su hermana de monto): confirmada contra la base real, aparece en las mismas filas que
+    /// traen el monto por esa ruta. La clave de la ruta del sync
+    /// (<c>extendedProperties.savingsCurrency</c>) es un supuesto sin verificar todavía: la consulta
+    /// que se corrió para esta revisión solo enumeró claves de primer nivel de <c>additional_info</c>,
+    /// no las anidadas dentro de <c>extendedProperties</c>. Se deja como estaba.</para>
     /// </summary>
     internal static string Sql(IReadOnlyList<string> suscripcionesAdministradas, bool seguridadGestionadaExternamente)
     {
@@ -50,7 +61,10 @@ public static class AdvisorRecolector
                     JSON_VALUE(f.additional_info, '$.extendedProperties.annualSavingsAmount'),
                     JSON_VALUE(f.additional_info, '$."Potential Annual Cost Savings"')
                 ) AS DECIMAL(18,2)) AS ahorro_anual,
-                JSON_VALUE(f.additional_info, '$.extendedProperties.savingsCurrency') AS moneda_ahorro
+                COALESCE(
+                    JSON_VALUE(f.additional_info, '$.extendedProperties.savingsCurrency'),
+                    JSON_VALUE(f.additional_info, '$."Potential Cost Savings Currency"')
+                ) AS moneda_ahorro
             FROM dbo.waf_resource_finding f
             INNER JOIN dbo.waf_recommendation r ON r.recommendation_id = f.recommendation_id
             INNER JOIN dbo.waf_recommendation_canonical c ON c.canonical_id = r.canonical_id

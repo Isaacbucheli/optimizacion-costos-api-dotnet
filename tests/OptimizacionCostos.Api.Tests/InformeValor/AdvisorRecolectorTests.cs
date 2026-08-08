@@ -46,6 +46,31 @@ public sealed class AdvisorRecolectorTests
     }
 
     /// <summary>
+    /// IMPORTANTE 6: la clave de moneda de la ruta del CSV ("Potential Annual Cost Savings") es
+    /// "Potential Cost Savings Currency" (confirmada contra la base real: aparece en las mismas
+    /// filas que traen el monto por esa ruta). Antes moneda_ahorro solo leía la clave de la ruta
+    /// del sync, así que esas filas salían con el monto y sin moneda. La clave de la ruta del sync
+    /// (extendedProperties.savingsCurrency) queda igual: sigue sin verificar, no se tocó.
+    /// </summary>
+    [Fact]
+    public void El_sql_lee_la_moneda_del_ahorro_por_las_dos_rutas()
+    {
+        var sql = Sql();
+        Assert.Contains("extendedProperties.savingsCurrency", sql, StringComparison.Ordinal);
+        Assert.Contains("Potential Cost Savings Currency", sql, StringComparison.Ordinal);
+
+        // moneda_ahorro tiene que ser un COALESCE de las dos, no solo la primera con la segunda
+        // suelta en otro lado del SELECT.
+        var inicioMoneda = sql.IndexOf("AS moneda_ahorro", StringComparison.Ordinal);
+        Assert.True(inicioMoneda > 0);
+        var bloqueMoneda = sql[..inicioMoneda];
+        var monedaSync = bloqueMoneda.LastIndexOf("extendedProperties.savingsCurrency", StringComparison.Ordinal);
+        var monedaCsv = bloqueMoneda.LastIndexOf("Potential Cost Savings Currency", StringComparison.Ordinal);
+        Assert.True(monedaSync > 0 && monedaCsv > monedaSync,
+            "moneda_ahorro debe leer primero la ruta del sync y despues la del CSV, igual que ahorro_anual");
+    }
+
+    /// <summary>
     /// CRÍTICO de la revisión de rama: mismo filtro que MatrizRecolector (ver su test análogo) y
     /// por la misma razón — antes este recolector no traía la bandera, así que el lado de Advisor
     /// del informe no podía replicar lo que ya hacen la pantalla WAF, el export a Excel y el
