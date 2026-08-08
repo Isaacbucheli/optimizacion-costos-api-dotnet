@@ -51,7 +51,7 @@ public sealed class ModeloInformeValorSerializacionTests
         Top: [["Habilitar copia de seguridad", "Confiabilidad", "High", 6]],
         TopSuma: 6,
         Detalle: [["Habilitar copia de seguridad", "Confiabilidad", "High", "Suscripción Producción", 6]],
-        NumRecursos: 18, Alto: 5, Medio: 10, Bajo: 15,
+        NumRecursos: 18, RecomendacionesConRecurso: 27, Alto: 5, Medio: 10, Bajo: 15,
         AhorroBruto: 5000m, AhorroRealizable: 3200m, AhorroDescartado: 1800m, ConAhorroCuantificado: 4,
         LineasAhorro: [new PosturaLineaAhorro("Comprar reserva de 1 año", "Suscripción Producción", 2000m, "RI", true)],
         CompromisoPorSuscripcion: new Dictionary<string, PosturaCompromisoSuscripcion>
@@ -59,7 +59,8 @@ public sealed class ModeloInformeValorSerializacionTests
             ["Suscripción Producción"] = new(Reserva: 2000m, SavingsPlan: 1500m),
         },
         Retiros: [new PosturaRetiro("API en desuso", "3/5/2026", 4, "Menos de tres meses de margen.", false, true)],
-        RetirosVencidos: 0, RetirosProximosATresMeses: 1);
+        RetirosVencidos: 0, RetirosProximosATresMeses: 1,
+        SeguridadGestionadaExternamente: false, SeguridadGestionadaNota: null);
 
     private static readonly RoadmapModelo Roadmap = new(
         Total: 5,

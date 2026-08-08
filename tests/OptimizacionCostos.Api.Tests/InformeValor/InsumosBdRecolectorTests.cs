@@ -281,6 +281,7 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
                         Recomendacion: "Recomendación de prueba", RecomendacionEn: null,
                         CanonicalId: 1, MatrixCode: null, Source: null,
                         SubscriptionId: "sub-1", SubscriptionName: "Suscripción de prueba",
+                        ResourceGroup: "rg-prueba",
                         ResourceName: "vm-secreta", ResourceType: "Microsoft.Compute/virtualMachines",
                         AhorroAnual: 100m, MonedaAhorro: "USD"),
                 ],

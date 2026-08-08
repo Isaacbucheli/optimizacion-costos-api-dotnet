@@ -107,6 +107,39 @@ public sealed class AdvisorRecolectorTests
         Assert.Empty(filas);
     }
 
+    /// <summary>
+    /// D11 de la entrega 2b: la identidad de un recurso es suscripción + grupo + nombre, igual que
+    /// en facturación. Antes este SQL no traía resource_group (la Tarea 2 lo dejó documentado como
+    /// pendiente en PosturaModelo): sin él, NumRecursos solo podía deduplicar por nombre, y dos
+    /// recursos homónimos en grupos distintos de la misma suscripción contaban como uno.
+    /// </summary>
+    [Fact]
+    public void El_sql_trae_el_grupo_de_recursos()
+    {
+        Assert.Contains("f.resource_group", Sql(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Fija el orden de las 14 columnas del SELECT contra los ordinales que MapearFila lee de
+    /// SqlDataReader (0-13), mismo estilo que el test análogo de MatrizRecolectorTests: un
+    /// reordenamiento futuro (por ejemplo, al agregar otra columna) rompe esto en silencio si no se
+    /// actualiza MapearFila a la vez.
+    /// </summary>
+    [Fact]
+    public void El_orden_de_columnas_del_select_coincide_con_los_ordinales_de_MapearFila()
+    {
+        var sql = Sql();
+        var columnas = new[]
+        {
+            "pillar_number", "impact_number", "advisor_name", "advisor_name_en", "canonical_id",
+            "matrix_code", "source", "subscription_id", "subscription_name", "resource_group",
+            "resource_name", "resource_type", "ahorro_anual", "moneda_ahorro",
+        };
+        var indices = columnas.Select(c => sql.IndexOf(c, StringComparison.Ordinal)).ToList();
+        Assert.All(indices, i => Assert.True(i >= 0));
+        Assert.Equal(indices, indices.OrderBy(i => i));
+    }
+
     [Theory]
     [InlineData(1, "Alto")]
     [InlineData(2, "Medio")]
