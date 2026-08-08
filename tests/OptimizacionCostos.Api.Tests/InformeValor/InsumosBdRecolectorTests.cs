@@ -117,6 +117,43 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
         Assert.True(body.GetProperty("matriz").TryGetProperty("excluidos", out _));
     }
 
+    /// <summary>
+    /// Mismo criterio que El_bloque_de_advisor_no_reporta_excluidos: un cero no puede leerse como
+    /// dos cosas distintas. Sin este bloque, un pilar de Seguridad en cero en advisor/matriz se ve
+    /// igual para "el cliente no tiene hallazgos" y para "el cliente gestiona su seguridad aparte y
+    /// MatrizRecolector/AdvisorRecolector ya la excluyeron" — quien depure de donde salio la cifra
+    /// va a sospechar de la sincronizacion en vez de leer la decision real del cliente.
+    /// </summary>
+    [Fact]
+    public async Task El_endpoint_expone_la_bandera_y_la_nota_de_seguridad_gestionada()
+    {
+        _factory.Access.Allow(clientId: 7);
+        _factory.Recolector.ConSeguridadGestionadaExternamente("Controles revisados por el CSIRT del cliente.");
+        var client = ClientFor("c4@bit.ec", Roles.Consultor, canEdit: false);
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/informe-valor/clients/7/insumos-bd");
+
+        var seguridad = body.GetProperty("seguridad_gestionada");
+        Assert.True(seguridad.GetProperty("gestionada_externamente").GetBoolean());
+        Assert.Equal("Controles revisados por el CSIRT del cliente.", seguridad.GetProperty("nota").GetString());
+    }
+
+    /// <summary>Complemento del test anterior: sin gestion externa, la bandera es false y la nota
+    /// es null (no el texto por defecto) -- DefaultIgnoreCondition.Never en Program.cs asegura que
+    /// "nota" sigue presente en el JSON aunque valga null, en vez de desaparecer.</summary>
+    [Fact]
+    public async Task Sin_gestion_externa_la_bandera_es_false_y_la_nota_es_null()
+    {
+        _factory.Access.Allow(clientId: 7);
+        var client = ClientFor("c4b@bit.ec", Roles.Consultor, canEdit: false);
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/informe-valor/clients/7/insumos-bd");
+
+        var seguridad = body.GetProperty("seguridad_gestionada");
+        Assert.False(seguridad.GetProperty("gestionada_externamente").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, seguridad.GetProperty("nota").ValueKind);
+    }
+
     /// <summary>El endpoint es de conteos: no puede filtrar nombres de recurso ni de identidad.</summary>
     [Fact]
     public async Task No_expone_nombres_de_recurso_ni_de_identidad()
@@ -280,6 +317,12 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
                 SeguridadGestionadaNota: null,
                 LeidoEn: DateTime.UtcNow);
         }
+
+        /// <summary>Marca el cliente como si gestionara su seguridad por fuera, sobre el estado
+        /// actual (Vacio() o ConDatosDePrueba(), lo que se haya llamado antes): solo toca los dos
+        /// campos nuevos, para no acoplar este escenario a los otros datos de prueba.</summary>
+        public void ConSeguridadGestionadaExternamente(string? nota) =>
+            _insumos = _insumos with { SeguridadGestionadaExternamente = true, SeguridadGestionadaNota = nota };
 
         public Task<InsumosBd> LeerAsync(int clientId, CancellationToken ct = default) => Task.FromResult(_insumos);
     }

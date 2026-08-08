@@ -86,6 +86,16 @@ public sealed class InformeValorController(
     /// el flag que el consultor cura desde esa pantalla (ver MatrizFila.Excluida). El bloque
     /// <c>advisor</c>, al grano recomendación × recurso, no repite ese eje — ni siquiera en cero —
     /// para que nadie confunda "este bloque no lo mide" con "no hay excluidos en Advisor".
+    ///
+    /// <c>seguridad_gestionada</c> existe por el mismo motivo (un cero no puede leerse como dos
+    /// cosas distintas): sin ella, un cliente que gestiona su seguridad por fuera (Gestión de
+    /// Vulnerabilidades) muestra <c>advisor.total</c>/<c>matriz.total</c> en cero para el pilar de
+    /// Seguridad exactamente igual que un cliente sin ningún hallazgo — <see cref="MatrizRecolector"/>/
+    /// <see cref="AdvisorRecolector"/> ya excluyen ese pilar cuando la bandera está prendida. Sin la
+    /// marca, quien depure de dónde salió la cifra va a sospechar de la sincronización en vez de leer
+    /// la decisión real del cliente. Bandera y nota vienen de <see cref="InsumosBd"/>
+    /// (<see cref="InsumosBd.SeguridadGestionadaExternamente"/>/<see cref="InsumosBd.SeguridadGestionadaNota"/>),
+    /// no se recalculan acá.
     /// </summary>
     [HttpGet("clients/{clientId:int}/insumos-bd")]
     public async Task<IActionResult> InsumosBd(int clientId, CancellationToken ct)
@@ -113,6 +123,11 @@ public sealed class InformeValorController(
             },
             rbac = new { asignaciones = insumos.Rbac.Count },
             retiros = new { total = insumos.Retiros.Count },
+            seguridad_gestionada = new
+            {
+                gestionada_externamente = insumos.SeguridadGestionadaExternamente,
+                nota = insumos.SeguridadGestionadaNota,
+            },
             estado_rbac = new
             {
                 disponibilidad = Disponibilidad(insumos.EstadoRbac.Disponibilidad),
