@@ -33,6 +33,19 @@ public sealed class SqlInsumosBdRecolector(
     ISqlConnectionFactory factory, IAccessReviewStore accessReviewStore) : IInsumosBdRecolector
 {
     /// <summary>
+    /// Caché por proceso (mismo patrón <c>_schemaEnsured</c> que
+    /// <c>SqlAccessReviewStore</c>/<c>AccessReviewDecisionStore</c>/<c>SqlFinOpsDataStore</c>), pero
+    /// acotada a este módulo: <c>WafSchema.EnsureWafSchemaAsync</c> son ~19 sentencias DDL
+    /// idempotentes y <c>BoletinService.EnsureSchemaAsync</c> varias más, y <c>/insumos-bd</c> es un
+    /// endpoint de solo lectura (no escribe nada) que las repetía en cada request contra un App
+    /// Service B1 compartido (1 core, 1.75 GB). No se agrega el guard adentro de
+    /// <c>WafSchema</c>/<c>BoletinService</c> (eso cambiaría su costo para TODOS sus llamadores, no
+    /// solo este) ni se toca su comportamiento: el schema sigue siendo idempotente, solo se deja de
+    /// re-verificar de más para esta lectura en particular.
+    /// </summary>
+    private static bool _schemaEnsured;
+
+    /// <summary>
     /// Predicado canónico de suscripciones administradas de Optimization/WAF/Inventory/Boletín/
     /// Revisión de accesos (ver <c>BoletinService.ManagedSubscriptionsAsync</c>,
     /// <c>AccessReviewSyncService.CredentialUnitsAsync</c>, <c>SqlAdvisorScoreStore</c>): el
@@ -72,9 +85,15 @@ public sealed class SqlInsumosBdRecolector(
         // Advisor y Matriz dependen del schema WAF; Retiros, del de Boletín. Ninguno de los tres
         // recolectores lo asegura por sí mismo (ver sus comentarios de clase): centralizarlo acá
         // en vez de repetirlo en cada uno evita 3 chequeos de DDL idempotente por request cuando
-        // 2 alcanzan (WAF sirve para Advisor y Matriz a la vez).
-        await WafSchema.EnsureWafSchemaAsync(conn, ct);
-        await BoletinService.EnsureSchemaAsync(conn, ct);
+        // 2 alcanzan (WAF sirve para Advisor y Matriz a la vez). Y correrlos una sola vez por
+        // proceso (ver _schemaEnsured) evita repetir esas ~19+ sentencias en cada request de un
+        // endpoint que no escribe nada.
+        if (!_schemaEnsured)
+        {
+            await WafSchema.EnsureWafSchemaAsync(conn, ct);
+            await BoletinService.EnsureSchemaAsync(conn, ct);
+            _schemaEnsured = true;
+        }
 
         var administradas = await SuscripcionesAdministradasAsync(conn, clientId, ct);
         var seguridadGestionadaExternamente = await SeguridadGestionadaExternamenteAsync(conn, clientId, ct);
