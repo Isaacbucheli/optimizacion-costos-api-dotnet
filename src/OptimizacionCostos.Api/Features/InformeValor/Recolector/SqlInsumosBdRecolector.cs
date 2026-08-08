@@ -22,11 +22,12 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
 ///
 /// <para>Dos insumos se resuelven UNA sola vez acá y se comparten con Advisor y Matriz, en vez de
 /// que cada recolector los vuelva a preguntar: la lista de suscripciones administradas
-/// (<see cref="SqlSuscripcionesAdministradas"/>) y la bandera de seguridad gestionada externamente
-/// (<see cref="SeguridadGestionadaExternamenteAsync"/>). Los dos son universo de datos, no
-/// parámetros de una pantalla: sin ellos el informe podía mostrar hallazgos de una suscripción que
-/// el cliente dejó de administrar, o del pilar de Seguridad cuando el cliente pidió no verlo (las
-/// tres salidas del producto que sí lo respetan: pantalla WAF, export a Excel e informe mensual).
+/// (<see cref="SqlSuscripcionesAdministradas"/>) y la bandera + nota de seguridad gestionada
+/// externamente (<see cref="SeguridadGestionadaExternamenteAsync"/>). Los dos son universo de
+/// datos, no parámetros de una pantalla: sin ellos el informe podía mostrar hallazgos de una
+/// suscripción que el cliente dejó de administrar, o del pilar de Seguridad cuando el cliente pidió
+/// no verlo sin decir por qué (las tres salidas del producto que sí lo respetan: pantalla WAF,
+/// export a Excel e informe mensual).
 /// </para>
 /// </summary>
 public sealed class SqlInsumosBdRecolector(
@@ -96,7 +97,8 @@ public sealed class SqlInsumosBdRecolector(
         }
 
         var administradas = await SuscripcionesAdministradasAsync(conn, clientId, ct);
-        var seguridadGestionadaExternamente = await SeguridadGestionadaExternamenteAsync(conn, clientId, ct);
+        var (seguridadGestionadaExternamente, seguridadGestionadaNota) =
+            await SeguridadGestionadaExternamenteAsync(conn, clientId, ct);
 
         var advisor = await AdvisorRecolector.LeerAsync(conn, clientId, administradas, seguridadGestionadaExternamente, ct);
         var matriz = await MatrizRecolector.LeerAsync(conn, clientId, administradas, seguridadGestionadaExternamente, ct);
@@ -107,7 +109,9 @@ public sealed class SqlInsumosBdRecolector(
         var estadoRbac = EstadoRbac.Resolver(snapshot, administradas.Count > 0);
         var rbac = snapshot is null ? [] : RbacRecolector.Mapear(snapshot);
 
-        return new InsumosBd(advisor, matriz, rbac, retiros, estadoRbac, DateTime.UtcNow);
+        return new InsumosBd(
+            advisor, matriz, rbac, retiros, estadoRbac,
+            seguridadGestionadaExternamente, seguridadGestionadaNota, DateTime.UtcNow);
     }
 
     private static async Task<IReadOnlyList<string>> SuscripcionesAdministradasAsync(
@@ -124,28 +128,53 @@ public sealed class SqlInsumosBdRecolector(
     }
 
     /// <summary>
-    /// Bandera por cliente (Crítico de la revisión de rama): cuando la seguridad se gestiona por
-    /// fuera (Gestión de Vulnerabilidades), la pantalla WAF (<c>WafController.ListRecommendations</c>),
+    /// Bandera y nota por cliente (Crítico de la revisión de rama; la nota se agregó en la
+    /// re-revisión, IMPORTANTE 2): cuando la seguridad se gestiona por fuera (Gestión de
+    /// Vulnerabilidades), la pantalla WAF (<c>WafController.ListRecommendations</c>/<c>Sections</c>),
     /// el export a Excel (<c>WafController.BuildExportRowsAsync</c>) y el informe de gestión mensual
     /// (<c>ReportBuilder.WafRecommendationsAsync</c>) ocultan el pilar de Seguridad entero. Este
-    /// informe no lo hacía: publicaba justo lo que el cliente pidió no ver.
+    /// informe ya ocultaba el pilar (bandera), pero no explicaba por qué: <see cref="InsumosBd"/>
+    /// devolvía el pilar en cero igual que un cliente sin ningún hallazgo de seguridad, y la
+    /// calculadora de la entrega siguiente no tenía cómo distinguir los dos casos. Ver
+    /// <see cref="ResolverNota"/> para el criterio de la nota.
     ///
     /// <para>Lectura calcada de <c>ReportBuilder.WafRecommendationsAsync</c> (no de
     /// <c>IClientStore.GetSecurityManagementAsync</c>, que abriría una cuarta conexión solo para
     /// esto y de paso correría su ALTER TABLE de esquema en un endpoint de solo lectura): el guard
     /// <c>COL_LENGTH</c> hace que una base sin la columna todavía (nunca se guardó la bandera para
-    /// ningún cliente) devuelva "no gestionada" en vez de reventar.</para>
+    /// ningún cliente) devuelva "no gestionada, sin nota" en vez de reventar.</para>
     /// </summary>
-    private static async Task<bool> SeguridadGestionadaExternamenteAsync(
+    private static async Task<(bool Managed, string? Nota)> SeguridadGestionadaExternamenteAsync(
         SqlConnection conn, int clientId, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            IF COL_LENGTH('dbo.clients', 'security_managed_externally') IS NOT NULL
-                SELECT security_managed_externally FROM dbo.clients WHERE client_id = @clientId;
-            """;
+        cmd.CommandText = SqlSeguridadGestionadaExternamente;
         cmd.Parameters.Add(new SqlParameter("@clientId", clientId));
-        var v = await cmd.ExecuteScalarAsync(ct);
-        return v is bool b && b;
+
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        if (!await rd.ReadAsync(ct)) return (false, null);
+
+        var managed = !rd.IsDBNull(0) && rd.GetBoolean(0);
+        var notaCruda = rd.IsDBNull(1) ? null : rd.GetString(1);
+        return (managed, ResolverNota(managed, notaCruda));
     }
+
+    /// <summary>SQL de <see cref="SeguridadGestionadaExternamenteAsync"/>, expuesto para que el test
+    /// de texto confirme que trae las dos columnas (antes de la re-revisión solo traía la bandera,
+    /// nunca la nota).</summary>
+    internal const string SqlSeguridadGestionadaExternamente = """
+        IF COL_LENGTH('dbo.clients', 'security_managed_externally') IS NOT NULL
+            SELECT security_managed_externally, security_managed_note FROM dbo.clients WHERE client_id = @clientId;
+        """;
+
+    /// <summary>
+    /// Nota que ve la calculadora del informe cuando el pilar de Seguridad sale vacío (IMPORTANTE 2
+    /// de la re-revisión). Calcada de la tarjeta de Seguridad de <c>WafController.Sections</c>
+    /// (<c>isSecMgmt ? resolvedNote : null</c>): <c>null</c> cuando el cliente NO gestiona su
+    /// seguridad aparte — ahí no hay nada que explicar, el pilar puede estar simplemente vacío
+    /// porque no hay hallazgos — y el texto por defecto (<see cref="WafConstants.SecurityManagedDefaultNote"/>)
+    /// cuando SÍ la gestiona aparte pero el cliente no escribió una nota propia en <c>dbo.clients</c>.
+    /// </summary>
+    internal static string? ResolverNota(bool managed, string? notaCruda) =>
+        !managed ? null : string.IsNullOrWhiteSpace(notaCruda) ? WafConstants.SecurityManagedDefaultNote : notaCruda;
 }

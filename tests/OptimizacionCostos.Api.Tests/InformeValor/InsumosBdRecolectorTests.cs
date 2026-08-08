@@ -230,6 +230,8 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
             EstadoRbac: new EstadoRbacResultado(
                 DisponibilidadRbac.NoDisponible, new EjesRbac(false, false), null,
                 "Sin datos de prueba."),
+            SeguridadGestionadaExternamente: false,
+            SeguridadGestionadaNota: null,
             LeidoEn: DateTime.UtcNow);
 
         public void ConDatosDePrueba()
@@ -274,6 +276,8 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
                 EstadoRbac: new EstadoRbacResultado(
                     DisponibilidadRbac.Completo, new EjesRbac(true, true), DateTime.UtcNow,
                     "Completo, con datos de prueba."),
+                SeguridadGestionadaExternamente: false,
+                SeguridadGestionadaNota: null,
                 LeidoEn: DateTime.UtcNow);
         }
 
