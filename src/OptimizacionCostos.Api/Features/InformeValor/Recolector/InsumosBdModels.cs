@@ -13,6 +13,11 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
 /// sync; puede ser null para canónicas que nacieron de Excel/legacy).
 /// <see cref="AhorroAnual"/> puede venir sin <see cref="MonedaAhorro"/> cuando Azure no publicó la
 /// moneda en <c>additional_info</c>: el consumidor decide cómo mostrarlo.
+/// <see cref="ResourceGroup"/> (entrega 2b, D11) más <see cref="SubscriptionName"/> y
+/// <see cref="ResourceName"/> forman la identidad completa de un recurso: dos recursos con el
+/// mismo nombre en grupos o suscripciones distintos no son el mismo recurso, y los nombres
+/// genéricos de Azure colisionan seguido. <c>NOT NULL</c> en <c>waf_resource_finding</c>, a
+/// diferencia de <see cref="ResourceName"/>, que sí puede venir null.
 /// </summary>
 public sealed record AdvisorFila(
     int PillarNumber,
@@ -26,6 +31,7 @@ public sealed record AdvisorFila(
     string? Source,
     string? SubscriptionId,
     string SubscriptionName,
+    string ResourceGroup,
     string? ResourceName,
     string ResourceType,
     decimal? AhorroAnual,

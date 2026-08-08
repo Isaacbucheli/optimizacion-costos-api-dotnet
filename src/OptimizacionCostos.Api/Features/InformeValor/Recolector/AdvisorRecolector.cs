@@ -55,6 +55,7 @@ public static class AdvisorRecolector
                 r.source,
                 f.subscription_id,
                 f.subscription_name,
+                f.resource_group,
                 f.resource_name,
                 f.resource_type,
                 TRY_CAST(COALESCE(
@@ -119,10 +120,11 @@ public static class AdvisorRecolector
             Source: r.IsDBNull(6) ? null : r.GetString(6),
             SubscriptionId: r.IsDBNull(7) ? null : r.GetString(7),
             SubscriptionName: string.IsNullOrWhiteSpace(subscriptionName) ? SinSuscripcion : subscriptionName,
-            ResourceName: r.IsDBNull(9) ? null : r.GetString(9),
-            ResourceType: r.GetString(10),
-            AhorroAnual: r.IsDBNull(11) ? null : r.GetDecimal(11),
-            MonedaAhorro: r.IsDBNull(12) ? null : r.GetString(12));
+            ResourceGroup: r.GetString(9),
+            ResourceName: r.IsDBNull(10) ? null : r.GetString(10),
+            ResourceType: r.GetString(11),
+            AhorroAnual: r.IsDBNull(12) ? null : r.GetDecimal(12),
+            MonedaAhorro: r.IsDBNull(13) ? null : r.GetString(13));
     }
 
     /// <summary>
