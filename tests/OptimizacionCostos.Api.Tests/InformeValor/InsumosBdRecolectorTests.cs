@@ -82,9 +82,13 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
         Assert.Equal(1, advisor.GetProperty("suscripciones").GetInt32());
         Assert.Equal(1, advisor.GetProperty("con_ahorro").GetInt32());
 
+        // 3 filas de matriz, 1 excluida (split 2-1 a proposito): si el predicado de produccion se
+        // invirtiera (Count(m => m.Excluida) -> Count(m => !m.Excluida)) esto daria excluidos=2 en
+        // vez de 1 y el assert lo detecta. Con un split 1-1 los dos conteos coinciden en 1 y la
+        // mutacion pasa sin que nada la note (probado a mano, descartado por eso).
         var matriz = body.GetProperty("matriz");
-        Assert.Equal(1, matriz.GetProperty("total").GetInt32());
-        Assert.Equal(0, matriz.GetProperty("excluidos").GetInt32());
+        Assert.Equal(3, matriz.GetProperty("total").GetInt32());
+        Assert.Equal(1, matriz.GetProperty("excluidos").GetInt32());
 
         Assert.Equal(0, body.GetProperty("rbac").GetProperty("asignaciones").GetInt32());
         Assert.Equal(0, body.GetProperty("retiros").GetProperty("total").GetInt32());
@@ -241,6 +245,12 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
                         ResourceName: "vm-secreta", ResourceType: "Microsoft.Compute/virtualMachines",
                         AhorroAnual: 100m, MonedaAhorro: "USD"),
                 ],
+                // Tres filas, dos sin excluir y una excluida (split A PROPOSITO desigual): si el
+                // conteo de "excluidos" invirtiera el predicado (Count(m => m.Excluida) ->
+                // Count(m => !m.Excluida)) daria 2 en vez de 1. Con un split 1-1 (probado y
+                // descartado) los dos conteos coinciden en 1 y la mutacion pasa sin que nada la
+                // note; con 2-1 el resultado cambia y el test SI la detecta (verificado a mano
+                // invirtiendo el predicado en el controller: con este seed el test falla).
                 Matriz:
                 [
                     new MatrizFila(
@@ -248,6 +258,16 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
                         Hallazgo: "vm-secreta necesita revisión", Fecha: null, ImpactNumber: 1,
                         Prioridad: "1", EsfuerzoTexto: "2-3 días", AvancePct: 0, Registro: null,
                         ResourceCount: 1, Excluida: false),
+                    new MatrizFila(
+                        CanonicalId: 2, MatrixCode: null, PillarNumber: 2, Ambito: "Excelencia operativa",
+                        Hallazgo: "Segundo hallazgo sin excluir", Fecha: null, ImpactNumber: 2,
+                        Prioridad: "2", EsfuerzoTexto: "medio día", AvancePct: 50, Registro: null,
+                        ResourceCount: 1, Excluida: false),
+                    new MatrizFila(
+                        CanonicalId: 3, MatrixCode: null, PillarNumber: 3, Ambito: "Seguridad",
+                        Hallazgo: "Hallazgo excluido por el consultor", Fecha: null, ImpactNumber: 3,
+                        Prioridad: "3", EsfuerzoTexto: "1 día", AvancePct: 100, Registro: null,
+                        ResourceCount: 1, Excluida: true),
                 ],
                 Rbac: [],
                 Retiros: [],
