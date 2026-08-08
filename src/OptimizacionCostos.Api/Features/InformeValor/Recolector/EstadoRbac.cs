@@ -47,8 +47,11 @@ public static class EstadoRbac
     /// <c>partial</c>), o null si todavía no hay ninguna.</param>
     /// <param name="tieneSuscripcionesAdministradas">Sin corrida propia que lo indique (un cliente
     /// sin suscripciones administradas cierra en <c>error</c> sin filas de estado por credencial):
-    /// lo resuelve el llamador con el mismo filtro que usa el sync
-    /// (<c>is_active = 1 AND COALESCE(is_managed,1) = 1</c>).</param>
+    /// lo resuelve el llamador con el mismo predicado que usa el sync, JOIN a
+    /// <c>client_azure_credentials</c> incluido (<c>s.is_active = 1 AND COALESCE(s.is_managed,1) = 1
+    /// AND c.is_active = 1</c>; ver <see cref="SqlInsumosBdRecolector.SqlSuscripcionesAdministradas"/>
+    /// — antes de la revisión de rama este comentario todavía describía la versión sin el JOIN, que
+    /// dejaba pasar credenciales desactivadas como si siguieran administradas).</param>
     public static EstadoRbacResultado Resolver(AccessReviewSnapshot? snapshot, bool tieneSuscripcionesAdministradas)
     {
         // Fijo en (false, false) en las tres ramas NoDisponible: ahí la fuente del insumo pasa a
