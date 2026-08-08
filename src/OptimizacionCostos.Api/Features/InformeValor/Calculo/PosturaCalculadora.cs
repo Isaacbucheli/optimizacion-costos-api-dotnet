@@ -9,7 +9,9 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// partir de <see cref="AdvisorFila"/> (Azure Advisor) y <see cref="RetiroFila"/> (retiros de
 /// Azure), corrigiendo D7, D8, D11 y D13. Puerto de <c>calcAdvisor</c> en
 /// <c>docs/Plantilla-Dashboard-BIT.html</c>, salvo donde una de esas cuatro decisiones cambia el
-/// resultado a propósito.
+/// resultado a propósito. También publica la bandera y la nota de seguridad gestionada
+/// externamente (agregado tras revisión del encargo, no una de las cuatro decisiones originales):
+/// ver el comentario de clase de <see cref="PosturaModelo"/>.
 ///
 /// <para>Solo lee <see cref="ContextoInformeValor.Corte"/> del contexto: D0 (filtro por período) no
 /// está entre las decisiones de esta tarea porque Advisor y los retiros de Azure son estado
@@ -47,14 +49,31 @@ public static class PosturaCalculadora
     /// cliente puede tener retiros pendientes con el backlog de Advisor en cero, y ese caso
     /// legítimamente tiene algo que mostrar aunque la mitad de Advisor salga en cero.
     /// </summary>
+    /// <param name="advisor">Hallazgos activos de Advisor (Recolector, entrega 2a).</param>
+    /// <param name="retiros">Retiros de Azure vigentes, ya agrupados por anuncio.</param>
+    /// <param name="seguridadGestionadaExternamente">
+    /// <c>InsumosBd.SeguridadGestionadaExternamente</c>: true cuando el cliente gestiona seguridad
+    /// aparte (Gestión de Vulnerabilidades) y <c>AdvisorRecolector.Sql()</c>/<c>MatrizRecolector.Sql()</c>
+    /// ya excluyeron el pilar 3 de <paramref name="advisor"/>. Se publica tal cual en
+    /// <see cref="PosturaModelo.SeguridadGestionadaExternamente"/>: sin esta señal, un pilar de
+    /// Seguridad ausente por política se ve igual que uno ausente por falta de hallazgos.
+    /// </param>
+    /// <param name="seguridadGestionadaNota">
+    /// <c>InsumosBd.SeguridadGestionadaNota</c>: ya llega resuelta al texto por defecto cuando
+    /// <paramref name="seguridadGestionadaExternamente"/> es true y el cliente no escribió una nota
+    /// propia, y <c>null</c> cuando es false (nada que explicar). Se publica tal cual, sin volver a
+    /// resolverla: esa resolución es responsabilidad del recolector, no de esta calculadora.
+    /// </param>
     public static PosturaModelo? Calcular(
-        IReadOnlyList<AdvisorFila> advisor, IReadOnlyList<RetiroFila> retiros, ContextoInformeValor contexto)
+        IReadOnlyList<AdvisorFila> advisor, IReadOnlyList<RetiroFila> retiros,
+        bool seguridadGestionadaExternamente, string? seguridadGestionadaNota, ContextoInformeValor contexto)
     {
         if (advisor.Count == 0 && retiros.Count == 0) return null;
 
         var (bruto, real, lineas, porSub) = CalcularAhorro(advisor);
         var (top, topSuma) = CalcularTop(advisor);
         var (retirosCalculados, vencidos, proximos) = CalcularRetiros(retiros, contexto.Corte);
+        var (numRecursos, recomendacionesConRecurso) = CalcularRecursos(advisor);
 
         return new PosturaModelo(
             Total: advisor.Count,
@@ -65,7 +84,8 @@ public static class PosturaCalculadora
             Top: top,
             TopSuma: topSuma,
             Detalle: CalcularDetalle(advisor),
-            NumRecursos: CalcularNumRecursos(advisor),
+            NumRecursos: numRecursos,
+            RecomendacionesConRecurso: recomendacionesConRecurso,
             Alto: advisor.Count(a => a.ImpactNumber == 1),
             Medio: advisor.Count(a => a.ImpactNumber == 2),
             Bajo: advisor.Count(a => a.ImpactNumber == 3),
@@ -77,7 +97,9 @@ public static class PosturaCalculadora
             CompromisoPorSuscripcion: porSub,
             Retiros: retirosCalculados,
             RetirosVencidos: vencidos,
-            RetirosProximosATresMeses: proximos);
+            RetirosProximosATresMeses: proximos,
+            SeguridadGestionadaExternamente: seguridadGestionadaExternamente,
+            SeguridadGestionadaNota: seguridadGestionadaNota);
     }
 
     /// <summary>
@@ -239,30 +261,30 @@ public static class PosturaCalculadora
     }
 
     /// <summary>
-    /// D11: identidad de un recurso = suscripción + grupo de recursos + nombre (la misma terna que
-    /// facturación), en vez del nombre global de <see cref="AdvisorFila.ResourceName"/> a solas.
-    /// Dos recursos "vm1" en suscripciones o grupos distintos ya no colisionan. Restringido a filas
-    /// con nombre de recurso no vacío (ni la plantilla ni esta calculadora pueden atribuir una fila
-    /// sin recurso a NINGÚN recurso concreto): mismo filtro que ya existía, ahora sobre la terna
-    /// completa en vez de sobre el nombre a solas.
+    /// D11 completo: identidad de un recurso = suscripción + grupo de recursos + nombre (la misma
+    /// terna que facturación), en vez del nombre global de <see cref="AdvisorFila.ResourceName"/> a
+    /// solas. Dos recursos "vm1" en suscripciones o grupos distintos ya no colisionan.
     ///
-    /// <para>Limitación que queda documentada en el informe de la Tarea 6, no resuelta acá: D11
-    /// también pide que el NUMERADOR de "cada recurso acumula X recomendaciones en promedio" (fuera
-    /// de este contrato: esa frase se compone en la capa de dibujo a partir de <c>Total</c> y este
-    /// número) se restrinja a filas con recurso. <see cref="PosturaModelo.Total"/> no puede
-    /// restringirse sin romper su coherencia con <see cref="PosturaModelo.Alto"/>+
-    /// <see cref="PosturaModelo.Medio"/>+<see cref="PosturaModelo.Bajo"/>, que sí cuentan todas las
-    /// filas.</para>
+    /// <para>Calcula denominador y numerador en la misma pasada porque son la misma restricción
+    /// aplicada dos veces: <c>numRecursos</c> (<see cref="PosturaModelo.NumRecursos"/>) cuenta
+    /// tríos distintos entre filas con recurso; <c>conRecurso</c>
+    /// (<see cref="PosturaModelo.RecomendacionesConRecurso"/>) cuenta esas mismas filas, sin
+    /// deduplicar. Ninguno de los dos puede atribuir una fila sin recurso a NINGÚN recurso
+    /// concreto, así que ambos excluyen esas filas —a diferencia de <see cref="PosturaModelo.Total"/>,
+    /// que sí las cuenta (ver el comentario de clase de <see cref="PosturaModelo"/> sobre por qué
+    /// <c>Total</c> no puede restringirse).</para>
     /// </summary>
-    private static int CalcularNumRecursos(IReadOnlyList<AdvisorFila> advisor)
+    private static (int numRecursos, int conRecurso) CalcularRecursos(IReadOnlyList<AdvisorFila> advisor)
     {
         var recursos = new HashSet<(string Suscripcion, string Grupo, string Nombre)>();
+        var conRecurso = 0;
         foreach (var fila in advisor)
         {
             if (string.IsNullOrWhiteSpace(fila.ResourceName)) continue;
+            conRecurso++;
             recursos.Add((fila.SubscriptionName, fila.ResourceGroup, fila.ResourceName));
         }
-        return recursos.Count;
+        return (recursos.Count, conRecurso);
     }
 
     /// <summary>

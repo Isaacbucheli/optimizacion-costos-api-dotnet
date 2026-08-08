@@ -28,20 +28,37 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// produce <see cref="AhorroRealizable"/> (el máximo entre reserva y savings plan de esa
 /// suscripción), nunca de una comparación ad-hoc en la capa de dibujo.</para>
 ///
-/// <para><b>D11: el gap de datos, cerrado en la Tarea 6.</b> La identidad de un recurso es la
-/// terna suscripción + grupo de recursos + nombre, igual que en facturación (dos recursos
-/// homónimos en suscripciones o grupos distintos no son el mismo recurso). <see cref="AdvisorFila"/>
-/// ya trae <see cref="AdvisorFila.ResourceGroup"/> (agregado en la Tarea 6 junto con la columna en
-/// <c>AdvisorRecolector.Sql()</c>: la tabla <c>waf_resource_finding</c> siempre tuvo
-/// <c>resource_group</c>, usada por <c>MatrizRecolector</c>/otras consultas del módulo WAF, pero
-/// <c>AdvisorRecolector</c> no la seleccionaba). <see cref="NumRecursos"/> identifica por la terna
-/// completa (restringida a filas con <see cref="AdvisorFila.ResourceName"/> no vacío): dos
-/// recursos con el mismo nombre en grupos o suscripciones distintos ya no colisionan. Queda una
-/// limitación aparte, sin campo en este contrato para cerrarla del todo: el numerador de "recursos
-/// que acumulan X recomendaciones en promedio" también debería restringirse a filas con recurso,
-/// pero ese numerador es <see cref="Total"/>, que tiene que seguir contando TODAS las filas para no
-/// perder su coherencia con <see cref="Alto"/>+<see cref="Medio"/>+<see cref="Bajo"/> (ver el
-/// informe de la Tarea 6, sección de dudas).</para>
+/// <para><b>D11: la identidad de un recurso, cerrada en la Tarea 6.</b> La identidad de un
+/// recurso es la terna suscripción + grupo de recursos + nombre, igual que en facturación (dos
+/// recursos homónimos en suscripciones o grupos distintos no son el mismo recurso).
+/// <see cref="AdvisorFila"/> ya trae <see cref="AdvisorFila.ResourceGroup"/> (agregado en la Tarea
+/// 6 junto con la columna en <c>AdvisorRecolector.Sql()</c>: la tabla <c>waf_resource_finding</c>
+/// siempre tuvo <c>resource_group</c>, usada por <c>MatrizRecolector</c>/otras consultas del
+/// módulo WAF, pero <c>AdvisorRecolector</c> no la seleccionaba). <see cref="NumRecursos"/>
+/// identifica por la terna completa, restringida a filas con <see cref="AdvisorFila.ResourceName"/>
+/// no vacío: dos recursos con el mismo nombre en grupos o suscripciones distintos ya no
+/// colisionan.
+///
+/// <see cref="RecomendacionesConRecurso"/> es el numerador correcto de "cada recurso acumula X
+/// recomendaciones en promedio" (<see cref="RecomendacionesConRecurso"/> ÷ <see cref="NumRecursos"/>):
+/// D11 pide explícitamente que ese numerador se restrinja a filas con recurso, y
+/// <see cref="Total"/> no puede cumplir ese rol porque tiene que seguir contando TODAS las filas
+/// (headline "recomendaciones activas" y coherencia con <see cref="Alto"/>+<see cref="Medio"/>+
+/// <see cref="Bajo"/>, que tampoco se restringen). Documentarlo sin un campo no alcanza: el código
+/// que compone el promedio aguas abajo no lee comentarios.</para>
+///
+/// <para><b>Seguridad gestionada externamente (agregado tras revisión del encargo, no estaba en
+/// la Tarea 2).</b> Cuando el pilar de Seguridad (3) sale vacío, puede ser porque el cliente no
+/// tiene hallazgos de seguridad, o porque los gestiona aparte (Gestión de Vulnerabilidades) y
+/// <c>AdvisorRecolector.Sql()</c> ya los excluyó. Sin más señal, <see cref="Pilares"/> se ve
+/// EXACTAMENTE igual en los dos casos: nunca tiene una entrada de Seguridad, sea porque no hay
+/// hallazgos o porque se ocultaron a propósito. <see cref="SeguridadGestionadaExternamente"/> y
+/// <see cref="SeguridadGestionadaNota"/> son la señal que falta, pasadas tal cual desde
+/// <c>InsumosBd</c> (<c>SeguridadGestionadaNota</c> ya llega resuelta al texto por defecto cuando
+/// el cliente gestiona aparte pero no escribió una nota propia, y <c>null</c> cuando no gestiona
+/// aparte). Mismo patrón que ya usa <c>WafController.Sections</c> para la tarjeta del pilar
+/// (<c>managed_externally</c>/<c>managed_note</c>): conservar la tarjeta con una nota en vez de
+/// hacerla desaparecer.</para>
 ///
 /// <para><b>Filas posicionales</b> (arreglos JSON: sobreviven intactas a cualquier política de
 /// nombres). <see cref="Suscripciones"/>/<see cref="TiposRecurso"/> = [nombre, cantidad].
@@ -60,6 +77,7 @@ public sealed record PosturaModelo(
     [property: JsonPropertyName("topSum")] int TopSuma,
     [property: JsonPropertyName("det")] IReadOnlyList<IReadOnlyList<object?>> Detalle,
     [property: JsonPropertyName("nRes")] int NumRecursos,
+    [property: JsonPropertyName("recomendacionesConRecurso")] int RecomendacionesConRecurso,
     [property: JsonPropertyName("high")] int Alto,
     [property: JsonPropertyName("medium")] int Medio,
     [property: JsonPropertyName("low")] int Bajo,
@@ -71,7 +89,9 @@ public sealed record PosturaModelo(
     [property: JsonPropertyName("porSub")] IReadOnlyDictionary<string, PosturaCompromisoSuscripcion> CompromisoPorSuscripcion,
     [property: JsonPropertyName("rets")] IReadOnlyList<PosturaRetiro> Retiros,
     [property: JsonPropertyName("vencidos")] int RetirosVencidos,
-    [property: JsonPropertyName("proximos")] int RetirosProximosATresMeses);
+    [property: JsonPropertyName("proximos")] int RetirosProximosATresMeses,
+    [property: JsonPropertyName("seguridadGestionadaExternamente")] bool SeguridadGestionadaExternamente,
+    [property: JsonPropertyName("seguridadGestionadaNota")] string? SeguridadGestionadaNota);
 
 /// <summary>Un pilar Well-Architected con su desglose de impacto (<c>cats</c> de <c>calcAdvisor</c>).</summary>
 public sealed record PosturaPilar(

@@ -7,9 +7,10 @@ namespace OptimizacionCostos.Api.Tests.InformeValor.Calculo;
 /// Tarea 6 del plan de la entrega 2b sobre <see cref="PosturaCalculadora"/>: D7 (la tabla de
 /// criterio técnico suma su propio total), D8 (categoría e impacto salen de los campos numéricos),
 /// D11 (la identidad de un recurso es suscripción + grupo + nombre) y D13 (fechas, claves de
-/// diccionario). Casos armados a mano (spec §12.2, verificación híbrida): las cuatro decisiones
-/// existen justamente para que la calculadora NO reproduzca lo que hace la plantilla en estos
-/// casos, así que la plantilla no sirve de referencia para ellos.
+/// diccionario), más la seguridad gestionada externamente agregada tras la revisión del encargo
+/// (no una de las cuatro decisiones originales). Casos armados a mano (spec §12.2, verificación
+/// híbrida): las decisiones existen justamente para que la calculadora NO reproduzca lo que hace
+/// la plantilla en estos casos, así que la plantilla no sirve de referencia para ellos.
 /// </summary>
 public sealed class PosturaCalculadoraTests
 {
@@ -36,6 +37,17 @@ public sealed class PosturaCalculadoraTests
     private static ContextoInformeValor Contexto(DateOnly corte) =>
         new(PeriodStart: corte, PeriodEnd: corte, Corte: corte, MesesParcialesForzados: null);
 
+    /// <summary>
+    /// Envoltorio de <see cref="PosturaCalculadora.Calcular"/> con los dos parámetros de seguridad
+    /// gestionada externamente por defecto (false/null, el caso "no gestiona aparte"): la mayoría
+    /// de los casos de este archivo no le importan a esa señal, así que la fijan solo los tests de
+    /// la sección dedicada.
+    /// </summary>
+    private static PosturaModelo? Calcular(
+        IReadOnlyList<AdvisorFila> advisor, IReadOnlyList<RetiroFila> retiros, ContextoInformeValor contexto,
+        bool seguridadGestionadaExternamente = false, string? seguridadGestionadaNota = null) =>
+        PosturaCalculadora.Calcular(advisor, retiros, seguridadGestionadaExternamente, seguridadGestionadaNota, contexto);
+
     // ================= D7: la tabla de criterio técnico suma su propio total =================
 
     [Fact]
@@ -48,7 +60,7 @@ public sealed class PosturaCalculadoraTests
             Fila(recomendacion: "Optimizar el tamaño de la VM", recurso: "vm-1", ahorro: 500m),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(1000m, modelo.AhorroBruto);      // suma las DOS filas, sin deduplicar
         Assert.Equal(500m, modelo.AhorroRealizable);   // la unica linea visible es 500
@@ -70,7 +82,7 @@ public sealed class PosturaCalculadoraTests
             Fila(recomendacion: "Comprar una reserva de 3 años para almacenamiento", recurso: "vm-3", ahorro: 250m),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.All(modelo.LineasAhorro, l => Assert.True(l.Contada));
         Assert.Equal(500m, modelo.AhorroRealizable);
@@ -86,7 +98,7 @@ public sealed class PosturaCalculadoraTests
             Fila(recomendacion: "Suscribir un Savings Plan de cómputo", recurso: "vm-2", ahorro: 700m),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         var reserva = modelo.LineasAhorro.Single(l => l.Tipo == "RI");
         var savingsPlan = modelo.LineasAhorro.Single(l => l.Tipo == "SP");
@@ -108,7 +120,7 @@ public sealed class PosturaCalculadoraTests
             Fila(recomendacion: "Suscribir un Savings Plan de cómputo", recurso: "vm-2", ahorro: 300m),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.True(modelo.LineasAhorro.Single(l => l.Tipo == "RI").Contada);
         Assert.False(modelo.LineasAhorro.Single(l => l.Tipo == "SP").Contada);
@@ -124,7 +136,7 @@ public sealed class PosturaCalculadoraTests
             Fila(recomendacion: "Suscribir un Savings Plan", suscripcion: "Sub B", recurso: "vm-2", ahorro: 500m),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.All(modelo.LineasAhorro, l => Assert.True(l.Contada));
         Assert.Equal(700m, modelo.AhorroRealizable);
@@ -138,7 +150,7 @@ public sealed class PosturaCalculadoraTests
     public void El_tipo_de_linea_reconoce_reserva_en_espanol_e_ingles_y_savings_plan(
         string recomendacion, string tipoEsperado)
     {
-        var modelo = PosturaCalculadora.Calcular(
+        var modelo = Calcular(
             [Fila(recomendacion: recomendacion, ahorro: 100m)], [], Contexto(Corte))!;
 
         Assert.Equal(tipoEsperado, modelo.LineasAhorro.Single().Tipo);
@@ -155,7 +167,7 @@ public sealed class PosturaCalculadoraTests
             Fila(recurso: "vm-4", ahorro: 100m),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(1, modelo.ConAhorroCuantificado);
         Assert.Equal(100m, modelo.AhorroBruto);
@@ -171,7 +183,7 @@ public sealed class PosturaCalculadoraTests
             Fila(recomendacion: "Rec", recurso: "vm-1", ahorro: 500m),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(2, modelo.ConAhorroCuantificado); // dos filas
         Assert.Single(modelo.LineasAhorro);             // una linea deduplicada
@@ -187,7 +199,7 @@ public sealed class PosturaCalculadoraTests
             Fila(recomendacion: "C", recurso: "vm-3", ahorro: 400m),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal([900m, 400m, 100m], modelo.LineasAhorro.Select(l => l.Monto));
     }
@@ -203,7 +215,7 @@ public sealed class PosturaCalculadoraTests
                 recurso: "vm-2", ahorro: 200m),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.False(modelo.CompromisoPorSuscripcion.ContainsKey("Sub Sin Compromiso"));
         Assert.Equal(200m, modelo.CompromisoPorSuscripcion["Sub Con Reserva"].Reserva);
@@ -220,7 +232,7 @@ public sealed class PosturaCalculadoraTests
         // (por ImpactNumber=3, que es la fuente de verdad).
         var fila = Fila(impacto: 3, textoImpacto: "High");
 
-        var modelo = PosturaCalculadora.Calcular([fila], [], Contexto(Corte))!;
+        var modelo = Calcular([fila], [], Contexto(Corte))!;
 
         Assert.Equal(0, modelo.Alto);
         Assert.Equal(0, modelo.Medio);
@@ -241,7 +253,7 @@ public sealed class PosturaCalculadoraTests
             Fila(impacto: 3, textoImpacto: "Bajo", recurso: "r3"),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(1, modelo.Alto);
         Assert.Equal(1, modelo.Medio);
@@ -260,7 +272,7 @@ public sealed class PosturaCalculadoraTests
             Fila(pilar: 4, nombrePilar: "Confiabilidad", impacto: 3, recurso: "r4"),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         var seguridad = modelo.Pilares.Single(p => p.Nombre == "Seguridad");
         Assert.Equal(3, seguridad.Cantidad);
@@ -278,7 +290,7 @@ public sealed class PosturaCalculadoraTests
     {
         var fila = Fila(impacto: null, textoImpacto: "");
 
-        var modelo = PosturaCalculadora.Calcular([fila], [], Contexto(Corte))!;
+        var modelo = Calcular([fila], [], Contexto(Corte))!;
 
         Assert.Equal(1, modelo.Total);
         Assert.Equal(1, modelo.Pilares.Single().Cantidad);
@@ -296,7 +308,7 @@ public sealed class PosturaCalculadoraTests
             Fila(pilar: 2, nombrePilar: "Excelencia operacional", recurso: "r4"),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal("Excelencia operacional", modelo.Pilares[0].Nombre);
         Assert.Equal("Rendimiento", modelo.Pilares[1].Nombre);
@@ -316,7 +328,7 @@ public sealed class PosturaCalculadoraTests
             Fila(suscripcion: "Sub 2", grupo: "rg-shared", recurso: "vm1"),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(5, modelo.Total);
         Assert.Equal(2, modelo.NumRecursos); // no 1: son dos recursos "vm1" distintos
@@ -331,7 +343,7 @@ public sealed class PosturaCalculadoraTests
             Fila(suscripcion: "Sub 1", grupo: "rg-b", recurso: "vm1"),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(2, modelo.NumRecursos);
     }
@@ -346,31 +358,60 @@ public sealed class PosturaCalculadoraTests
             Fila(recurso: "vm1"),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(3, modelo.Total);       // las tres cuentan como recomendacion activa
         Assert.Equal(1, modelo.NumRecursos); // pero solo una tiene recurso
     }
 
     /// <summary>
-    /// Limitacion documentada en el informe de la Tarea 6: D11 tambien pide que el NUMERADOR de
-    /// "recursos que acumulan X recomendaciones en promedio" se restrinja a filas con recurso, pero
-    /// ese numerador es Total, que tiene que seguir contando TODAS las filas (headline "N
-    /// recomendaciones activas" y coherencia con Alto+Medio+Bajo, que tambien cuentan todas las
-    /// filas). Este test fija ese comportamiento a proposito, no lo esconde.
+    /// D11 completo (ya no una limitación documentada: RecomendacionesConRecurso es un campo del
+    /// contrato desde la revisión del encargo). Total sigue contando TODAS las filas —headline "N
+    /// recomendaciones activas" y coherencia con Alto+Medio+Bajo, que tampoco se restringen—, pero
+    /// RecomendacionesConRecurso es el numerador correcto para "cada recurso acumula X
+    /// recomendaciones en promedio": D11 pide explícitamente restringirlo a filas con recurso.
     /// </summary>
     [Fact]
-    public void Total_cuenta_todas_las_filas_incluidas_las_sin_recurso()
+    public void Total_cuenta_todas_las_filas_pero_RecomendacionesConRecurso_se_restringe_a_las_que_tienen_recurso()
     {
         var filas = new[] { Fila(recurso: null, impacto: 1), Fila(recurso: "vm1", impacto: 2) };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(2, modelo.Total);
         Assert.Equal(1, modelo.NumRecursos);
+        Assert.Equal(1, modelo.RecomendacionesConRecurso); // no 2: la fila sin recurso queda afuera
         // las DOS filas cuentan en el desglose de impacto (una Alto, una Medio): la fila sin
-        // recurso participa en Alto/Medio/Bajo igual que las demas, solo queda afuera de NumRecursos.
+        // recurso participa en Alto/Medio/Bajo igual que las demas, solo queda afuera del numerador.
         Assert.Equal(2, modelo.Alto + modelo.Medio);
+    }
+
+    /// <summary>
+    /// El ejemplo completo de D11: 6 filas, 5 con recurso repartidas en 2 recursos distintos (por
+    /// la terna, D11) y 1 sin recurso (alcance de suscripción, no de un recurso concreto).
+    /// Total/NumRecursos daría 6/2=3.0 (sobreestimado, cuenta la fila sin recurso en el
+    /// numerador). RecomendacionesConRecurso/NumRecursos da 5/2=2.5, el promedio real.
+    /// </summary>
+    [Fact]
+    public void RecomendacionesConRecurso_dividido_NumRecursos_da_el_promedio_correcto()
+    {
+        var filas = new[]
+        {
+            Fila(suscripcion: "Sub 1", grupo: "rg-app", recurso: "vm1"),
+            Fila(suscripcion: "Sub 1", grupo: "rg-app", recurso: "vm1"),
+            Fila(suscripcion: "Sub 2", grupo: "rg-shared", recurso: "vm1"),
+            Fila(suscripcion: "Sub 2", grupo: "rg-shared", recurso: "vm1"),
+            Fila(suscripcion: "Sub 2", grupo: "rg-shared", recurso: "vm1"),
+            Fila(recurso: null),
+        };
+
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
+
+        Assert.Equal(6, modelo.Total);
+        Assert.Equal(2, modelo.NumRecursos);
+        Assert.Equal(5, modelo.RecomendacionesConRecurso);
+        Assert.Equal(2.5, (double)modelo.RecomendacionesConRecurso / modelo.NumRecursos);
+        Assert.Equal(3.0, (double)modelo.Total / modelo.NumRecursos); // el numerador incorrecto, para contraste
     }
 
     // ============ D13: fechas resueltas contra el corte, nunca contra el reloj ============
@@ -385,7 +426,7 @@ public sealed class PosturaCalculadoraTests
         var corteLejano = new DateOnly(2031, 1, 1);
         var fechaDeRetiro = new DateOnly(2030, 12, 1);
 
-        var modelo = PosturaCalculadora.Calcular([], [Retiro(fecha: fechaDeRetiro)], Contexto(corteLejano))!;
+        var modelo = Calcular([], [Retiro(fecha: fechaDeRetiro)], Contexto(corteLejano))!;
 
         Assert.True(modelo.Retiros.Single().Vencido);
     }
@@ -393,7 +434,7 @@ public sealed class PosturaCalculadoraTests
     [Fact]
     public void Un_retiro_sin_fecha_declarada_no_esta_vencido_ni_proximo()
     {
-        var modelo = PosturaCalculadora.Calcular([], [Retiro(fecha: null)], Contexto(Corte))!;
+        var modelo = Calcular([], [Retiro(fecha: null)], Contexto(Corte))!;
 
         var retiro = modelo.Retiros.Single();
         Assert.Null(retiro.FechaRetiro);
@@ -405,7 +446,7 @@ public sealed class PosturaCalculadoraTests
     [Fact]
     public void Retiro_vencido_cuando_la_fecha_es_anterior_al_corte()
     {
-        var modelo = PosturaCalculadora.Calcular([], [Retiro(fecha: Corte.AddDays(-1))], Contexto(Corte))!;
+        var modelo = Calcular([], [Retiro(fecha: Corte.AddDays(-1))], Contexto(Corte))!;
 
         var retiro = modelo.Retiros.Single();
         Assert.True(retiro.Vencido);
@@ -423,7 +464,7 @@ public sealed class PosturaCalculadoraTests
     [Fact]
     public void Retiro_en_la_fecha_de_corte_no_esta_vencido_todavia()
     {
-        var modelo = PosturaCalculadora.Calcular([], [Retiro(fecha: Corte)], Contexto(Corte))!;
+        var modelo = Calcular([], [Retiro(fecha: Corte)], Contexto(Corte))!;
 
         var retiro = modelo.Retiros.Single();
         Assert.False(retiro.Vencido);
@@ -433,7 +474,7 @@ public sealed class PosturaCalculadoraTests
     [Fact]
     public void Retiro_a_91_dias_cuenta_como_proximo_a_tres_meses()
     {
-        var modelo = PosturaCalculadora.Calcular([], [Retiro(fecha: Corte.AddDays(91))], Contexto(Corte))!;
+        var modelo = Calcular([], [Retiro(fecha: Corte.AddDays(91))], Contexto(Corte))!;
 
         Assert.True(modelo.Retiros.Single().ProximoATresMeses);
     }
@@ -441,7 +482,7 @@ public sealed class PosturaCalculadoraTests
     [Fact]
     public void Retiro_a_92_dias_exactos_ya_no_cuenta_como_proximo_a_tres_meses()
     {
-        var modelo = PosturaCalculadora.Calcular([], [Retiro(fecha: Corte.AddDays(92))], Contexto(Corte))!;
+        var modelo = Calcular([], [Retiro(fecha: Corte.AddDays(92))], Contexto(Corte))!;
 
         var retiro = modelo.Retiros.Single();
         Assert.False(retiro.ProximoATresMeses);
@@ -451,7 +492,7 @@ public sealed class PosturaCalculadoraTests
     [Fact]
     public void Retiro_a_366_dias_exactos_ya_es_plazo_largo()
     {
-        var modelo = PosturaCalculadora.Calcular([], [Retiro(fecha: Corte.AddDays(366))], Contexto(Corte))!;
+        var modelo = Calcular([], [Retiro(fecha: Corte.AddDays(366))], Contexto(Corte))!;
 
         Assert.Equal("Plazo largo. Se planifica con el ciclo de renovación.", modelo.Retiros.Single().Situacion);
     }
@@ -466,7 +507,7 @@ public sealed class PosturaCalculadoraTests
             Retiro(clave: "b", fecha: Corte.AddDays(10)),
         };
 
-        var modelo = PosturaCalculadora.Calcular([], retiros, Contexto(Corte))!;
+        var modelo = Calcular([], retiros, Contexto(Corte))!;
 
         Assert.Equal(
             [null, Corte.AddDays(10).ToString("yyyy-MM-dd"), Corte.AddDays(30).ToString("yyyy-MM-dd")],
@@ -484,7 +525,7 @@ public sealed class PosturaCalculadoraTests
             Retiro(clave: "sin-fecha", fecha: null),
         };
 
-        var modelo = PosturaCalculadora.Calcular([], retiros, Contexto(Corte))!;
+        var modelo = Calcular([], retiros, Contexto(Corte))!;
 
         Assert.Equal(1, modelo.RetirosVencidos);
         Assert.Equal(1, modelo.RetirosProximosATresMeses);
@@ -499,7 +540,7 @@ public sealed class PosturaCalculadoraTests
                 recurso: "vm-1", ahorro: 100m),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.True(modelo.CompromisoPorSuscripcion.ContainsKey("Suscripción Producción"));
     }
@@ -516,10 +557,38 @@ public sealed class PosturaCalculadoraTests
             Corte: Corte, MesesParcialesForzados: null);
         var fechaFueraDelPeriodo = Corte.AddDays(10); // muy fuera de enero 2020
 
-        var modelo = PosturaCalculadora.Calcular([Fila()], [Retiro(fecha: fechaFueraDelPeriodo)], contexto)!;
+        var modelo = Calcular([Fila()], [Retiro(fecha: fechaFueraDelPeriodo)], contexto)!;
 
         Assert.Equal(1, modelo.Total);
         Assert.Single(modelo.Retiros);
+    }
+
+    // ============ Seguridad gestionada externamente (agregado tras revisión del encargo) ============
+
+    /// <summary>
+    /// La ambigüedad que describe el encargo: un pilar de Seguridad en cero porque el cliente no
+    /// tiene hallazgos de seguridad, y un pilar en cero porque pidió no verlos (Gestión de
+    /// Vulnerabilidades) y AdvisorRecolector.Sql() ya los excluyó, se dibujan EXACTAMENTE igual si
+    /// solo se mira Pilares: en los dos casos no hay ninguna entrada de Seguridad ahí. Estos dos
+    /// campos, pasados tal cual desde InsumosBd, son la única señal que distingue los dos casos.
+    /// </summary>
+    [Fact]
+    public void La_bandera_es_la_unica_senal_que_distingue_seguridad_en_cero_de_seguridad_oculta()
+    {
+        var filas = new[] { Fila(pilar: 4, nombrePilar: "Confiabilidad", recurso: "r1") }; // nunca hay pilar 3, en ninguno de los dos casos
+
+        var sinHallazgosDeSeguridad = Calcular(filas, [], Contexto(Corte))!;
+        var seguridadGestionadaAparte = Calcular(filas, [], Contexto(Corte),
+            seguridadGestionadaExternamente: true, seguridadGestionadaNota: "Gestionado por Gestión de Vulnerabilidades")!;
+
+        Assert.DoesNotContain(sinHallazgosDeSeguridad.Pilares, p => p.Nombre == "Seguridad");
+        Assert.DoesNotContain(seguridadGestionadaAparte.Pilares, p => p.Nombre == "Seguridad");
+
+        Assert.False(sinHallazgosDeSeguridad.SeguridadGestionadaExternamente);
+        Assert.Null(sinHallazgosDeSeguridad.SeguridadGestionadaNota);
+
+        Assert.True(seguridadGestionadaAparte.SeguridadGestionadaExternamente);
+        Assert.Equal("Gestionado por Gestión de Vulnerabilidades", seguridadGestionadaAparte.SeguridadGestionadaNota);
     }
 
     // ============ Forma general: paridad con la plantilla donde no hay decision de por medio ============
@@ -527,7 +596,7 @@ public sealed class PosturaCalculadoraTests
     [Fact]
     public void Calcular_devuelve_null_cuando_no_hay_advisor_ni_retiros()
     {
-        Assert.Null(PosturaCalculadora.Calcular([], [], Contexto(Corte)));
+        Assert.Null(Calcular([], [], Contexto(Corte)));
     }
 
     /// <summary>
@@ -539,7 +608,7 @@ public sealed class PosturaCalculadoraTests
     [Fact]
     public void Calcular_devuelve_el_bloque_de_retiros_aunque_no_haya_hallazgos_de_advisor()
     {
-        var modelo = PosturaCalculadora.Calcular([], [Retiro()], Contexto(Corte))!;
+        var modelo = Calcular([], [Retiro()], Contexto(Corte))!;
 
         Assert.Equal(0, modelo.Total);
         Assert.Equal(0, modelo.NumRecursos);
@@ -549,7 +618,7 @@ public sealed class PosturaCalculadoraTests
     [Fact]
     public void Calcular_devuelve_el_bloque_de_advisor_aunque_no_haya_retiros()
     {
-        var modelo = PosturaCalculadora.Calcular([Fila()], [], Contexto(Corte))!;
+        var modelo = Calcular([Fila()], [], Contexto(Corte))!;
 
         Assert.Equal(1, modelo.Total);
         Assert.Empty(modelo.Retiros);
@@ -565,7 +634,7 @@ public sealed class PosturaCalculadoraTests
             Fila(suscripcion: "Sub B", recurso: "r3"),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(new object?[] { "Sub B", 2 }, modelo.Suscripciones[0]);
         Assert.Equal(new object?[] { "Sub A", 1 }, modelo.Suscripciones[1]);
@@ -578,7 +647,7 @@ public sealed class PosturaCalculadoraTests
             .Select(i => Fila(recurso: $"r{i}", tipoRecurso: $"Microsoft.Tipo{i}"))
             .ToArray();
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(15, modelo.TiposRecurso.Count); // 14 + "Otros tipos"
         Assert.Equal("Otros tipos", modelo.TiposRecurso[^1][0]);
@@ -595,7 +664,7 @@ public sealed class PosturaCalculadoraTests
             for (var j = 0; j < i; j++)
                 filas.Add(Fila(recomendacion: $"Recomendación {i}", recurso: $"r{i}-{j}"));
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(15, modelo.Top.Count);
         Assert.DoesNotContain(modelo.Top, t => (string)t[0]! == "Recomendación 1");
@@ -607,7 +676,7 @@ public sealed class PosturaCalculadoraTests
     public void Las_recomendaciones_largas_se_truncan_a_102_caracteres_mas_puntos_suspensivos()
     {
         var textoLargo = new string('x', 120);
-        var modelo = PosturaCalculadora.Calcular([Fila(recomendacion: textoLargo, recurso: "r1")], [], Contexto(Corte))!;
+        var modelo = Calcular([Fila(recomendacion: textoLargo, recurso: "r1")], [], Contexto(Corte))!;
 
         var recomendacionEnTop = (string)modelo.Top.Single()[0]!;
         Assert.Equal(105, recomendacionEnTop.Length); // 102 + "..."
@@ -623,7 +692,7 @@ public sealed class PosturaCalculadoraTests
             Fila(recomendacion: "Rec", suscripcion: "Sub B", recurso: "r2"),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(2, modelo.Detalle.Count); // misma recomendacion, dos suscripciones: dos filas
     }
@@ -638,7 +707,7 @@ public sealed class PosturaCalculadoraTests
             Fila(recomendacion: "B", recurso: "r3"),
         };
 
-        var modelo = PosturaCalculadora.Calcular(filas, [], Contexto(Corte))!;
+        var modelo = Calcular(filas, [], Contexto(Corte))!;
 
         Assert.Equal(2, modelo.TiposDeRecomendacion);
     }
