@@ -239,6 +239,26 @@ public sealed class InformeValorEnsambladorTests
     }
 
     // ===================================================================================
+    // El cable de RBAC: el informe declara de dónde salió el insumo de seguridad. Mismo caso que
+    // Cobertura (D12) -- render() no lo lee, existe para la vista React de la entrega 3 y para la
+    // bitácora de la entrega (spec informe_valor_entrega.rbac_origen) -- así que no participa del
+    // contrato de nombres de la sección 5b.
+    // ===================================================================================
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData(InsumosBd.OrigenBase)]
+    [InlineData(InsumosBd.OrigenArchivo)]
+    public void Meta_declara_el_origen_de_rbac_que_trae_InsumosBd(string? origen)
+    {
+        var insumos = Insumos() with { RbacOrigen = origen };
+
+        var modelo = InformeValorEnsamblador.Ensamblar([], 0, [], insumos, "Cliente", Contexto(2026, 1, 1));
+
+        Assert.Equal(origen, modelo.Meta.RbacOrigen);
+    }
+
+    // ===================================================================================
     // 5b. Contrato de nombres contra la capa de dibujo (render() en Plantilla-Dashboard-BIT.html).
     // Extraído por lectura directa de render() y de las cinco funciones calcXxx que definen los
     // objetos que consume (Tarea 8): cada aserción de abajo es un ".campo" que render() lee en

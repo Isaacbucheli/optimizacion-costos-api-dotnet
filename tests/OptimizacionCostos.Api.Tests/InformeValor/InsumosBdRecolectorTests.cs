@@ -154,6 +154,36 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
         Assert.Equal(JsonValueKind.Null, seguridad.GetProperty("nota").ValueKind);
     }
 
+    /// <summary>
+    /// El cable de RBAC (Tarea 1): quien depure de dónde salió una cifra del bloque de seguridad
+    /// necesita saber si vino de la base o del archivo, no solo si la base estaba completa -- los
+    /// dos pueden discrepar (base parcial, insumo efectivo el archivo).
+    /// </summary>
+    [Fact]
+    public async Task El_endpoint_expone_el_origen_del_rbac()
+    {
+        _factory.Access.Allow(clientId: 7);
+        _factory.Recolector.ConOrigenRbac(InsumosBd.OrigenArchivo);
+        var client = ClientFor("c5@bit.ec", Roles.Consultor, canEdit: false);
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/informe-valor/clients/7/insumos-bd");
+
+        Assert.Equal(InsumosBd.OrigenArchivo, body.GetProperty("estado_rbac").GetProperty("origen").GetString());
+    }
+
+    /// <summary>Complemento: sin ninguna de las dos fuentes, el origen es null (JSON real), no una
+    /// cadena vacía ni el string "null".</summary>
+    [Fact]
+    public async Task Sin_ninguna_fuente_el_origen_es_null()
+    {
+        _factory.Access.Allow(clientId: 7);
+        var client = ClientFor("c5b@bit.ec", Roles.Consultor, canEdit: false);
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/informe-valor/clients/7/insumos-bd");
+
+        Assert.Equal(JsonValueKind.Null, body.GetProperty("estado_rbac").GetProperty("origen").ValueKind);
+    }
+
     /// <summary>El endpoint es de conteos: no puede filtrar nombres de recurso ni de identidad.</summary>
     [Fact]
     public async Task No_expone_nombres_de_recurso_ni_de_identidad()
@@ -338,6 +368,13 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
         public void ConSeguridadGestionadaExternamente(string? nota) =>
             _insumos = _insumos with { SeguridadGestionadaExternamente = true, SeguridadGestionadaNota = nota };
 
+        /// <summary>Mismo patrón que ConSeguridadGestionadaExternamente: solo toca RbacOrigen,
+        /// sobre el estado actual.</summary>
+        public void ConOrigenRbac(string? origen) => _insumos = _insumos with { RbacOrigen = origen };
+
         public Task<InsumosBd> LeerAsync(int clientId, CancellationToken ct = default) => Task.FromResult(_insumos);
+
+        public Task<EstadoRbacResultado> LeerEstadoRbacAsync(int clientId, CancellationToken ct = default) =>
+            Task.FromResult(_insumos.EstadoRbac);
     }
 }

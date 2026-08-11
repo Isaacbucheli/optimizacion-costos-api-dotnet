@@ -20,6 +20,20 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
 /// tarjeta de Seguridad de <c>WafController.Sections</c>: la nota va resuelta al texto por defecto
 /// cuando el cliente gestiona aparte pero no escribió una propia, y es <c>null</c> cuando no
 /// gestiona aparte (no hay nada que explicar).</para>
+///
+/// <para><b><see cref="RbacOrigen"/></b> (el cable de la condicional de RBAC): de qué fuente
+/// salieron las filas de <see cref="Rbac"/> en esta lectura puntual, <see cref="OrigenBase"/> o
+/// <see cref="OrigenArchivo"/> — <c>null</c> cuando ninguna de las dos fuentes tiene nada que
+/// ofrecer (sin corrida de Revisión de accesos y sin archivo cargado). Lo resuelve
+/// <see cref="Recolector.SqlInsumosBdRecolector.ResolverRbac"/> con la precedencia "gana la base"
+/// del spec (sección "La condicional de RBAC"): si <see cref="EstadoRbac"/> ya es
+/// <see cref="DisponibilidadRbac.Completo"/> el origen siempre es la base; si no, gana el archivo
+/// cuando trae filas. El spec de la entrega 3 persiste el mismo valor en la bitácora de cada
+/// informe generado (<c>informe_valor_entrega.rbac_origen</c>); acá solo se declara — un consultor
+/// que no puede saber qué fuente se usó no puede explicar una cifra del informe. La fecha de la
+/// corrida, cuando el origen es la base, ya viaja en <see cref="EstadoRbacResultado.FechaCorrida"/>
+/// (no hace falta un segundo campo: esa fecha se resuelve en cuanto hay una corrida, incluso
+/// cuando <see cref="EstadoRbac"/> no es <see cref="DisponibilidadRbac.Completo"/>).</para>
 /// </summary>
 public sealed record InsumosBd(
     IReadOnlyList<AdvisorFila> Advisor,
@@ -29,7 +43,15 @@ public sealed record InsumosBd(
     EstadoRbacResultado EstadoRbac,
     bool SeguridadGestionadaExternamente,
     string? SeguridadGestionadaNota,
-    DateTime LeidoEn);
+    DateTime LeidoEn,
+    string? RbacOrigen = null)
+{
+    /// <summary><see cref="RbacOrigen"/> cuando <see cref="Rbac"/> salió de Revisión de accesos.</summary>
+    public const string OrigenBase = "base";
+
+    /// <summary><see cref="RbacOrigen"/> cuando <see cref="Rbac"/> salió del Excel de respaldo.</summary>
+    public const string OrigenArchivo = "archivo";
+}
 
 /// <summary>
 /// Ensamblador de los cuatro recolectores del informe de valor (Advisor, Matriz, RBAC y Retiros)
@@ -41,4 +63,15 @@ public sealed record InsumosBd(
 public interface IInsumosBdRecolector
 {
     Task<InsumosBd> LeerAsync(int clientId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Solo <see cref="EstadoRbacResultado"/> (la síntesis de <see cref="EstadoRbac.Resolver"/>
+    /// sobre la corrida de Revisión de accesos): sin Advisor, sin Matriz, sin Retiros, y sin el
+    /// schema-ensure de WAF/Boletín que esos tres necesitan. <c>InformeValorController.Subir</c>
+    /// (kind <c>rbac</c>) solo necesita esto para decidir la precedencia "gana la base" antes de
+    /// guardar el archivo que subió el consultor: <see cref="LeerAsync"/> le hacía pagar el costo
+    /// completo de los cuatro insumos por una comprobación que usa apenas uno de ellos, en un App
+    /// Service B1 de 1 core y 1,75 GB compartido con el resto de la API.
+    /// </summary>
+    Task<EstadoRbacResultado> LeerEstadoRbacAsync(int clientId, CancellationToken ct = default);
 }

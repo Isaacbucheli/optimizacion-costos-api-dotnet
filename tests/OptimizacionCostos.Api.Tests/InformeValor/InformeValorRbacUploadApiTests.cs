@@ -171,7 +171,9 @@ public sealed class InformeValorRbacUploadApiTests : IClassFixture<InformeValorR
     }
 
     /// <summary>Recolector fake cuya única variable de prueba es la disponibilidad de RBAC: el
-    /// resto de InsumosBd no le importa a ningún test de esta clase.</summary>
+    /// resto de InsumosBd no le importa a ningún test de esta clase. El controller solo llama a
+    /// <see cref="LeerEstadoRbacAsync"/> en la ruta de Subir(kind=rbac) (el método liviano), así
+    /// que los dos métodos comparten la misma disponibilidad configurable.</summary>
     public sealed class FakeInsumosBdRecolectorConEstado : IInsumosBdRecolector
     {
         public DisponibilidadRbac Disponibilidad { get; set; } = DisponibilidadRbac.NoDisponible;
@@ -181,6 +183,9 @@ public sealed class InformeValorRbacUploadApiTests : IClassFixture<InformeValorR
             EstadoRbac: new EstadoRbacResultado(Disponibilidad, new EjesRbac(false, false), null, "prueba"),
             SeguridadGestionadaExternamente: false, SeguridadGestionadaNota: null,
             LeidoEn: new DateTime(2026, 1, 1)));
+
+        public Task<EstadoRbacResultado> LeerEstadoRbacAsync(int clientId, CancellationToken ct = default) =>
+            Task.FromResult(new EstadoRbacResultado(Disponibilidad, new EjesRbac(false, false), null, "prueba"));
     }
 
     /// <summary>Store fake que registra si ReplaceRbacAsync llegó a llamarse: es la comprobación

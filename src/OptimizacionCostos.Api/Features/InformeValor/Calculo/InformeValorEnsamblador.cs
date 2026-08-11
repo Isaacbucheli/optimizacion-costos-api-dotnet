@@ -50,7 +50,8 @@ public static class InformeValorEnsamblador
             Cliente: nombreCliente,
             Periodo: FormatearPeriodo(contexto.PeriodStart, contexto.PeriodEnd),
             Corte: contexto.Corte.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
-            Cobertura: CalcularCobertura(facturacionEnRango, insumosBd.Rbac, insumosBd.Advisor));
+            Cobertura: CalcularCobertura(facturacionEnRango, insumosBd.Rbac, insumosBd.Advisor),
+            RbacOrigen: insumosBd.RbacOrigen);
 
         return new ModeloInformeValor(
             meta, operacion, consumo, seguridad, postura, roadmap,

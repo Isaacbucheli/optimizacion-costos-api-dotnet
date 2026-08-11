@@ -137,9 +137,11 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinMigra
 // registrado arriba). El cálculo y la generación son de las entregas 2 y 3.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.InformeValor.IInformeValorStore,
     OptimizacionCostos.Api.Features.InformeValor.SqlInformeValorStore>();
-// Entrega 2a: ensamblador de los cuatro recolectores (Advisor, Matriz, RBAC, Retiros) + estado de
-// RBAC, detrás del endpoint de diagnóstico GET .../insumos-bd. Reusa ISqlConnectionFactory y el
-// IAccessReviewStore de Revisión de accesos, ya registrados.
+// Entrega 2a/2b: ensamblador de los cuatro recolectores (Advisor, Matriz, RBAC, Retiros) + estado
+// de RBAC, detrás del endpoint de diagnóstico GET .../insumos-bd y de /preview. Reusa
+// ISqlConnectionFactory, el IAccessReviewStore de Revisión de accesos y el IInformeValorStore de
+// arriba (el cable de la condicional de RBAC: cuando la base no alcanza, lee el Excel de respaldo
+// que ese store ya persiste), todos ya registrados.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.InformeValor.Recolector.IInsumosBdRecolector,
     OptimizacionCostos.Api.Features.InformeValor.Recolector.SqlInsumosBdRecolector>();
 

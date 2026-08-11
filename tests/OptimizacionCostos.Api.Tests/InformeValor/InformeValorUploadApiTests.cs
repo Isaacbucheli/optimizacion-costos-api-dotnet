@@ -232,5 +232,8 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
     {
         public Task<InsumosBd> LeerAsync(int clientId, CancellationToken ct = default)
             => throw new NotSupportedException();
+
+        public Task<EstadoRbacResultado> LeerEstadoRbacAsync(int clientId, CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 }

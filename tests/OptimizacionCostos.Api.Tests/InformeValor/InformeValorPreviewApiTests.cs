@@ -243,6 +243,10 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
                 DisponibilidadRbac.NoDisponible, new EjesRbac(false, false), null, "Sin datos de prueba."),
             SeguridadGestionadaExternamente: false, SeguridadGestionadaNota: null,
             LeidoEn: new DateTime(2026, 1, 1)));
+
+        public Task<EstadoRbacResultado> LeerEstadoRbacAsync(int clientId, CancellationToken ct = default) =>
+            Task.FromResult(new EstadoRbacResultado(
+                DisponibilidadRbac.NoDisponible, new EjesRbac(false, false), null, "Sin datos de prueba."));
     }
 
     /// <summary>Nombre por cliente en memoria; sin entrada, <c>GetNameAsync</c> devuelve null (mismo

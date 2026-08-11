@@ -69,4 +69,125 @@ public sealed class SqlInsumosBdRecolectorTests
     {
         Assert.Equal(esperado, SqlInsumosBdRecolector.ResolverNota(managed, notaCruda));
     }
+
+    // ---------- El cable de la condicional de RBAC: ResolverRbac/EjesDesdeArchivo como funciones
+    // puras, sin base de datos (mismo mecanismo que ResolverNota arriba) ----------
+
+    private static RbacFila Fila(string id = "u1", bool? cuentaHabilitada = null, string? ultimoLogin = null) => new(
+        PrincipalObjectId: id, Nombre: "Persona", Login: $"{id}@cliente.com", PrincipalType: "User",
+        Rol: "Reader", RoleKey: "reader", Scope: "/subscriptions/s1", ScopeLevel: "subscription",
+        SubscriptionId: "s1", SubscriptionName: "Suscripción Uno",
+        SuscripcionesAlcanzadas: ["s1"], SuscripcionesAlcanzadasNombres: ["Suscripción Uno"],
+        CuentaHabilitada: cuentaHabilitada, UltimoLoginTexto: ultimoLogin, ViaGrupoId: null,
+        RoleClass: null, IsCustomRole: false);
+
+    private static EstadoRbacResultado Estado(DisponibilidadRbac disponibilidad, EjesRbac? ejes = null) =>
+        new(disponibilidad, ejes ?? new EjesRbac(false, false), FechaCorrida: null, Motivo: "prueba");
+
+    /// <summary>Decisión 4 ("gana la base"): con la base Completo, ni se mira el archivo -- ni
+    /// siquiera cuando el archivo trae filas (defensivo: en producción SqlInsumosBdRecolector.LeerAsync
+    /// ni siquiera pide GetRbacAsync en este caso, pero la función pura tiene que sostener la regla
+    /// igual si alguna vez se la llama con las dos fuentes pobladas).</summary>
+    [Fact]
+    public void Con_base_completa_gana_la_base_e_ignora_el_archivo()
+    {
+        var estadoBase = Estado(DisponibilidadRbac.Completo, new EjesRbac(true, true));
+        var rbacBase = new[] { Fila("base-1") };
+        var rbacArchivo = new[] { Fila("archivo-1") };
+
+        var (rbac, ejes, origen) = SqlInsumosBdRecolector.ResolverRbac(estadoBase, rbacBase, rbacArchivo);
+
+        Assert.Same(rbacBase, rbac);
+        Assert.Equal(estadoBase.Ejes, ejes);
+        Assert.Equal(InsumosBd.OrigenBase, origen);
+    }
+
+    /// <summary>El caso que este cable existía para resolver: la base está parcial y el consultor
+    /// sí cargó el Excel. Antes de esta tarea, InsumosBd.Rbac seguía viniendo de la base (o vacío)
+    /// porque nadie llamaba a IInformeValorStore.GetRbacAsync.</summary>
+    [Fact]
+    public void Con_base_parcial_y_archivo_con_filas_usa_el_archivo_completo()
+    {
+        var estadoBase = Estado(DisponibilidadRbac.ParcialFaltaIdentidad, new EjesRbac(true, false));
+        var rbacBase = new[] { Fila("base-1") };
+        var rbacArchivo = new[] { Fila("archivo-1"), Fila("archivo-2") };
+
+        var (rbac, _, origen) = SqlInsumosBdRecolector.ResolverRbac(estadoBase, rbacBase, rbacArchivo);
+
+        Assert.Same(rbacArchivo, rbac);
+        Assert.Equal(InsumosBd.OrigenArchivo, origen);
+    }
+
+    /// <summary>
+    /// El espejo de D9 que pide la tarea: la base no pudo medir el último login (tenant sin P1,
+    /// por ejemplo), pero el archivo SÍ trae la columna "Último login" con datos. Si los ejes
+    /// vinieran de la base (estadoBase.Ejes), UltimoLoginMedido seguiría en false y
+    /// SeguridadCalculador suprimiría un hallazgo real de "sin actividad de sesión" sobre datos que
+    /// el archivo sí midió.
+    /// </summary>
+    [Fact]
+    public void Con_archivo_como_fuente_los_ejes_son_los_del_archivo_no_los_de_la_base()
+    {
+        var estadoBase = Estado(DisponibilidadRbac.ParcialFaltaIdentidad, new EjesRbac(true, false));
+        var rbacArchivo = new[] { Fila("a1", cuentaHabilitada: true, ultimoLogin: "2026-01-05 10:00") };
+
+        var (_, ejes, _) = SqlInsumosBdRecolector.ResolverRbac(estadoBase, rbacBase: [], rbacArchivo: rbacArchivo);
+
+        Assert.True(ejes.UltimoLoginMedido); // el archivo sí lo mide, aunque la base no pudiera
+        Assert.True(ejes.EstadoCuentaMedido);
+    }
+
+    /// <summary>Sin archivo, se conserva exactamente lo que ya hacía el código antes de esta
+    /// tarea: las filas (parciales) que la base pudo dar, con sus propios ejes.</summary>
+    [Fact]
+    public void Con_base_parcial_y_sin_archivo_conserva_la_base_parcial()
+    {
+        var estadoBase = Estado(DisponibilidadRbac.ParcialFaltaIdentidad, new EjesRbac(true, false));
+        var rbacBase = new[] { Fila("base-1") };
+
+        var (rbac, ejes, origen) = SqlInsumosBdRecolector.ResolverRbac(estadoBase, rbacBase, rbacArchivo: []);
+
+        Assert.Same(rbacBase, rbac);
+        Assert.Equal(estadoBase.Ejes, ejes);
+        Assert.Equal(InsumosBd.OrigenBase, origen);
+    }
+
+    /// <summary>Sin ninguna de las dos fuentes (NoDisponible, sin corrida ni archivo) no hay
+    /// origen que declarar: null, no "base" con cero filas.</summary>
+    [Fact]
+    public void Sin_base_ni_archivo_el_origen_es_null()
+    {
+        var estadoBase = Estado(DisponibilidadRbac.NoDisponible);
+
+        var (rbac, _, origen) = SqlInsumosBdRecolector.ResolverRbac(estadoBase, rbacBase: [], rbacArchivo: []);
+
+        Assert.Empty(rbac);
+        Assert.Null(origen);
+    }
+
+    [Fact]
+    public void EjesDesdeArchivo_mide_cada_eje_por_su_propia_columna()
+    {
+        var filas = new[]
+        {
+            Fila("u1", cuentaHabilitada: null, ultimoLogin: "2026-01-05 10:00"),
+            Fila("u2", cuentaHabilitada: false, ultimoLogin: null),
+        };
+
+        var ejes = SqlInsumosBdRecolector.EjesDesdeArchivo(filas);
+
+        Assert.True(ejes.EstadoCuentaMedido); // u2 sí resolvió (false, no null)
+        Assert.True(ejes.UltimoLoginMedido); // u1 sí trae texto
+    }
+
+    [Fact]
+    public void EjesDesdeArchivo_sin_ninguna_fila_medida_da_los_dos_ejes_en_false()
+    {
+        var filas = new[] { Fila("u1", cuentaHabilitada: null, ultimoLogin: null) };
+
+        var ejes = SqlInsumosBdRecolector.EjesDesdeArchivo(filas);
+
+        Assert.False(ejes.EstadoCuentaMedido);
+        Assert.False(ejes.UltimoLoginMedido);
+    }
 }

@@ -138,6 +138,12 @@ public sealed class InformeValorController(
                 ultimo_login_medido = insumos.EstadoRbac.Ejes.UltimoLoginMedido,
                 fecha_corrida = insumos.EstadoRbac.FechaCorrida,
                 motivo = insumos.EstadoRbac.Motivo,
+                // De dónde salieron las filas de "rbac" arriba (el cable de la condicional de
+                // RBAC): "base"/"archivo", o null si ninguna de las dos fuentes tiene nada. Quien
+                // depure de dónde salió una cifra del bloque de seguridad necesita esto, no solo
+                // la disponibilidad de la base -- los dos pueden discrepar (base parcial, pero el
+                // insumo efectivo es el archivo).
+                origen = insumos.RbacOrigen,
             },
             leido_en = insumos.LeidoEn,
         });
@@ -276,11 +282,11 @@ public sealed class InformeValorController(
                 // archivo habiendo datos completos en la base, gana la base. El archivo se
                 // descarta -- pero se avisa en la respuesta, nunca en silencio: un archivo
                 // descartado sin decirlo es un consultor convencido de que subió algo que no se
-                // usó. Se reusa el mismo recolector que ya alimenta /insumos-bd y /preview en vez
-                // de agregar un método liviano: es una acción manual del consultor, no un hot
-                // path, y ya paga este mismo costo en /preview.
-                var insumos = await recolector.LeerAsync(clientId, ct);
-                if (insumos.EstadoRbac.Disponibilidad == DisponibilidadRbac.Completo)
+                // usó. LeerEstadoRbacAsync resuelve solo esto (sin Advisor/Matriz/Retiros ni el
+                // schema-ensure de WAF/Boletín): a diferencia de /preview, esta es una acción
+                // manual del consultor que no necesita nada más que el recolector completo trae.
+                var estadoRbac = await recolector.LeerEstadoRbacAsync(clientId, ct);
+                if (estadoRbac.Disponibilidad == DisponibilidadRbac.Completo)
                     return Ok(ResumenRbacDescartado(parsed));
 
                 var id = await store.ReplaceRbacAsync(clientId, name, user, parsed, ct);

@@ -50,12 +50,19 @@ public sealed record ModeloInformeValor(
 /// una etiqueta descriptiva del rango, porque el rango real que SÍ filtra los datos
 /// (<see cref="ContextoInformeValor.PeriodStart"/>/<see cref="ContextoInformeValor.PeriodEnd"/>,
 /// D0) vive en la entrega de la base de datos, no en este texto.
+///
+/// <para><see cref="RbacOrigen"/> es <see cref="Recolector.InsumosBd.RbacOrigen"/> tal cual lo
+/// resolvió el recolector: mismo caso que <see cref="Cobertura"/> (campo que <c>render()</c> no
+/// lee, pensado para la vista React de la entrega 3 y para la bitácora de la entrega, spec
+/// <c>informe_valor_entrega.rbac_origen</c>). Un consultor que no puede saber si el bloque de
+/// seguridad salió de la base o del Excel de respaldo no puede explicar sus cifras.</para>
 /// </summary>
 public sealed record InformeValorMeta(
     [property: JsonPropertyName("cliente")] string Cliente,
     [property: JsonPropertyName("periodo")] string Periodo,
     [property: JsonPropertyName("corte")] string Corte,
-    [property: JsonPropertyName("cobertura")] InformeValorCobertura Cobertura);
+    [property: JsonPropertyName("cobertura")] InformeValorCobertura Cobertura,
+    [property: JsonPropertyName("rbacOrigen")] string? RbacOrigen = null);
 
 /// <summary>
 /// D12 (Tarea 8): las tres cifras de suscripciones del informe —de facturación, de RBAC y de

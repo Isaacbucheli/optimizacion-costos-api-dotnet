@@ -29,9 +29,18 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
 /// no verlo sin decir por qué (las tres salidas del producto que sí lo respetan: pantalla WAF,
 /// export a Excel e informe mensual).
 /// </para>
+///
+/// <para><b>El cable de la condicional de RBAC (<see cref="ResolverRbac"/>).</b> <c>informeValorStore</c>
+/// es el mismo <see cref="IInformeValorStore"/> que ya persiste el Excel de respaldo que sube el
+/// consultor: hasta esta tarea nadie llamaba a <see cref="IInformeValorStore.GetRbacAsync"/>, así
+/// que un archivo guardado nunca alimentaba <see cref="InsumosBd.Rbac"/> — el informe seguía viendo
+/// el insumo vacío aunque la carga hubiera funcionado. <see cref="ResolverRbac"/> solo pide esas
+/// filas cuando <see cref="EstadoRbac.Resolver"/> ya no es <see cref="DisponibilidadRbac.Completo"/>:
+/// si la base alcanza por sí sola no hace falta ni preguntarle al store.</para>
 /// </summary>
 public sealed class SqlInsumosBdRecolector(
-    ISqlConnectionFactory factory, IAccessReviewStore accessReviewStore) : IInsumosBdRecolector
+    ISqlConnectionFactory factory, IAccessReviewStore accessReviewStore, IInformeValorStore informeValorStore)
+    : IInsumosBdRecolector
 {
     /// <summary>
     /// Caché por proceso (mismo patrón <c>_schemaEnsured</c> que
@@ -106,13 +115,92 @@ public sealed class SqlInsumosBdRecolector(
 
         var run = await accessReviewStore.GetLatestFinishedRunAsync(clientId, ct);
         var snapshot = run is null ? null : await accessReviewStore.GetSnapshotAsync(run.RunId, ct);
-        var estadoRbac = EstadoRbac.Resolver(snapshot, administradas.Count > 0);
-        var rbac = snapshot is null ? [] : RbacRecolector.Mapear(snapshot);
+        var estadoBase = EstadoRbac.Resolver(snapshot, administradas.Count > 0);
+        var rbacBase = snapshot is null ? [] : RbacRecolector.Mapear(snapshot);
+
+        // El archivo de respaldo solo hace falta cuando la base no alcanza por sí sola: si ya es
+        // Completo, gana la base sin gastar esta consulta (mismo cuidado de costo que
+        // LeerEstadoRbacAsync del lado del controller).
+        var rbacArchivo = estadoBase.Disponibilidad == DisponibilidadRbac.Completo
+            ? []
+            : await informeValorStore.GetRbacAsync(clientId, ct);
+
+        var (rbac, ejesRbac, rbacOrigen) = ResolverRbac(estadoBase, rbacBase, rbacArchivo);
 
         return new InsumosBd(
-            advisor, matriz, rbac, retiros, estadoRbac,
-            seguridadGestionadaExternamente, seguridadGestionadaNota, DateTime.UtcNow);
+            advisor, matriz, rbac, retiros, estadoBase with { Ejes = ejesRbac },
+            seguridadGestionadaExternamente, seguridadGestionadaNota, DateTime.UtcNow,
+            RbacOrigen: rbacOrigen);
     }
+
+    /// <summary>
+    /// Solo <see cref="EstadoRbacResultado"/> (ver el comentario de <see cref="IInsumosBdRecolector.LeerEstadoRbacAsync"/>
+    /// para el motivo): abre su propia conexión liviana, sin el schema-ensure de WAF/Boletín ni las
+    /// tres lecturas de Advisor/Matriz/Retiros que <see cref="LeerAsync"/> paga completas. Los dos
+    /// ejes que devuelve describen la corrida de base tal cual — a diferencia de <see cref="LeerAsync"/>,
+    /// que los reemplaza por los del archivo cuando ese es el origen efectivo: acá no hay ningún
+    /// archivo de por medio, solo la pregunta "¿la base alcanza?" que hace <c>InformeValorController.Subir</c>
+    /// antes de decidir si guarda el Excel que subió el consultor.
+    /// </summary>
+    public async Task<EstadoRbacResultado> LeerEstadoRbacAsync(int clientId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+
+        var administradas = await SuscripcionesAdministradasAsync(conn, clientId, ct);
+        var run = await accessReviewStore.GetLatestFinishedRunAsync(clientId, ct);
+        var snapshot = run is null ? null : await accessReviewStore.GetSnapshotAsync(run.RunId, ct);
+        return EstadoRbac.Resolver(snapshot, administradas.Count > 0);
+    }
+
+    /// <summary>
+    /// Decisión 4 del brief ("precedencia: gana la base"), aplicada a las FILAS que va a consumir
+    /// la calculadora — no solo al descarte del archivo al subirlo, que ya hacía el controller.
+    /// Si <paramref name="estadoBase"/> ya es <see cref="DisponibilidadRbac.Completo"/>, gana la
+    /// base sin mirar <paramref name="rbacArchivo"/> (ni siquiera se lo pide al store, ver
+    /// <see cref="LeerAsync"/>). Si no, y el archivo trae filas, gana el archivo completo — no se
+    /// mezcla con lo que la base sí pudo dar: el spec dice "se usa el archivo", no "se completa la
+    /// base con el archivo". Sin archivo, se conserva lo que ya hacía el código antes de esta
+    /// tarea: las filas (parciales o vacías) que la base pudo dar, con origen "base" si hay alguna
+    /// y sin origen si no hay ninguna de las dos fuentes.
+    ///
+    /// <para><b>Los ejes viajan con la fuente.</b> Por archivo se recalculan sobre ESAS filas (ver
+    /// <see cref="EjesDesdeArchivo"/>), nunca los de <see cref="EstadoRbac.Resolver"/>, que
+    /// describen la corrida de base: un export que sí trae "Último login" no puede quedar marcado
+    /// como no medido solo porque la corrida de base no lo pudo medir (el espejo de D9 — ahí se
+    /// fabricaba un hallazgo falso, acá se suprimiría uno real).</para>
+    ///
+    /// <para>Internal para que <c>SqlInsumosBdRecolectorTests</c> lo pruebe como función pura, sin
+    /// base de datos (mismo mecanismo que <see cref="ResolverNota"/>).</para>
+    /// </summary>
+    internal static (IReadOnlyList<RbacFila> Rbac, EjesRbac Ejes, string? Origen) ResolverRbac(
+        EstadoRbacResultado estadoBase, IReadOnlyList<RbacFila> rbacBase, IReadOnlyList<RbacFila> rbacArchivo)
+    {
+        if (estadoBase.Disponibilidad == DisponibilidadRbac.Completo)
+            return (rbacBase, estadoBase.Ejes, InsumosBd.OrigenBase);
+
+        if (rbacArchivo.Count > 0)
+            return (rbacArchivo, EjesDesdeArchivo(rbacArchivo), InsumosBd.OrigenArchivo);
+
+        return (rbacBase, estadoBase.Ejes, rbacBase.Count > 0 ? InsumosBd.OrigenBase : null);
+    }
+
+    /// <summary>
+    /// Los dos ejes de identidad medidos por ESTE conjunto de filas (ya releídas de
+    /// <c>informe_valor_rbac</c>, no <see cref="RbacParseResult.Ejes"/> del parseo original: esos
+    /// no se persisten — ver el comentario de clase de <see cref="RbacRow"/> — así que se
+    /// recalculan sobre lo que sí sobrevive la vuelta por la base). Mismo criterio que
+    /// <see cref="RbacParser"/> aplica columna por columna: el eje está medido si AL MENOS UNA fila
+    /// trae texto no vacío. <see cref="RbacFila.UltimoLoginTexto"/> conserva el texto crudo de la
+    /// celda (<see cref="RbacFilaConverter"/> ya colapsa vacío a null igual que el parser), así que
+    /// la equivalencia es exacta. <see cref="RbacFila.CuentaHabilitada"/> en cambio es <c>bool?</c>
+    /// ya interpretado ("Sí"/"No"/vacío): un texto no reconocido en la celda contaría acá como "no
+    /// medido" en vez de "medido, pero no se pudo interpretar" — no distinguible del parseo
+    /// original sin guardar el texto crudo también para esa columna, y el export solo escribe
+    /// "Sí"/"No" en ella, así que el residual es teórico.
+    /// </summary>
+    internal static EjesRbac EjesDesdeArchivo(IReadOnlyList<RbacFila> filas) => new(
+        EstadoCuentaMedido: filas.Any(f => f.CuentaHabilitada is not null),
+        UltimoLoginMedido: filas.Any(f => f.UltimoLoginTexto is not null));
 
     private static async Task<IReadOnlyList<string>> SuscripcionesAdministradasAsync(
         SqlConnection conn, int clientId, CancellationToken ct)
