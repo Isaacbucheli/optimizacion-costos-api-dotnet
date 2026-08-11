@@ -238,6 +238,34 @@ public sealed class SqlClientStore(ISqlConnectionFactory factory) : IClientStore
         await CountedDeleteAsync(conn, tx, counts, "analysis_files",
             "DELETE FROM dbo.analysis_files WHERE analysis_id IN (SELECT analysis_id FROM dbo.cost_analysis WHERE client_id = @id)", clientId, ct);
         await CountedDeleteAsync(conn, tx, counts, "cost_analysis", "DELETE FROM dbo.cost_analysis WHERE client_id = @id", clientId, ct);
+
+        // -------- Advisor score: histórico y trabajos de sincronización --------
+        // Las dos tienen FK a clients y faltaban acá: borrar un cliente con histórico de score o
+        // con un trabajo de sync encolado fallaba por clave foránea.
+        await CountedDeleteAsync(conn, tx, counts, "waf_advisor_score_history",
+            "IF OBJECT_ID('dbo.waf_advisor_score_history','U') IS NOT NULL DELETE FROM dbo.waf_advisor_score_history WHERE client_id = @id;", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "waf_advisor_sync_job",
+            "IF OBJECT_ID('dbo.waf_advisor_sync_job','U') IS NOT NULL DELETE FROM dbo.waf_advisor_sync_job WHERE client_id = @id;", clientId, ct);
+
+        // -------- Barrido de optimización de Azure --------
+        // optimization_finding_state va primero: además de su FK a clients tiene FK_optfind_scan
+        // contra optimization_scan, así que al revés falla aunque el cliente exista.
+        await CountedDeleteAsync(conn, tx, counts, "optimization_finding_state",
+            "IF OBJECT_ID('dbo.optimization_finding_state','U') IS NOT NULL DELETE FROM dbo.optimization_finding_state WHERE client_id = @id;", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "optimization_scan",
+            "IF OBJECT_ID('dbo.optimization_scan','U') IS NOT NULL DELETE FROM dbo.optimization_scan WHERE client_id = @id;", clientId, ct);
+
+        // -------- Informe de valor --------
+        // Los tres insumos antes de la bitácora, por la convención hijos→padres de este método
+        // (entre ellas no hay FK: ingesta_id no declara REFERENCES).
+        await CountedDeleteAsync(conn, tx, counts, "informe_valor_facturacion",
+            "IF OBJECT_ID('dbo.informe_valor_facturacion','U') IS NOT NULL DELETE FROM dbo.informe_valor_facturacion WHERE client_id = @id;", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "informe_valor_caso",
+            "IF OBJECT_ID('dbo.informe_valor_caso','U') IS NOT NULL DELETE FROM dbo.informe_valor_caso WHERE client_id = @id;", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "informe_valor_rbac",
+            "IF OBJECT_ID('dbo.informe_valor_rbac','U') IS NOT NULL DELETE FROM dbo.informe_valor_rbac WHERE client_id = @id;", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "informe_valor_ingesta",
+            "IF OBJECT_ID('dbo.informe_valor_ingesta','U') IS NOT NULL DELETE FROM dbo.informe_valor_ingesta WHERE client_id = @id;", clientId, ct);
     }
 
     private static async Task CountedDeleteAsync(
