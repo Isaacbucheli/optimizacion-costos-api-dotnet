@@ -85,7 +85,23 @@ public sealed record ConsumoModelo(
     [property: JsonPropertyName("prom")] IReadOnlyList<IReadOnlyList<object?>> PromediosPorAnio,
     [property: JsonPropertyName("ahorro")] ConsumoAhorro? Ahorro,
     [property: JsonPropertyName("comp")] ConsumoComparativa? Comparativa,
-    [property: JsonPropertyName("cc")] IReadOnlyList<IReadOnlyList<object?>> PorCentroCosto);
+    [property: JsonPropertyName("cc")] IReadOnlyList<IReadOnlyList<object?>> PorCentroCosto,
+    /// <summary>
+    /// Tarea 5 de la entrega 2d (E0): la descomposicion de a donde fue la variacion del consumo —
+    /// nunca "ahorro" (ver <see cref="VariacionConsumoModelo"/>). Sibling de <see cref="Ahorro"/>
+    /// (D3, entrega 2b), no su reemplazo: D3 sigue siendo el titular robusto por mediana de UNA
+    /// categoria (E1, "eso se queda"); esto es la atribucion completa del portafolio con promedios,
+    /// que si se puede sumar y cerrar al centavo. Puesto DENTRO de <c>fact</c> (no como octava clave
+    /// de <c>D</c>) por el mismo motivo que <see cref="InformeValorMeta.Cobertura"/> vive dentro de
+    /// <c>meta</c>: <c>render()</c> no conoce esta sección (es enteramente nueva, no un port), y
+    /// agregarla como octava clave de nivel superior habria roto el contrato ya probado de las
+    /// siete claves exactas que espera el HTML reusado (ver <c>InformeValorJsonOptionsTests</c>).
+    /// Null cuando la ventana fija no alcanza (menos de seis meses no parciales en el rango del
+    /// informe): el ensamblador deja este campo en null en vez de publicar una descomposicion sobre
+    /// una ventana demasiado corta para significar algo, mismo criterio que ya usa
+    /// <see cref="Ahorro"/> (D3) y <c>AtribucionCalculador</c>.
+    /// </summary>
+    [property: JsonPropertyName("variacionConsumo")] VariacionConsumoModelo? VariacionConsumo = null);
 
 /// <summary>
 /// Ahorro sostenido en la factura, rehecho por D3: tres defectos encadenados en la plantilla —el
@@ -118,3 +134,35 @@ public sealed record ConsumoComparativa(
     [property: JsonPropertyName("b")] string MesComparado,
     // Filas = [servicio, monto del mes base, monto del mes comparado].
     [property: JsonPropertyName("filas")] IReadOnlyList<IReadOnlyList<object?>> Filas);
+
+/// <summary>
+/// Tarea 5 de la entrega 2d (E0, ensamblado): los tres baldes de la atribucion, ya sumados. E0: "la
+/// sección deja de llamarse ahorro y pasa a ser variación del consumo, y su titular es el monto que
+/// se movió, no un logro." <see cref="VariacionTotal"/> es ese titular.
+///
+/// <para><b><see cref="Reservas"/> siempre viaja</b> (balde 1, con sus dos mediciones — desde el
+/// propio inicio de cada reserva para el panel de reservas, y <see cref="AhorroReservasModelo.AporteAlPeriodo"/>
+/// para esta sección — ver el comentario de clase de <see cref="AhorroReservasCalculador"/>, E9),
+/// AUNQUE <see cref="Atribucion"/> sea null: el panel de cobertura de reservas (E5) no depende de
+/// que haya seis meses de historia de facturación, solo de que haya reservas que leer.</para>
+///
+/// <para><b><see cref="Atribucion"/> y <see cref="VariacionTotal"/> viajan juntos.</b> Los baldes 2 y
+/// 3 (<see cref="AtribucionModelo.PorRecomendacion"/>/<see cref="AtribucionModelo.SinAtribuir"/>) sí
+/// necesitan la ventana fija completa (mínimo seis meses no parciales): sin eso,
+/// <c>AtribucionCalculador.Calcular</c> devuelve <c>null</c>, y sin baldes 2 y 3 no hay una
+/// descomposición completa que totalizar, así que los dos campos son null a la vez — nunca un
+/// <see cref="VariacionTotal"/> que solo cuenta el balde de reservas disfrazado de total completo.
+/// </para>
+///
+/// <para><b>Por qué <see cref="VariacionTotal"/> no es <see cref="AtribucionModelo.VariacionTotal"/>.</b>
+/// El de <see cref="AtribucionModelo"/> es la suma de SOLO los baldes 2 y 3 (documentado ahí: "quien
+/// ensambla el informe le suma el balde de reserva para llegar a la variación total del consumo
+/// completo"). Este es esa suma completa: <see cref="Reservas"/>.AporteAlPeriodo +
+/// <see cref="Atribucion"/>.PorRecomendacion.Total + <see cref="Atribucion"/>.SinAtribuir.Total, sin
+/// volver a redondear (los tres sumandos ya están redondeados una vez cada uno — E1 — y la suma de
+/// tres <see cref="decimal"/> exactos de dos cifras da otro exacto de dos cifras).</para>
+/// </summary>
+public sealed record VariacionConsumoModelo(
+    [property: JsonPropertyName("reservas")] AhorroReservasModelo Reservas,
+    [property: JsonPropertyName("atribucion")] AtribucionModelo? Atribucion,
+    [property: JsonPropertyName("variacionTotal")] decimal? VariacionTotal);

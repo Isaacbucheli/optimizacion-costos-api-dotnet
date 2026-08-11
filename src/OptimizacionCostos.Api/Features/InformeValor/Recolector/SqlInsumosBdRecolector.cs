@@ -112,6 +112,10 @@ public sealed class SqlInsumosBdRecolector(
         var advisor = await AdvisorRecolector.LeerAsync(conn, clientId, administradas, seguridadGestionadaExternamente, ct);
         var matriz = await MatrizRecolector.LeerAsync(conn, clientId, administradas, seguridadGestionadaExternamente, ct);
         var retiros = await RetirosRecolector.LeerAsync(conn, clientId, ct);
+        // Tarea 2 de la entrega 2d (E3): mismo patron que Advisor/Matriz (misma conexion, mismo
+        // schema WAF ya asegurado arriba, mismo filtro de suscripciones administradas).
+        var hallazgosResueltos = await HallazgoResueltoRecolector.LeerAsync(
+            conn, clientId, administradas, seguridadGestionadaExternamente, ct);
 
         var run = await accessReviewStore.GetLatestFinishedRunAsync(clientId, ct);
         var snapshot = run is null ? null : await accessReviewStore.GetSnapshotAsync(run.RunId, ct);
@@ -130,7 +134,7 @@ public sealed class SqlInsumosBdRecolector(
         return new InsumosBd(
             advisor, matriz, rbac, retiros, estadoBase with { Ejes = ejesRbac },
             seguridadGestionadaExternamente, seguridadGestionadaNota, DateTime.UtcNow,
-            RbacOrigen: rbacOrigen);
+            RbacOrigen: rbacOrigen, HallazgosResueltos: hallazgosResueltos);
     }
 
     /// <summary>

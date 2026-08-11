@@ -42,6 +42,12 @@ public sealed class AhorroReservasCalculadorTests
             Subcategory: null, Service: null, Quantity: null, Unit: null, Rate: null,
             Pvp: pvp, Year: year, Month: month);
 
+    /// <summary>Contexto amplio (2020-2030) para todos los tests que NO ejercitan la ventana fija de
+    /// E9: alcanza para que ConsumoCalculador.EnRango nunca excluya ninguna fila de estos fixtures,
+    /// sin tener que elegir un contexto propio para cada año/mes que ya usan.</summary>
+    private static readonly ContextoInformeValor ContextoAmplio =
+        new(new DateOnly(2020, 1, 1), new DateOnly(2030, 12, 31), new DateOnly(2026, 8, 1), null);
+
     // ── El eje no medido se propaga: no hay ahorro "en cero" cuando no se pudo leer la reserva ──
 
     [Fact]
@@ -49,7 +55,7 @@ public sealed class AhorroReservasCalculadorTests
     {
         var foto = Foto(medido: false, motivo: "sin credenciales", errores: [new { error = "x" }]);
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, []);
+        var modelo = AhorroReservasCalculador.Calcular(foto, [], [], ContextoAmplio);
 
         Assert.False(modelo.Medido);
         Assert.Equal("sin credenciales", modelo.Motivo);
@@ -73,7 +79,7 @@ public sealed class AhorroReservasCalculadorTests
             Fila(pvp: 73m, year: 2026, month: 4),   // despues: 0.1 $/hora
         };
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion);
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoAmplio);
 
         var item = Assert.Single(modelo.Confirmados);
         Assert.Equal(1m, item.TarifaAntesPorHora);
@@ -99,7 +105,7 @@ public sealed class AhorroReservasCalculadorTests
             Fila(pvp: 73m, year: 2026, month: 3),   // despues (mes del inicio)
         };
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion);
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoAmplio);
 
         var item = Assert.Single(modelo.Confirmados);
         // Si la frontera fuera "donde bajo la factura", antes seria solo enero (1 $/h). Con la
@@ -114,7 +120,7 @@ public sealed class AhorroReservasCalculadorTests
         var foto = Foto(reservas: [reserva]);
         var facturacion = new[] { Fila(pvp: 10m, year: 2026, month: 3) }; // solo "despues"
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion);
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoAmplio);
 
         var item = Assert.Single(modelo.Confirmados);
         Assert.Null(item.Ahorro);
@@ -128,7 +134,7 @@ public sealed class AhorroReservasCalculadorTests
         var foto = Foto(reservas: [reserva]);
         var facturacion = new[] { Fila(pvp: 730m, year: 2025, month: 12) }; // solo "antes"
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion);
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoAmplio);
 
         var item = Assert.Single(modelo.Confirmados);
         Assert.Null(item.Ahorro);
@@ -142,7 +148,7 @@ public sealed class AhorroReservasCalculadorTests
         var foto = Foto(reservas: [reserva]);
         var facturacion = new[] { Fila(subscriptionId: "s1", resourceGroup: "rg1", resourceName: "vm1", pvp: 100m) };
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion);
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoAmplio);
 
         var item = Assert.Single(modelo.Confirmados);
         Assert.Null(item.Ahorro);
@@ -155,7 +161,7 @@ public sealed class AhorroReservasCalculadorTests
         var foto = Foto(reservas: [reserva]);
         var facturacion = new[] { Fila(pvp: 100m, year: 2026, month: 1) };
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion);
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoAmplio);
 
         var item = Assert.Single(modelo.Confirmados);
         Assert.Null(item.Ahorro);
@@ -176,7 +182,7 @@ public sealed class AhorroReservasCalculadorTests
             Fila(subscriptionId: "s1", resourceGroup: "rg1", resourceName: "vm1", pvp: 0m, year: 2026, month: 3),
         };
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion);
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoAmplio);
 
         var item = Assert.Single(modelo.Confirmados);
         Assert.NotNull(item.Ahorro);
@@ -191,7 +197,7 @@ public sealed class AhorroReservasCalculadorTests
         var reserva = Reserva(expiring: true, utilUltimo: "12%", util7d: "15%", consumidores: [Consumidor()]);
         var foto = Foto(reservas: [reserva]);
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, []);
+        var modelo = AhorroReservasCalculador.Calcular(foto, [], [], ContextoAmplio);
 
         var item = Assert.Single(modelo.Confirmados);
         Assert.True(item.Expiring);
@@ -212,7 +218,7 @@ public sealed class AhorroReservasCalculadorTests
             Fila(pvp: 730m, year: 2026, month: 3), // despues: 1 $/h -> sin baja
         };
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion);
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoAmplio);
 
         Assert.Single(modelo.Discrepancias);
         Assert.True(modelo.Confirmados[0].Ahorro <= 0m);
@@ -229,7 +235,7 @@ public sealed class AhorroReservasCalculadorTests
             Fila(pvp: 0m, year: 2026, month: 3),
         };
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion);
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoAmplio);
 
         Assert.Empty(modelo.Discrepancias);
     }
@@ -242,7 +248,7 @@ public sealed class AhorroReservasCalculadorTests
         var reserva = Reserva(cantidad: 3, unidadesEstimadas: 2, consumidores: [Consumidor()]);
         var foto = Foto(reservas: [reserva]);
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, []);
+        var modelo = AhorroReservasCalculador.Calcular(foto, [], [], ContextoAmplio);
 
         var estimado = Assert.Single(modelo.Estimados);
         Assert.Equal(2, estimado.UnidadesEstimadas);
@@ -255,7 +261,7 @@ public sealed class AhorroReservasCalculadorTests
         var reserva = Reserva(unidadesEstimadas: 0, consumidores: [Consumidor()]);
         var foto = Foto(reservas: [reserva]);
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, []);
+        var modelo = AhorroReservasCalculador.Calcular(foto, [], [], ContextoAmplio);
 
         Assert.Empty(modelo.Estimados);
     }
@@ -278,9 +284,211 @@ public sealed class AhorroReservasCalculadorTests
             // vm2 no aparece en absoluto en la facturacion: su ahorro queda null y no suma.
         };
 
-        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion);
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoAmplio);
 
         Assert.Equal(2, modelo.Confirmados.Count);
         Assert.Equal(10m, modelo.AhorroConfirmado); // (1 - 0) * 10, solo la de vm1
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════════════════════
+    // E9 (entrega 2d, tarea 5, la costura con los baldes 2 y 3): la fecha de la reserva decide SI
+    // explica algo dentro del período del informe; si sí, el aporte se mide sobre la MISMA ventana
+    // fija que AtribucionCalculador (base = todos los meses no parciales menos los últimos tres,
+    // cierre = esos últimos tres), nunca sobre la tarifa por hora desde el propio inicio de la
+    // reserva (esa sigue existiendo en Ahorro/TarifaAntesPorHora/TarifaDespuesPorHora, sin cambios).
+    // ═══════════════════════════════════════════════════════════════════════════════════════════
+
+    /// <summary>Ventana [ene, jun] 2026 (el mínimo de seis meses): base = ene-mar, cierre = abr-jun,
+    /// igual partición que <c>AtribucionCalculador.Calcular</c> usa internamente.</summary>
+    private static ContextoInformeValor ContextoVentana(int mesInicio = 1, int mesFin = 6) => new(
+        new DateOnly(2026, mesInicio, 1),
+        new DateOnly(2026, mesFin, DateTime.DaysInMonth(2026, mesFin)),
+        Corte: new DateOnly(2026, mesFin, DateTime.DaysInMonth(2026, mesFin)),
+        MesesParcialesForzados: null);
+
+    /// <summary>Seis meses de facturación de un solo recurso: <paramref name="antes"/> en ene-mar,
+    /// <paramref name="despues"/> en abr-jun — la ventana base/cierre completa, sin necesitar un
+    /// recurso ancla aparte (a diferencia de los tests de dedup/redondeo más abajo, donde el recurso
+    /// bajo prueba solo tiene UNA fila y hace falta un ancla para que la ventana de seis meses
+    /// exista de todos modos).</summary>
+    private static IReadOnlyList<FacturacionRow> SeisMeses(
+        string subscriptionId, string resourceGroup, string resourceName, decimal antes, decimal despues) =>
+    [
+        Fila(subscriptionId, resourceGroup, resourceName, pvp: antes, year: 2026, month: 1),
+        Fila(subscriptionId, resourceGroup, resourceName, pvp: antes, year: 2026, month: 2),
+        Fila(subscriptionId, resourceGroup, resourceName, pvp: antes, year: 2026, month: 3),
+        Fila(subscriptionId, resourceGroup, resourceName, pvp: despues, year: 2026, month: 4),
+        Fila(subscriptionId, resourceGroup, resourceName, pvp: despues, year: 2026, month: 5),
+        Fila(subscriptionId, resourceGroup, resourceName, pvp: despues, year: 2026, month: 6),
+    ];
+
+    /// <summary>El caso que nombra E9: una reserva que arrancó antes de que empiece la ventana ya
+    /// tenía al recurso cubierto durante TODO el período, así que cualquier variación que se vea
+    /// adentro (acá, una baja de $10/mes ajena a la reserva) no la explica ella — ni aunque el
+    /// cálculo "ingenuo" sobre la ventana daría un número que no es cero.</summary>
+    [Fact]
+    public void Una_reserva_que_arranca_antes_de_la_ventana_no_explica_el_periodo_aunque_la_tarifa_cambie()
+    {
+        // inicio = 2026-10-05 (ExpiresOn) - 1 año (Term) = 2025-10-05 -> "2025-10", anterior a "2026-01".
+        var reserva = Reserva(expiresOn: "2026-10-05", term: "P1Y", consumidores: [Consumidor(horas: 10)]);
+        var foto = Foto(reservas: [reserva]);
+        var facturacion = SeisMeses("s1", "rg1", "vm1", antes: 60m, despues: 50m);
+
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoVentana());
+
+        var item = Assert.Single(modelo.Confirmados);
+        Assert.False(item.ExplicaElPeriodo);
+        Assert.Null(item.AporteAlPeriodo);
+        Assert.Empty(modelo.RecursosQueExplicanElPeriodo);
+        Assert.Equal(0m, modelo.AporteAlPeriodo);
+    }
+
+    [Fact]
+    public void Una_reserva_que_arranca_dentro_de_la_ventana_explica_el_periodo_y_el_aporte_se_mide_sobre_esa_ventana()
+    {
+        // inicio = 2027-04-10 - 1 año = 2026-04-10 -> "2026-04", dentro de la ventana de cierre.
+        var reserva = Reserva(expiresOn: "2027-04-10", term: "P1Y", consumidores: [Consumidor(horas: 100)]);
+        var foto = Foto(reservas: [reserva]);
+        var facturacion = SeisMeses("s1", "rg1", "vm1", antes: 200m, despues: 80m);
+
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoVentana());
+
+        var item = Assert.Single(modelo.Confirmados);
+        Assert.True(item.ExplicaElPeriodo);
+        Assert.Equal(120m, item.AporteAlPeriodo); // promedio base (200) - promedio cierre (80)
+        Assert.Equal(120m, modelo.AporteAlPeriodo);
+        Assert.Equal("s1|rg1|vm1", Assert.Single(modelo.RecursosQueExplicanElPeriodo));
+        // Contraste explícito: el ahorro "desde el inicio" (tarifa por hora, otra ventana) es un
+        // número distinto — las dos cifras no son la misma pregunta, ver el comentario de clase.
+        Assert.NotEqual(120m, item.Ahorro);
+    }
+
+    /// <summary>Frontera inferior: si la reserva arranca justo en el PRIMER mes de la ventana, toda
+    /// la ventana (base y cierre) ya ve al recurso cubierto — no hay "antes" que ver adentro.</summary>
+    [Fact]
+    public void Una_reserva_que_arranca_justo_en_el_primer_mes_de_la_ventana_no_explica_nada_adentro()
+    {
+        // inicio = 2027-01-15 - 1 año = 2026-01-15 -> "2026-01", el primer mes de la ventana base.
+        var reserva = Reserva(expiresOn: "2027-01-15", term: "P1Y", consumidores: [Consumidor()]);
+        var foto = Foto(reservas: [reserva]);
+        var facturacion = SeisMeses("s1", "rg1", "vm1", antes: 100m, despues: 100m);
+
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoVentana());
+
+        Assert.False(Assert.Single(modelo.Confirmados).ExplicaElPeriodo);
+    }
+
+    /// <summary>Frontera superior, el caso simétrico: si arranca en el ÚLTIMO mes de la ventana de
+    /// cierre, todavía queda un "antes" completo (ene-may) que ver adentro — sí explica.</summary>
+    [Fact]
+    public void Una_reserva_que_arranca_en_el_ultimo_mes_de_la_ventana_si_explica_el_periodo()
+    {
+        // inicio = 2027-06-20 - 1 año = 2026-06-20 -> "2026-06", el último mes de la ventana.
+        var reserva = Reserva(expiresOn: "2027-06-20", term: "P1Y", consumidores: [Consumidor()]);
+        var foto = Foto(reservas: [reserva]);
+        var facturacion = SeisMeses("s1", "rg1", "vm1", antes: 100m, despues: 100m);
+
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoVentana());
+
+        Assert.True(Assert.Single(modelo.Confirmados).ExplicaElPeriodo);
+    }
+
+    /// <summary>El caso simétrico al que nombra E9: una reserva que arranca DESPUÉS del fin de la
+    /// ventana (ej. el informe es de enero-junio, pero la reserva se compró en agosto y la foto se
+    /// tomó más tarde) tampoco existía todavía durante el período: no puede explicar nada de lo que
+    /// pasó ahí.</summary>
+    [Fact]
+    public void Una_reserva_que_arranca_despues_del_fin_de_la_ventana_no_explica_nada()
+    {
+        // inicio = 2028-08-01 - 1 año = 2027-08-01 -> "2027-08", posterior a "2026-06".
+        var reserva = Reserva(expiresOn: "2028-08-01", term: "P1Y", consumidores: [Consumidor()]);
+        var foto = Foto(reservas: [reserva]);
+        var facturacion = SeisMeses("s1", "rg1", "vm1", antes: 100m, despues: 100m);
+
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoVentana());
+
+        Assert.False(Assert.Single(modelo.Confirmados).ExplicaElPeriodo);
+    }
+
+    [Fact]
+    public void Sin_seis_meses_no_parciales_en_el_rango_ninguna_reserva_explica_el_periodo()
+    {
+        var reserva = Reserva(expiresOn: "2027-02-10", term: "P1Y", consumidores: [Consumidor()]); // inicio 2026-02
+        var foto = Foto(reservas: [reserva]);
+        var facturacion = new[]
+        {
+            Fila("s1", "rg1", "vm1", pvp: 100m, year: 2026, month: 1),
+            Fila("s1", "rg1", "vm1", pvp: 100m, year: 2026, month: 2),
+            Fila("s1", "rg1", "vm1", pvp: 100m, year: 2026, month: 3), // solo tres meses: menos del mínimo de seis
+        };
+
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoVentana(1, 3));
+
+        Assert.False(Assert.Single(modelo.Confirmados).ExplicaElPeriodo);
+        Assert.Empty(modelo.RecursosQueExplicanElPeriodo);
+        Assert.Equal(0m, modelo.AporteAlPeriodo);
+    }
+
+    /// <summary>El mismo recurso puede aparecer como consumidor confirmado de dos reservas distintas
+    /// (ej. una migración de una RI más chica a una más grande): si las dos son elegibles, el aporte
+    /// —que no depende de la reserva, solo del propio recurso y de la ventana— se cuenta UNA sola
+    /// vez, no una vez por reserva.</summary>
+    [Fact]
+    public void El_mismo_recurso_confirmado_bajo_dos_reservas_elegibles_no_se_cuenta_dos_veces()
+    {
+        var reservaA = Reserva(id: "rA", expiresOn: "2027-04-10", term: "P1Y", // inicio 2026-04, elegible
+            consumidores: [Consumidor(horas: 10)]);
+        var reservaB = Reserva(id: "rB", expiresOn: "2027-05-10", term: "P1Y", // inicio 2026-05, tambien elegible
+            consumidores: [Consumidor(horas: 20)]);
+        var foto = Foto(reservas: [reservaA, reservaB]);
+        var facturacion = SeisMeses("s1", "rg1", "vm1", antes: 200m, despues: 80m);
+
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoVentana());
+
+        Assert.Equal(2, modelo.Confirmados.Count); // una fila por par reserva-consumidor, sin colapsar
+        Assert.All(modelo.Confirmados, c => Assert.True(c.ExplicaElPeriodo));
+        Assert.All(modelo.Confirmados, c => Assert.Equal(120m, c.AporteAlPeriodo));
+        Assert.Equal(120m, modelo.AporteAlPeriodo); // no 240: el mismo recurso, contado una vez
+        Assert.Equal("s1|rg1|vm1", Assert.Single(modelo.RecursosQueExplicanElPeriodo));
+    }
+
+    /// <summary>
+    /// E1, mismo criterio que fija el test análogo de <c>AtribucionCalculadorTests</c>: el total se
+    /// redondea UNA vez desde la suma SIN redondear de los aportes crudos, nunca desde la suma de
+    /// los <see cref="AhorroPorRecurso.AporteAlPeriodo"/> ya redondeados de cada recurso. vmA aporta
+    /// un crudo de 1.005 (redondea a 1.01, +0.005); vmB aporta 2.005 (redondea a 2.01, +0.005).
+    /// Sumados YA redondeados: 1.01+2.01=3.02. Sumados crudos y redondeados una sola vez al final:
+    /// 1.005+2.005=3.010, que redondea a 3.01. 3.02 ≠ 3.01.
+    /// </summary>
+    [Fact]
+    public void El_aporte_al_periodo_se_redondea_una_sola_vez_desde_la_suma_cruda_no_desde_los_ya_redondeados()
+    {
+        var reserva = Reserva(expiresOn: "2027-04-10", term: "P1Y", consumidores: // inicio 2026-04, elegible
+        [
+            Consumidor(instanceId: "iA", nombre: "vmA", grupo: "rgA", suscripcion: "s1", horas: 1),
+            Consumidor(instanceId: "iB", nombre: "vmB", grupo: "rgB", suscripcion: "s1", horas: 1),
+        ]);
+        var foto = Foto(reservas: [reserva]);
+        var facturacion = new[]
+        {
+            // vm-ancla: solo para que la ventana de seis meses exista (vmA/vmB no facturan en abr-jun).
+            Fila("s1", "rg-ancla", "vm-ancla", pvp: 1m, year: 2026, month: 1),
+            Fila("s1", "rg-ancla", "vm-ancla", pvp: 1m, year: 2026, month: 2),
+            Fila("s1", "rg-ancla", "vm-ancla", pvp: 1m, year: 2026, month: 3),
+            Fila("s1", "rg-ancla", "vm-ancla", pvp: 1m, year: 2026, month: 4),
+            Fila("s1", "rg-ancla", "vm-ancla", pvp: 1m, year: 2026, month: 5),
+            Fila("s1", "rg-ancla", "vm-ancla", pvp: 1m, year: 2026, month: 6),
+            // vmA aporta crudo 1.005 (3.015/3 de base, 0 de cierre); vmB aporta crudo 2.005 (6.015/3).
+            Fila("s1", "rgA", "vmA", pvp: 3.015m, year: 2026, month: 1),
+            Fila("s1", "rgB", "vmB", pvp: 6.015m, year: 2026, month: 1),
+        };
+
+        var modelo = AhorroReservasCalculador.Calcular(foto, facturacion, [], ContextoVentana());
+
+        var vmA = Assert.Single(modelo.Confirmados, c => c.ResourceName == "vmA");
+        var vmB = Assert.Single(modelo.Confirmados, c => c.ResourceName == "vmB");
+        Assert.Equal(1.01m, vmA.AporteAlPeriodo);
+        Assert.Equal(2.01m, vmB.AporteAlPeriodo);
+        Assert.Equal(3.01m, modelo.AporteAlPeriodo); // 1.005+2.005=3.010 -> 3.01, NO 1.01+2.01=3.02
     }
 }

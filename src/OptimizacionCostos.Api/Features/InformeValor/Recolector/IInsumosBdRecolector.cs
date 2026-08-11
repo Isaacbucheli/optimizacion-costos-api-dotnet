@@ -44,7 +44,15 @@ public sealed record InsumosBd(
     bool SeguridadGestionadaExternamente,
     string? SeguridadGestionadaNota,
     DateTime LeidoEn,
-    string? RbacOrigen = null)
+    string? RbacOrigen = null,
+    /// <summary>Hallazgos RESUELTOS de la matriz WAF (<see cref="HallazgoResueltoRecolector"/>,
+    /// tarea 2 de la entrega 2d, E3): universo disjunto de <see cref="Advisor"/>/<see cref="Matriz"/>,
+    /// que solo miran hallazgos ACTIVOS. Es el insumo del balde 2 de la atribución
+    /// (<c>AtribucionCalculador</c>), un bloque nuevo que ningún consumidor de la entrega 2b leía
+    /// todavía. Default <c>null</c> (tratado como vacío por quien lo lee) por el mismo motivo que
+    /// <see cref="RbacOrigen"/>: para no romper, con un parámetro nuevo requerido, a cada test de
+    /// este módulo que ya construye <see cref="InsumosBd"/> a mano.</summary>
+    IReadOnlyList<HallazgoResueltoFila>? HallazgosResueltos = null)
 {
     /// <summary><see cref="RbacOrigen"/> cuando <see cref="Rbac"/> salió de Revisión de accesos.</summary>
     public const string OrigenBase = "base";
