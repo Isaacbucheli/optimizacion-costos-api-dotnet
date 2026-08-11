@@ -55,4 +55,30 @@ public sealed class InformeValorSchemaTests
         Assert.Contains(
             "IF COL_LENGTH('dbo.informe_valor_ingesta', 'rows_merged') IS NULL", todo, StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Mismo patrón que rows_merged (ver el test de arriba): role_class/is_custom_role tienen que
+    /// estar en el CREATE inline de informe_valor_rbac (instalación nueva) Y en un soft-migration
+    /// guardado por COL_LENGTH (tabla ya creada por una entrega anterior, sin las columnas) -- sin
+    /// el segundo, esa base se queda para siempre sin poder persistir la clase de rol, aunque el
+    /// código nuevo ya la calcule y la clasificación del bloque de seguridad ya dependa de ella.
+    /// </summary>
+    [Fact]
+    public void RoleClass_e_IsCustomRole_estan_en_el_create_inline_de_rbac()
+    {
+        var crea = InformeValorSchema.Statements
+            .Single(s => s.Contains("CREATE TABLE dbo.informe_valor_rbac", StringComparison.Ordinal));
+        Assert.Contains("role_class NVARCHAR(30) NULL", crea, StringComparison.Ordinal);
+        Assert.Contains("is_custom_role BIT NOT NULL", crea, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RoleClass_e_IsCustomRole_tienen_soft_migration_para_bases_preexistentes()
+    {
+        var todo = string.Join("\n", InformeValorSchema.Statements);
+        Assert.Contains(
+            "IF COL_LENGTH('dbo.informe_valor_rbac', 'role_class') IS NULL", todo, StringComparison.Ordinal);
+        Assert.Contains(
+            "IF COL_LENGTH('dbo.informe_valor_rbac', 'is_custom_role') IS NULL", todo, StringComparison.Ordinal);
+    }
 }

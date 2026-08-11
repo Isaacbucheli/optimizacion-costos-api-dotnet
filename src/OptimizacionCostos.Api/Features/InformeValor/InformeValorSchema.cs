@@ -101,7 +101,9 @@ public static class InformeValorSchema
                 nombre NVARCHAR(300) NULL,
                 login NVARCHAR(300) NULL,
                 cuenta_activa NVARCHAR(30) NULL,
-                ultimo_login NVARCHAR(60) NULL
+                ultimo_login NVARCHAR(60) NULL,
+                role_class NVARCHAR(30) NULL,
+                is_custom_role BIT NOT NULL CONSTRAINT DF_iv_rbac_custom DEFAULT 0
             );
             CREATE UNIQUE INDEX UX_iv_rbac_key ON dbo.informe_valor_rbac (client_id, natural_key_hash);
         END
@@ -114,6 +116,21 @@ public static class InformeValorSchema
         """
         IF COL_LENGTH('dbo.informe_valor_ingesta', 'rows_merged') IS NULL
             ALTER TABLE dbo.informe_valor_ingesta ADD rows_merged INT NOT NULL CONSTRAINT DF_iv_ingesta_merged DEFAULT 0;
+        """,
+        // soft-migration rbac (tabla preexistente de una entrega anterior, ya en PR): mientras la
+        // clasificación de roles privilegiados fuera por el nombre del rol en inglés, que estas dos
+        // columnas volvieran null/false al releer era inofensivo (SeguridadCalculador ni las
+        // miraba). En cuanto la clasificación pasa a ser por RoleClass (alineada con Revisión de
+        // accesos), una base sin estas columnas perdería la clase de TODO rol que llegue por el
+        // Excel de respaldo, y los privilegiados se contarían con el respaldo por nombre -- el
+        // defecto que ese cambio corrige, reaparecido solo para los clientes que suben el Excel.
+        """
+        IF COL_LENGTH('dbo.informe_valor_rbac', 'role_class') IS NULL
+            ALTER TABLE dbo.informe_valor_rbac ADD role_class NVARCHAR(30) NULL;
+        """,
+        """
+        IF COL_LENGTH('dbo.informe_valor_rbac', 'is_custom_role') IS NULL
+            ALTER TABLE dbo.informe_valor_rbac ADD is_custom_role BIT NOT NULL CONSTRAINT DF_iv_rbac_custom DEFAULT 0;
         """,
     ];
 

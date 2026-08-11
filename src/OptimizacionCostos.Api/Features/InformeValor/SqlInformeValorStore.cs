@@ -62,11 +62,12 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         ("horario", typeof(string), r => Db(r.Horario)),
     ];
 
-    // RoleClass/IsCustomRole de RbacRow NO aparecen acá: informe_valor_rbac no tiene columnas
-    // para ellos (ver el comentario de clase de RbacRow) y esta tarea no habilita tocar el
-    // esquema. Se calculan igual al parsear (para quien use RbacParser.Parse directo, antes de
-    // guardar) pero no sobreviven este bulk copy — InformeValorBulkColumnsTests fija que la
-    // lista de columnas es exactamente la del esquema, sin ellos.
+    // RoleClass/IsCustomRole de RbacRow SÍ se proyectan (a diferencia de la entrega anterior: ver
+    // el comentario de clase de RbacRow y las dos columnas de soft-migration en
+    // InformeValorSchema): sin esto, todo rol privilegiado que llegara por el Excel de respaldo
+    // perdía su clase al guardar y releer, y SeguridadCalculador lo contaba con el respaldo por
+    // nombre en vez de por RoleClass -- InformeValorBulkColumnsTests fija que la lista de columnas
+    // es exactamente la del esquema, incluidas estas dos.
     internal static readonly (string Column, Type Type, Func<RbacRow, object> Value)[] RbacColumns =
     [
         ("client_id", typeof(int), _ => 0),
@@ -82,6 +83,8 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         ("login", typeof(string), r => Db(r.Login)),
         ("cuenta_activa", typeof(string), r => Db(r.CuentaActiva)),
         ("ultimo_login", typeof(string), r => Db(r.UltimoLogin)),
+        ("role_class", typeof(string), r => Db(r.RoleClass)),
+        ("is_custom_role", typeof(bool), r => r.IsCustomRole),
     ];
 
     public Task<int> ReplaceFacturacionAsync(
@@ -280,7 +283,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT natural_key_hash, sheet_name, suscripcion, scope, nivel, rol, tipo, nombre,
-                login, cuenta_activa, ultimo_login
+                login, cuenta_activa, ultimo_login, role_class, is_custom_role
             FROM dbo.informe_valor_rbac
             WHERE client_id = @cid
             ORDER BY row_id
@@ -291,10 +294,9 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         await using var rd = await cmd.ExecuteReaderAsync(ct);
         while (await rd.ReadAsync(ct))
         {
-            // RoleClass/IsCustomRole en null/false SIEMPRE acá: la columna no existe en la
-            // consulta de arriba (no hay de dónde leerlos). RbacFilaConverter.Convertir en sí
-            // mismo es fiel a lo que reciba; la pérdida es de esta lectura, no de esa conversión
-            // (ver el comentario de clase de RbacFilaConverter).
+            // RoleClass/IsCustomRole ya vienen de sus propias columnas (ver el comentario de
+            // RbacColumns): RbacFilaConverter.Convertir es fiel a lo que reciba, y ahora lo que
+            // recibe es lo mismo que calculó RbacParser al parsear, no null/false fijo.
             var row = new RbacRow(
                 Hash: rd.GetString(0),
                 SheetName: rd.IsDBNull(1) ? null : rd.GetString(1),
@@ -307,7 +309,8 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
                 Login: rd.IsDBNull(8) ? null : rd.GetString(8),
                 CuentaActiva: rd.IsDBNull(9) ? null : rd.GetString(9),
                 UltimoLogin: rd.IsDBNull(10) ? null : rd.GetString(10),
-                RoleClass: null, IsCustomRole: false);
+                RoleClass: rd.IsDBNull(11) ? null : rd.GetString(11),
+                IsCustomRole: rd.GetBoolean(12));
             result.Add(RbacFilaConverter.Convertir(row));
         }
         return result;

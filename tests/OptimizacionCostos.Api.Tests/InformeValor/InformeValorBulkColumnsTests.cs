@@ -56,19 +56,20 @@ public sealed class InformeValorBulkColumnsTests
     }
 
     /// <summary>
-    /// informe_valor_rbac es el contrato de destino (tabla completa, no se toca el esquema): las
-    /// columnas de la proyección tienen que ser EXACTAMENTE las de esa tabla, ni una más ni una
-    /// menos. En particular, RoleClass/IsCustomRole de RbacRow NO aparecen acá a propósito: la
-    /// tabla no tiene columnas para ellos (ver el comentario de clase de RbacRow) y agregarlas
-    /// hubiera exigido tocar el esquema, que esta tarea no habilita.
+    /// informe_valor_rbac es el contrato de destino: las columnas de la proyección tienen que ser
+    /// EXACTAMENTE las de esa tabla, ni una más ni una menos. RoleClass/IsCustomRole de RbacRow SÍ
+    /// aparecen acá (role_class/is_custom_role): la clasificación de roles privilegiados pasó a
+    /// depender de RoleClass (ver SeguridadCalculador), así que perderlos al persistir dejaría a
+    /// todo cliente que sube el Excel de respaldo sin la clase real de sus roles.
     /// </summary>
     [Fact]
-    public void Las_columnas_de_rbac_cubren_el_esquema_y_no_incluyen_RoleClass_ni_IsCustomRole()
+    public void Las_columnas_de_rbac_cubren_el_esquema_incluidas_role_class_e_is_custom_role()
     {
         var nombres = SqlInformeValorStore.RbacColumns.Select(c => c.Column).ToList();
         Assert.Equal(
             ["client_id", "ingesta_id", "natural_key_hash", "sheet_name", "suscripcion", "scope",
-             "nivel", "rol", "tipo", "nombre", "login", "cuenta_activa", "ultimo_login"],
+             "nivel", "rol", "tipo", "nombre", "login", "cuenta_activa", "ultimo_login",
+             "role_class", "is_custom_role"],
             nombres);
     }
 

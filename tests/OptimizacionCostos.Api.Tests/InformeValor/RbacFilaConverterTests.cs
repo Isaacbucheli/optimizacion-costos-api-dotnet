@@ -92,8 +92,9 @@ public sealed class RbacFilaConverterTests
         Assert.Null(fila.ViaGrupoId);
     }
 
-    // ── Decisión 6: RoleClass/IsCustomRole pasan igual que llegan en RbacRow (la pérdida ocurre
-    // al leer desde la base, en SqlInformeValorStore.GetRbacAsync, no en esta conversión) ──
+    // ── Decisión 6: RoleClass/IsCustomRole pasan igual que llegan en RbacRow. Ya no se pierden al
+    // leer desde la base: SqlInformeValorStore.GetRbacAsync tiene columnas propias para los dos
+    // (role_class/is_custom_role) y reconstruye RbacRow desde ahí, no con null/false fijo ──
 
     [Fact]
     public void RoleClass_e_IsCustomRole_pasan_intactos_si_RbacRow_los_trae()

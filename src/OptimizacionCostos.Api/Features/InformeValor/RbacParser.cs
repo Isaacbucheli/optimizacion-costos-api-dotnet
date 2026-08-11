@@ -10,15 +10,15 @@ namespace OptimizacionCostos.Api.Features.InformeValor;
 /// <see cref="CuentaActiva"/> y <see cref="UltimoLogin"/>: la conversión a los tipos que necesita
 /// <c>RbacFila</c> pasa por <see cref="RbacFilaConverter"/>, al leer, no acá).
 ///
-/// <para><see cref="RoleClass"/>/<see cref="IsCustomRole"/> NO tienen columna en
-/// <c>informe_valor_rbac</c> (esa tabla es el contrato de destino de esta tarea y no se toca el
-/// esquema): el parser los calcula igual, invirtiendo la etiqueta en español de "Clase de rol"/
-/// "Rol personalizado" (ver <see cref="RbacParser"/>), pero <c>SqlInformeValorStore.RbacColumns</c>
-/// no los proyecta a ninguna columna. Se pierden al persistir, a propósito y documentado: viajan
-/// acá para que quien llame a <see cref="RbacParser.Parse"/> directamente (p. ej. una vista previa
-/// antes de guardar) los tenga completos, pero <c>RbacFilaConverter.Convertir</c> —que solo ve lo
-/// que la base guardó— siempre construye <c>RbacFila.RoleClass</c>/<c>IsCustomRole</c> en null/
-/// false para un archivo que ya pasó por la base.</para>
+/// <para><see cref="RoleClass"/>/<see cref="IsCustomRole"/> sí tienen columna en
+/// <c>informe_valor_rbac</c> (<c>role_class</c>/<c>is_custom_role</c>, con soft-migration en
+/// <c>InformeValorSchema</c> para una tabla creada por una entrega anterior): el parser los
+/// calcula invirtiendo la etiqueta en español de "Clase de rol"/"Rol personalizado" (ver
+/// <see cref="RbacParser"/>), y <c>SqlInformeValorStore.RbacColumns</c> los proyecta como cualquier
+/// otro campo. Sobreviven al persistir: un <c>RbacFila</c> reconstruido después de guardar y
+/// releer trae la misma clase que calculó el parser, no null/false — la clasificación por
+/// <c>RoleClass</c> de <c>SeguridadCalculador</c> depende de que sea así para los clientes que
+/// suben este archivo, igual que para los que salen de la base.</para>
 /// </summary>
 public sealed record RbacRow(
     string Hash, string? SheetName, string? Suscripcion, string? Scope, string? Nivel,
