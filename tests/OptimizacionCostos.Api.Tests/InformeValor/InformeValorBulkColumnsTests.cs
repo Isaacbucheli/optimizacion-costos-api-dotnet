@@ -55,6 +55,31 @@ public sealed class InformeValorBulkColumnsTests
             Assert.True(value(caso) is not null, $"La columna {column} devolvió null de C#");
     }
 
+    /// <summary>
+    /// informe_valor_rbac es el contrato de destino (tabla completa, no se toca el esquema): las
+    /// columnas de la proyección tienen que ser EXACTAMENTE las de esa tabla, ni una más ni una
+    /// menos. En particular, RoleClass/IsCustomRole de RbacRow NO aparecen acá a propósito: la
+    /// tabla no tiene columnas para ellos (ver el comentario de clase de RbacRow) y agregarlas
+    /// hubiera exigido tocar el esquema, que esta tarea no habilita.
+    /// </summary>
+    [Fact]
+    public void Las_columnas_de_rbac_cubren_el_esquema_y_no_incluyen_RoleClass_ni_IsCustomRole()
+    {
+        var nombres = SqlInformeValorStore.RbacColumns.Select(c => c.Column).ToList();
+        Assert.Equal(
+            ["client_id", "ingesta_id", "natural_key_hash", "sheet_name", "suscripcion", "scope",
+             "nivel", "rol", "tipo", "nombre", "login", "cuenta_activa", "ultimo_login"],
+            nombres);
+    }
+
+    [Fact]
+    public void Los_nulos_de_rbac_se_mapean_a_DBNull()
+    {
+        var fila = new RbacRow("h", null, null, null, null, null, null, null, null, null, null, null, false);
+        foreach (var (column, _, value) in SqlInformeValorStore.RbacColumns)
+            Assert.True(value(fila) is not null, $"La columna {column} devolvió null de C#");
+    }
+
     [Fact]
     public void El_hash_viaja_como_texto_de_64_caracteres()
     {

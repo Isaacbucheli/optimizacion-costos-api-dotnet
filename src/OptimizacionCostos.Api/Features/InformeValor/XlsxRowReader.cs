@@ -12,30 +12,36 @@ namespace OptimizacionCostos.Api.Features.InformeValor;
 /// </summary>
 public static class XlsxRowReader
 {
-    public static IEnumerable<string[]> Read(Stream stream, int maxRows)
+    /// <summary>
+    /// Nombres de las hojas del libro, en el orden en que aparecen (el mismo orden que ve un
+    /// consultor en las pestañas de Excel). Usado por RbacParser para decidir qué hoja leer entre
+    /// las nueve del export de Revisión de accesos antes de pagar el costo de recorrer ninguna.
+    /// </summary>
+    public static IReadOnlyList<string> ReadSheetNames(Stream stream)
     {
-        SpreadsheetDocument doc;
-        try { doc = SpreadsheetDocument.Open(stream, false); }
-        catch (Exception ex) when (ex is FileFormatException or FormatException or ArgumentException
-            or OpenXmlPackageException)
-        {
-            // Estas son las excepciones que de verdad significan "esto no es un .xlsx":
-            // FileFormatException es la que lanza la librería al abrir un paquete que no es un
-            // zip/OOXML válido (incluye el caso de un stream vacío), OpenXmlPackageException es
-            // la que lanza cuando el paquete OOXML tiene relaciones o content-types inválidos, y
-            // FormatException/ArgumentException cubren fallos de parseo o de argumentos
-            // inválidos dentro del paquete. Cualquier otra cosa (E/S, memoria, un bug nuestro) se
-            // propaga: el controller ya tiene un catch general que responde 500, que es lo
-            // correcto para una falla que no es del archivo.
-            throw new InvalidOperationException("El archivo no es un Excel (.xlsx) válido.");
-        }
+        using var doc = AbrirPaquete(stream);
+        var wbPart = doc.WorkbookPart
+            ?? throw new InvalidOperationException("El archivo no es un Excel (.xlsx) válido.");
+        return [.. wbPart.Workbook.Descendants<Sheet>().Select(s => s.Name?.Value ?? string.Empty)];
+    }
 
-        using (doc)
+    /// <summary>
+    /// Lee la hoja indicada por nombre (comparación exacta tras recortar espacios), o la primera
+    /// del libro si <paramref name="sheetName"/> es null — el comportamiento original, que
+    /// BitcostParser y CasosParser siguen usando sin cambios.
+    /// </summary>
+    public static IEnumerable<string[]> Read(Stream stream, int maxRows, string? sheetName = null)
+    {
+        using (var doc = AbrirPaquete(stream))
         {
             var wbPart = doc.WorkbookPart
                 ?? throw new InvalidOperationException("El archivo no es un Excel (.xlsx) válido.");
-            var sheet = wbPart.Workbook.Descendants<Sheet>().FirstOrDefault()
-                ?? throw new InvalidOperationException("El Excel no contiene ninguna hoja.");
+            var sheet = sheetName is null
+                ? wbPart.Workbook.Descendants<Sheet>().FirstOrDefault()
+                    ?? throw new InvalidOperationException("El Excel no contiene ninguna hoja.")
+                : wbPart.Workbook.Descendants<Sheet>()
+                    .FirstOrDefault(s => string.Equals(s.Name?.Value?.Trim(), sheetName, StringComparison.Ordinal))
+                    ?? throw new InvalidOperationException($"El Excel no contiene una hoja llamada '{sheetName}'.");
             var wsPart = (WorksheetPart)wbPart.GetPartById(sheet.Id!.Value!);
             var sst = wbPart.SharedStringTablePart?.SharedStringTable;
 
@@ -52,6 +58,26 @@ public static class XlsxRowReader
 
                 yield return Cells(row, sst);
             }
+        }
+    }
+
+    /// <summary>Abre el paquete OOXML traduciendo los fallos de formato a un mensaje para el
+    /// usuario. Compartido por <see cref="Read"/> y <see cref="ReadSheetNames"/>.</summary>
+    private static SpreadsheetDocument AbrirPaquete(Stream stream)
+    {
+        try { return SpreadsheetDocument.Open(stream, false); }
+        catch (Exception ex) when (ex is FileFormatException or FormatException or ArgumentException
+            or OpenXmlPackageException)
+        {
+            // Estas son las excepciones que de verdad significan "esto no es un .xlsx":
+            // FileFormatException es la que lanza la librería al abrir un paquete que no es un
+            // zip/OOXML válido (incluye el caso de un stream vacío), OpenXmlPackageException es
+            // la que lanza cuando el paquete OOXML tiene relaciones o content-types inválidos, y
+            // FormatException/ArgumentException cubren fallos de parseo o de argumentos
+            // inválidos dentro del paquete. Cualquier otra cosa (E/S, memoria, un bug nuestro) se
+            // propaga: el controller ya tiene un catch general que responde 500, que es lo
+            // correcto para una falla que no es del archivo.
+            throw new InvalidOperationException("El archivo no es un Excel (.xlsx) válido.");
         }
     }
 

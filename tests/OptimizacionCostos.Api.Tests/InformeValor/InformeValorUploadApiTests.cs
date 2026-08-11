@@ -207,6 +207,10 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
             int clientId, string fileName, string? user, ParseResult<CasoRow> parsed, CancellationToken ct)
             => Task.FromResult(1);
 
+        public Task<int> ReplaceRbacAsync(
+            int clientId, string fileName, string? user, RbacParseResult parsed, CancellationToken ct)
+            => Task.FromResult(1);
+
         public Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct) => Task.CompletedTask;
 
         public Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct)
@@ -217,6 +221,9 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
 
         public Task<IReadOnlyList<CasoRow>> GetCasosAsync(int clientId, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<CasoRow>>([]);
+
+        public Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct)
+            => Task.FromResult<IReadOnlyList<RbacFila>>([]);
     }
 
     /// <summary>Ensamblador falso que revienta si se lo llega a usar: ver el comentario de

@@ -1,3 +1,5 @@
+using OptimizacionCostos.Api.Features.InformeValor.Recolector;
+
 namespace OptimizacionCostos.Api.Features.InformeValor;
 
 /// <summary>
@@ -19,6 +21,14 @@ public interface IInformeValorStore
     Task<int> ReplaceCasosAsync(
         int clientId, string fileName, string? user, ParseResult<CasoRow> parsed, CancellationToken ct);
 
+    /// <summary>Reemplaza el insumo de RBAC de respaldo (entrega 2 del informe de valor). Recibe
+    /// <see cref="RbacParseResult"/> en vez de <see cref="ParseResult{T}"/> porque el parser lleva
+    /// metadata propia (qué hoja se leyó, los dos ejes medidos por este archivo) que no aplica a
+    /// facturación ni casos; la implementación la proyecta a <see cref="ParseResult{T}"/> antes de
+    /// reusar el mismo camino de persistencia.</summary>
+    Task<int> ReplaceRbacAsync(
+        int clientId, string fileName, string? user, RbacParseResult parsed, CancellationToken ct);
+
     Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct);
 
     Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct);
@@ -36,4 +46,13 @@ public interface IInformeValorStore
     /// <summary>Las filas de casos ya persistidas de un cliente. Mismo motivo de
     /// <c>ORDER BY row_id</c> que <see cref="GetFacturacionAsync"/>.</summary>
     Task<IReadOnlyList<CasoRow>> GetCasosAsync(int clientId, CancellationToken ct);
+
+    /// <summary>
+    /// Las filas de RBAC ya persistidas de un cliente, convertidas a <see cref="RbacFila"/>
+    /// (<see cref="RbacFilaConverter"/> hace la conversión de texto a los tipos que
+    /// <see cref="RbacFila"/> necesita — decisión 7 del brief). <b>Más débil que
+    /// <see cref="RbacRecolector"/>:</b> ver el comentario de clase de <see cref="RbacFilaConverter"/>
+    /// para qué campos de <see cref="RbacFila"/> no sobreviven esta vía y por qué.
+    /// </summary>
+    Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct);
 }

@@ -90,6 +90,50 @@ public sealed class XlsxRowReaderTests
     }
 
     /// <summary>
+    /// Hermano de BuildXlsx para libros con varias hojas (RbacParser: decisión 1, elegir la hoja
+    /// correcta entre las nueve del export de Revisión de accesos). El orden del diccionario es
+    /// el orden de inserción en el libro (Dictionary&lt;,&gt; de C# lo preserva), que es lo que
+    /// importa para probar el orden de "hojas ignoradas".
+    /// </summary>
+    internal static MemoryStream BuildXlsxMultiHoja(IReadOnlyDictionary<string, IEnumerable<string?[]>> hojas)
+    {
+        var ms = new MemoryStream();
+        using (var doc = SpreadsheetDocument.Create(ms, SpreadsheetDocumentType.Workbook, autoSave: true))
+        {
+            var wbPart = doc.AddWorkbookPart();
+            wbPart.Workbook = new Workbook();
+            var sheets = wbPart.Workbook.AppendChild(new Sheets());
+            var sheetId = 1u;
+            foreach (var (nombre, filas) in hojas)
+            {
+                var wsPart = wbPart.AddNewPart<WorksheetPart>();
+                var data = new SheetData();
+                var r = 1u;
+                foreach (var row in filas)
+                {
+                    var xr = new Row { RowIndex = r };
+                    for (var c = 0; c < row.Length; c++)
+                    {
+                        if (row[c] is null) continue;
+                        xr.Append(new Cell
+                        {
+                            CellReference = $"{ColName(c)}{r}",
+                            DataType = CellValues.InlineString,
+                            InlineString = new InlineString(new Text(row[c]!)),
+                        });
+                    }
+                    data.Append(xr);
+                    r++;
+                }
+                wsPart.Worksheet = new Worksheet(data);
+                sheets.AppendChild(new Sheet { Id = wbPart.GetIdOfPart(wsPart), SheetId = sheetId++, Name = nombre });
+            }
+        }
+        ms.Position = 0;
+        return ms;
+    }
+
+    /// <summary>
     /// El export real de BITCOST no usa sharedStrings, usa cadenas en línea. Un lector que
     /// solo mire la tabla de cadenas compartidas devuelve las 26 mil filas en blanco sin
     /// lanzar ningún error.
@@ -172,5 +216,63 @@ public sealed class XlsxRowReaderTests
         using var basura = new MemoryStream("no soy un xlsx"u8.ToArray());
         var ex = Assert.Throws<InvalidOperationException>(() => XlsxRowReader.Read(basura, 100).ToList());
         Assert.Contains("Excel", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ── Multi-hoja (RbacParser: decisión 1, "Asignaciones RBAC" entre las nueve del export) ──
+
+    [Fact]
+    public void ReadSheetNames_devuelve_los_nombres_en_el_orden_del_libro()
+    {
+        using var xlsx = BuildXlsxMultiHoja(new Dictionary<string, IEnumerable<string?[]>>
+        {
+            ["Resumen"] = [["a"]],
+            ["Asignaciones RBAC"] = [["b"]],
+            ["Cambios"] = [["c"]],
+        });
+
+        Assert.Equal(["Resumen", "Asignaciones RBAC", "Cambios"], XlsxRowReader.ReadSheetNames(xlsx));
+    }
+
+    [Fact]
+    public void Read_con_nombre_de_hoja_lee_esa_hoja_y_no_la_primera()
+    {
+        using var xlsx = BuildXlsxMultiHoja(new Dictionary<string, IEnumerable<string?[]>>
+        {
+            ["Resumen"] = [["de-resumen"]],
+            ["Asignaciones RBAC"] = [["de-asignaciones"]],
+        });
+
+        var filas = XlsxRowReader.Read(xlsx, 100, "Asignaciones RBAC").ToList();
+
+        Assert.Equal(["de-asignaciones"], filas[0]);
+    }
+
+    [Fact]
+    public void Read_con_un_nombre_de_hoja_inexistente_lanza_con_mensaje_para_el_usuario()
+    {
+        using var xlsx = BuildXlsxMultiHoja(new Dictionary<string, IEnumerable<string?[]>>
+        {
+            ["Resumen"] = [["a"]],
+        });
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => XlsxRowReader.Read(xlsx, 100, "Hoja que no existe").ToList());
+        Assert.Contains("Hoja que no existe", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>Sin nombre de hoja, el comportamiento no cambia para BitcostParser/CasosParser:
+    /// siempre la primera. Guarda de regresión al agregar el parámetro opcional.</summary>
+    [Fact]
+    public void Read_sin_nombre_de_hoja_sigue_leyendo_la_primera()
+    {
+        using var xlsx = BuildXlsxMultiHoja(new Dictionary<string, IEnumerable<string?[]>>
+        {
+            ["Primera"] = [["uno"]],
+            ["Segunda"] = [["dos"]],
+        });
+
+        var filas = XlsxRowReader.Read(xlsx, 100).ToList();
+
+        Assert.Equal(["uno"], filas[0]);
     }
 }

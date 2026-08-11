@@ -268,7 +268,26 @@ public sealed class InformeValorController(
                 return Ok(Resumen(id, parsed.RowsTotal, parsed.Rows.Count, parsed.RowsSkipped, parsed.RowsMerged, parsed.Warnings));
             }
 
-            return BadRequest(new { detail = "La carga del insumo de RBAC llega en la entrega 2." });
+            if (string.Equals(kind, SqlInformeValorStore.KindRbac, StringComparison.OrdinalIgnoreCase))
+            {
+                var parsed = RbacParser.Parse(ms);
+
+                // Decisión 4 del brief ("precedencia: gana la base"): si el consultor sube el
+                // archivo habiendo datos completos en la base, gana la base. El archivo se
+                // descarta -- pero se avisa en la respuesta, nunca en silencio: un archivo
+                // descartado sin decirlo es un consultor convencido de que subió algo que no se
+                // usó. Se reusa el mismo recolector que ya alimenta /insumos-bd y /preview en vez
+                // de agregar un método liviano: es una acción manual del consultor, no un hot
+                // path, y ya paga este mismo costo en /preview.
+                var insumos = await recolector.LeerAsync(clientId, ct);
+                if (insumos.EstadoRbac.Disponibilidad == DisponibilidadRbac.Completo)
+                    return Ok(ResumenRbacDescartado(parsed));
+
+                var id = await store.ReplaceRbacAsync(clientId, name, user, parsed, ct);
+                return Ok(ResumenRbac(id, parsed));
+            }
+
+            return BadRequest(new { detail = "Tipo de insumo desconocido." });
         }
         catch (UploadValidationException ex) { return StatusCode(ex.StatusCode, new { detail = ex.Message }); }
         catch (InvalidOperationException ex) { return BadRequest(new { detail = ex.Message }); }
@@ -317,6 +336,30 @@ public sealed class InformeValorController(
             ingesta_id = id, rows_total = total, rows_processed = procesadas,
             rows_skipped = descartadas, rows_merged = fusionadas, warnings,
         };
+
+    /// <summary>Mismo contrato de <see cref="Resumen"/> (rows_total = rows_processed +
+    /// rows_skipped; rows_merged siempre 0 porque RbacParser nunca fusiona), más
+    /// <c>descartado: false</c> para que el consultor no tenga que inferirlo de la presencia de
+    /// <c>ingesta_id</c>.</summary>
+    private static object ResumenRbac(int id, RbacParseResult parsed) => new
+    {
+        ingesta_id = id, rows_total = parsed.RowsTotal, rows_processed = parsed.Rows.Count,
+        rows_skipped = parsed.RowsSkipped, rows_merged = 0, warnings = parsed.Warnings,
+        descartado = false,
+    };
+
+    /// <summary>Decisión 4: el archivo se descartó porque la base ya tiene el insumo de RBAC
+    /// completo para este cliente. Sin <c>ingesta_id</c> a propósito -- no se creó ninguna corrida,
+    /// nada se persistió -- pero con las mismas cifras que <see cref="ResumenRbac"/> hubiera
+    /// reportado, para que el consultor vea qué había en el archivo aunque no se haya usado.</summary>
+    private static object ResumenRbacDescartado(RbacParseResult parsed) => new
+    {
+        descartado = true,
+        detail = "La base ya tiene el insumo de RBAC completo para este cliente: se descartó el " +
+            "archivo. El informe usa los datos de Revisión de accesos, no este Excel.",
+        rows_total = parsed.RowsTotal, rows_processed = parsed.Rows.Count,
+        rows_skipped = parsed.RowsSkipped, rows_merged = 0, warnings = parsed.Warnings,
+    };
 
     private static object Describe(string kind, bool obligatorio, IReadOnlyDictionary<string, InsumoEstado> cargados)
     {

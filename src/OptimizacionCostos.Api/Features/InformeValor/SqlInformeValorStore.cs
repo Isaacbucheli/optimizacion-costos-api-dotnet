@@ -2,6 +2,7 @@ using System.Data;
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Data;
+using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 
 namespace OptimizacionCostos.Api.Features.InformeValor;
 
@@ -61,6 +62,28 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         ("horario", typeof(string), r => Db(r.Horario)),
     ];
 
+    // RoleClass/IsCustomRole de RbacRow NO aparecen acá: informe_valor_rbac no tiene columnas
+    // para ellos (ver el comentario de clase de RbacRow) y esta tarea no habilita tocar el
+    // esquema. Se calculan igual al parsear (para quien use RbacParser.Parse directo, antes de
+    // guardar) pero no sobreviven este bulk copy — InformeValorBulkColumnsTests fija que la
+    // lista de columnas es exactamente la del esquema, sin ellos.
+    internal static readonly (string Column, Type Type, Func<RbacRow, object> Value)[] RbacColumns =
+    [
+        ("client_id", typeof(int), _ => 0),
+        ("ingesta_id", typeof(int), _ => 0),
+        ("natural_key_hash", typeof(string), r => r.Hash),
+        ("sheet_name", typeof(string), r => Db(r.SheetName)),
+        ("suscripcion", typeof(string), r => Db(r.Suscripcion)),
+        ("scope", typeof(string), r => Db(r.Scope)),
+        ("nivel", typeof(string), r => Db(r.Nivel)),
+        ("rol", typeof(string), r => Db(r.Rol)),
+        ("tipo", typeof(string), r => Db(r.Tipo)),
+        ("nombre", typeof(string), r => Db(r.Nombre)),
+        ("login", typeof(string), r => Db(r.Login)),
+        ("cuenta_activa", typeof(string), r => Db(r.CuentaActiva)),
+        ("ultimo_login", typeof(string), r => Db(r.UltimoLogin)),
+    ];
+
     public Task<int> ReplaceFacturacionAsync(
         int clientId, string fileName, string? user, ParseResult<FacturacionRow> parsed, CancellationToken ct) =>
         ReplaceAsync(clientId, KindFacturacion, "dbo.informe_valor_facturacion", fileName, user,
@@ -70,6 +93,17 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         int clientId, string fileName, string? user, ParseResult<CasoRow> parsed, CancellationToken ct) =>
         ReplaceAsync(clientId, KindCasos, "dbo.informe_valor_caso", fileName, user,
             parsed.Rows, CasoColumns, parsed, ct);
+
+    public Task<int> ReplaceRbacAsync(
+        int clientId, string fileName, string? user, RbacParseResult parsed, CancellationToken ct) =>
+        ReplaceAsync(clientId, KindRbac, "dbo.informe_valor_rbac", fileName, user,
+            parsed.Rows, RbacColumns,
+            // RowsMerged siempre 0: RbacParser nunca fusiona (ver su comentario de clase), a
+            // diferencia de BitcostParser. ToGeneric solo re-empaqueta los campos que
+            // FinishRunAsync<T> necesita; HojaLeida/HojasIgnoradas/Ejes/SinIdentificar ya están
+            // reflejados en parsed.Warnings.
+            new ParseResult<RbacRow>(parsed.Rows, parsed.RowsTotal, parsed.RowsSkipped, 0, parsed.TruncatedValues, parsed.Warnings),
+            ct);
 
     private async Task<int> ReplaceAsync<T>(
         int clientId, string kind, string table, string fileName, string? user,
@@ -235,6 +269,46 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
                 Pvp: rd.GetDecimal(13),
                 Year: rd.GetInt16(14),
                 Month: rd.GetByte(15)));
+        }
+        return result;
+    }
+
+    public async Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await InformeValorSchema.EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT natural_key_hash, sheet_name, suscripcion, scope, nivel, rol, tipo, nombre,
+                login, cuenta_activa, ultimo_login
+            FROM dbo.informe_valor_rbac
+            WHERE client_id = @cid
+            ORDER BY row_id
+            """;
+        cmd.Parameters.Add(new SqlParameter("@cid", SqlDbType.Int) { Value = clientId });
+
+        var result = new List<RbacFila>();
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct))
+        {
+            // RoleClass/IsCustomRole en null/false SIEMPRE acá: la columna no existe en la
+            // consulta de arriba (no hay de dónde leerlos). RbacFilaConverter.Convertir en sí
+            // mismo es fiel a lo que reciba; la pérdida es de esta lectura, no de esa conversión
+            // (ver el comentario de clase de RbacFilaConverter).
+            var row = new RbacRow(
+                Hash: rd.GetString(0),
+                SheetName: rd.IsDBNull(1) ? null : rd.GetString(1),
+                Suscripcion: rd.IsDBNull(2) ? null : rd.GetString(2),
+                Scope: rd.IsDBNull(3) ? null : rd.GetString(3),
+                Nivel: rd.IsDBNull(4) ? null : rd.GetString(4),
+                Rol: rd.IsDBNull(5) ? null : rd.GetString(5),
+                Tipo: rd.IsDBNull(6) ? null : rd.GetString(6),
+                Nombre: rd.IsDBNull(7) ? null : rd.GetString(7),
+                Login: rd.IsDBNull(8) ? null : rd.GetString(8),
+                CuentaActiva: rd.IsDBNull(9) ? null : rd.GetString(9),
+                UltimoLogin: rd.IsDBNull(10) ? null : rd.GetString(10),
+                RoleClass: null, IsCustomRole: false);
+            result.Add(RbacFilaConverter.Convertir(row));
         }
         return result;
     }

@@ -245,6 +245,10 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
             int clientId, string fileName, string? user, ParseResult<CasoRow> parsed, CancellationToken ct)
             => throw new NotSupportedException();
 
+        public Task<int> ReplaceRbacAsync(
+            int clientId, string fileName, string? user, RbacParseResult parsed, CancellationToken ct)
+            => throw new NotSupportedException();
+
         public Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct) => throw new NotSupportedException();
 
         public Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct)
@@ -254,6 +258,9 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
             => throw new NotSupportedException();
 
         public Task<IReadOnlyList<CasoRow>> GetCasosAsync(int clientId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct)
             => throw new NotSupportedException();
     }
 
