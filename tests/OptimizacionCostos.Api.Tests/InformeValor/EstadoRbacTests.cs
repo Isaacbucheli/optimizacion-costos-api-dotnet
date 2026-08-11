@@ -66,17 +66,38 @@ public sealed class EstadoRbacTests
     }
 
     /// <summary>
-    /// IMPORTANTE 5 de la revisión de rama: los cinco motivos le decían al consultor que suba el
-    /// Excel de RBAC, y InformeValorController.Subir rechaza ese kind con un 400 ("llega en la
-    /// entrega 2"). Ningún motivo debería prometer una carga que hoy falla. Cubre los cinco casos
-    /// de Resolver que producen un Motivo (NoDisponible x3, ParcialFaltaIdentidad x2); el sexto
-    /// (Completo) no tiene nada que prometer.
+    /// Este test nació invertido y con razón: mientras InformeValorController.Subir rechazaba el
+    /// kind rbac con un 400, ningún motivo debía prometer esa carga. Ahora la carga existe, así
+    /// que la verdad se dio vuelta y el test con ella. Lo que se fija ya no es una prohibición
+    /// sino la correspondencia: el motivo tiene que decirle al consultor lo mismo que el módulo
+    /// va a hacer con su archivo, porque un texto desalineado deja la función invisible (si dice
+    /// que no puede subirlo) o promete algo que se descarta (si no dice que gana la base).
+    /// Cubre los cinco casos de Resolver que producen un Motivo; el sexto (Completo) se verifica
+    /// aparte, porque ahí el archivo no hace falta y mencionarlo sobraría.
     /// </summary>
     [Theory]
     [MemberData(nameof(TodosLosMotivos))]
-    public void Ningun_motivo_promete_subir_el_excel_de_rbac(string motivo)
+    public void Cada_motivo_ofrece_el_excel_de_rbac_y_dice_si_es_obligatorio(string motivo)
     {
-        Assert.DoesNotContain("sube", motivo, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Excel de RBAC", motivo, StringComparison.Ordinal);
+        Assert.True(
+            motivo.Contains("obligatorio", StringComparison.OrdinalIgnoreCase)
+                || motivo.Contains("opcional", StringComparison.OrdinalIgnoreCase),
+            "El motivo ofrece el Excel de RBAC sin decir si es obligatorio u opcional, y esos dos " +
+            "casos piden acciones distintas del consultor: en uno el informe no puede armar el " +
+            $"bloque de accesos sin el archivo, en el otro sí. Motivo: {motivo}");
+    }
+
+    /// <summary>
+    /// El estado Completo es el único donde el archivo no hace falta, y además es el estado en el
+    /// que gana la base y el módulo descarta lo que se suba. Ofrecerlo ahí mandaría al consultor a
+    /// hacer un trabajo que se va a tirar.
+    /// </summary>
+    [Fact]
+    public void El_motivo_de_completo_no_ofrece_el_excel_de_rbac()
+    {
+        var motivo = EstadoRbac.Resolver(Snap("ok", ("ok", "ok")), true).Motivo;
+        Assert.DoesNotContain("Excel de RBAC", motivo, StringComparison.Ordinal);
     }
 
     public static IEnumerable<object[]> TodosLosMotivos()

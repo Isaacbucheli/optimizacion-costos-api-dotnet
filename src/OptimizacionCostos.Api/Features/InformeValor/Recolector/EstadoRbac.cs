@@ -64,16 +64,16 @@ public static class EstadoRbac
         {
             return new EstadoRbacResultado(DisponibilidadRbac.NoDisponible, sinMedir, null,
                 "El cliente no tiene suscripciones de Azure administradas: no hay accesos que revisar " +
-                "de forma automática. La carga manual del Excel de RBAC todavía no está disponible en " +
-                "este módulo; por ahora esta sección del informe queda pendiente.");
+                "de forma automática. Para que el informe incluya el bloque de accesos, sube el Excel " +
+                "de RBAC; en este estado es obligatorio.");
         }
 
         if (snapshot is null)
         {
             return new EstadoRbacResultado(DisponibilidadRbac.NoDisponible, sinMedir, null,
                 "Todavía no hay una corrida de revisión de accesos finalizada para este cliente. " +
-                "Ejecuta la revisión de accesos para completar esta sección del informe: la carga " +
-                "manual del Excel de RBAC todavía no está disponible en este módulo.");
+                "Ejecuta la revisión de accesos para completar esta sección del informe, o sube el " +
+                "Excel de RBAC: en este estado es obligatorio.");
         }
 
         // DateTimeOffset -> DateTime en UTC: la API serializa todo DateTime como UTC con "Z"
@@ -90,8 +90,8 @@ public static class EstadoRbac
                 "El inventario de permisos no se pudo leer completo: alguna suscripción falló durante " +
                 "la lectura, y mostrar un conteo parcial daría una idea equivocada del total de accesos " +
                 "del cliente. Revisa el estado por credencial en Revisión de accesos, corrige lo que " +
-                "falte y vuelve a ejecutar la corrida; la carga manual del Excel de RBAC todavía no " +
-                "está disponible en este módulo.");
+                "falte y vuelve a ejecutar la corrida. Si no se puede resolver, sube el Excel de RBAC: " +
+                "en este estado es obligatorio para que el informe incluya el bloque de accesos.");
         }
 
         var ejes = new EjesRbac(
@@ -108,13 +108,14 @@ public static class EstadoRbac
         var motivo = ejes.EstadoCuentaMedido
             ? "El inventario de permisos y el estado de las cuentas se obtuvieron completos, pero no " +
               "la fecha del último inicio de sesión: el tenant no tiene licencia Microsoft Entra ID " +
-              "P1. Es una limitación del tenant, no de la corrida: ese dato no está disponible por " +
-              "esta vía, y la carga manual del Excel de RBAC todavía no está disponible en este módulo."
+              "P1. Es una limitación del tenant, no de la corrida, así que ese dato no va a estar " +
+              "disponible por esta vía. Si lo necesitas en el informe, sube el Excel de RBAC como " +
+              "respaldo; es opcional, y sin él el informe declara qué no se pudo medir."
             : "El inventario de permisos se obtuvo completo, pero no se pudieron leer los datos de " +
               "identidad de Microsoft Entra ID (estado de cuenta ni último inicio de sesión) para " +
               "este cliente. Si falta el consentimiento de administrador para Graph, solicítalo al " +
-              "cliente con los permisos de aplicación del módulo; la carga manual del Excel de RBAC " +
-              "todavía no está disponible.";
+              "cliente con los permisos de aplicación del módulo. Mientras tanto puedes subir el " +
+              "Excel de RBAC como respaldo; es opcional, y sin él el informe declara qué no se midió.";
 
         return new EstadoRbacResultado(DisponibilidadRbac.ParcialFaltaIdentidad, ejes, fechaCorrida, motivo);
     }
