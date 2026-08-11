@@ -37,11 +37,20 @@ internal static class InsumoCellUtils
     // Grupos de EXACTAMENTE 3 dígitos tras el separador, con el primer grupo sin cero a la
     // izquierda: distingue "1,234" (miles = 1234) de "0,024" (decimal = 0.024: un monto chico no
     // se agrupa con un cero adelante) y de "12,5" (decimal = 12.5: un solo dígito no es un grupo
-    // de miles). Es la misma regla que ya usa la plantilla JS para la coma (con el agregado de
-    // excluir el cero a la izquierda, que la plantilla no excluye), extendida acá al punto
-    // solitario: ver TryDecimal.
+    // de miles). Es la misma regla que usa la plantilla JS para la coma, con el agregado de
+    // excluir el cero a la izquierda.
     private static readonly Regex MilesConComa = new(@"^-?[1-9]\d{0,2}(,\d{3})+$", RegexOptions.Compiled);
-    private static readonly Regex MilesConPunto = new(@"^-?[1-9]\d{0,2}(\.\d{3})+$", RegexOptions.Compiled);
+
+    // El PUNTO exige DOS grupos o más, y la diferencia no es cosmética: con un solo grupo el valor
+    // es ambiguo ("1.879" es mil ochocientos setenta y nueve en español y uno coma ocho siete nueve
+    // en inglés) y el export de facturación real usa el punto como DECIMAL. Con la regla de un solo
+    // grupo, medido contra un archivo de 2295 filas, el total facturado salía 684.920 en vez de
+    // 20.897: la cifra de portada del informe, multiplicada por 33, sin ningún aviso.
+    // La plantilla ya advertía esto en su propio comentario ("Solo punto: siempre decimal. Tratarlo
+    // como millar convertiría 296.856 en 296856") y resuelve el caso de un grupo igual que nosotros.
+    // Con dos grupos o más ("1.234.567") no hay ambigüedad posible, así que ahí sí agrupamos —y ahí
+    // superamos a la plantilla, que devolvería 1,234.
+    private static readonly Regex MilesConPunto = new(@"^-?[1-9]\d{0,2}(\.\d{3}){2,}$", RegexOptions.Compiled);
 
     /// <summary>
     /// Conversión numérica tolerante, única para todo el módulo (BitcostParser y CasosParser):

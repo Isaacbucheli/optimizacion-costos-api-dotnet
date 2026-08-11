@@ -35,9 +35,19 @@ public sealed class ConversionNumericaTests
     // Miles con punto, decimal con coma (convención en español).
     [InlineData("1.234,56", "1234.56")]
     [InlineData("$1.234,56", "1234.56")]
-    // Un solo separador: miles sin decimal, según las dos convenciones.
+    // Un solo separador: la coma agrupa miles.
     [InlineData("1,234", "1234")]
-    [InlineData("1.234", "1234")]
+    // El PUNTO con UN solo grupo es DECIMAL, no miles. Este caso afirmaba lo contrario y se
+    // invirtió al medirlo contra un export de facturación real: "1.879" se leía como 1879 y el
+    // total del informe salía 684.920 en vez de 20.897, la cifra de portada multiplicada por 33.
+    // La plantilla resuelve igual y su propio comentario ya lo advertía: "Solo punto: siempre
+    // decimal. Tratarlo como millar convertiría 296.856 en 296856".
+    [InlineData("1.234", "1.234")]
+    [InlineData("1.879", "1.879")]
+    [InlineData("296.856", "296.856")]
+    // Con DOS grupos o más no hay ambigüedad posible: nadie escribe dos puntos decimales.
+    [InlineData("1.234.567", "1234567")]
+    [InlineData("12.345.678", "12345678")]
     // Un solo separador: decimal sin miles, según las dos convenciones.
     [InlineData("12,5", "12.5")]
     [InlineData("12.5", "12.5")]
