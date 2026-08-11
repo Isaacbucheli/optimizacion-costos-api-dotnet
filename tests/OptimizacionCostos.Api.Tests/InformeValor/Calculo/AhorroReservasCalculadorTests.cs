@@ -23,9 +23,10 @@ public sealed class AhorroReservasCalculadorTests
         string? id = "r1", string? nombre = "Reserva 1", string? producto = "Standard_D2s_v5",
         string? region = "eastus", int? cantidad = 1, string? term = "P1Y", string? expiresOn = "2027-03-15",
         bool expiring = false, string? utilUltimo = "85%", string? util7d = "80%",
-        IReadOnlyList<ConsumidorReserva>? consumidores = null, int unidadesEstimadas = 0) =>
+        IReadOnlyList<ConsumidorReserva>? consumidores = null, int unidadesEstimadas = 0,
+        bool consumidoresNoLeidos = false) =>
         new(id, nombre, producto, region, cantidad, term, "1 ano", expiresOn, 300, expiring,
-            utilUltimo, util7d, consumidores ?? [], unidadesEstimadas);
+            utilUltimo, util7d, consumidores ?? [], unidadesEstimadas, consumidoresNoLeidos);
 
     private static FotoReservas Foto(
         bool medido = true, string motivo = "ok", IReadOnlyList<object>? errores = null,

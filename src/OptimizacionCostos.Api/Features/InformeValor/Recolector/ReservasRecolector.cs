@@ -90,7 +90,16 @@ public sealed record ReservaActiva(
     /// <summary><see cref="Cantidad"/> menos <see cref="Consumidores"/>.Count, piso en cero:
     /// unidades reservadas sin un consumidor confirmado. Sin terna propia — no hay a que recurso
     /// atribuirselo — asi que no entra al cruce contra facturacion de la Tarea 2.</summary>
-    int UnidadesEstimadas);
+    int UnidadesEstimadas,
+    /// <summary><c>true</c> cuando la lectura de consumidores de ESTA reserva fallo, asi que
+    /// <see cref="Consumidores"/> viene vacia por no haberse podido leer y no por no haberlos.
+    ///
+    /// <para>Sin esta marca los dos casos se ven identicos y llevan a decisiones opuestas: una
+    /// reserva que todavia no tiene consumidores confirmados es normal, y una cuya lectura fallo
+    /// significa que el ahorro esta subestimado y nadie lo sabe. Es el mismo criterio que los ejes
+    /// de <c>EstadoRbac</c>: un cero que puede significar "no hay" o "no se midio" no se publica
+    /// sin decir cual de los dos es.</para></summary>
+    bool ConsumidoresNoLeidos);
 
 /// <summary>Un recurso que consumio el beneficio de una reserva especifica, con la terna
 /// (<see cref="SubscriptionId"/>/<see cref="ResourceGroup"/>/<see cref="ResourceName"/>) con la que
@@ -158,19 +167,20 @@ public static class ReservasRecolector
                 Errores: errores, AlertDays: alertDays, CapturadaEn: capturadaEn, Reservas: []);
         }
 
-        var activas = todas.Where(r => !r.Expired).ToList();
+        var activas = todas.Where(r => !r.Expired && !EstadoInactivo(r.State)).ToList();
 
         var reservas = new List<ReservaActiva>(activas.Count);
         foreach (var r in activas)
         {
-            var consumidores = await ConsumidoresConfirmadosAsync(client, r, diasConsumidores, ct);
+            var (consumidores, noLeidos) = await ConsumidoresConfirmadosAsync(client, r, diasConsumidores, ct);
             var unidadesEstimadas = Math.Max(0, (r.Quantity ?? 0) - consumidores.Count);
 
             reservas.Add(new ReservaActiva(
                 ReservationId: r.ReservationId, Nombre: r.Name, Producto: r.Product, Region: r.Region,
                 Cantidad: r.Quantity, Term: r.Term, TermLabel: r.TermLabel, ExpiresOn: r.ExpiresOn,
                 DaysRemaining: r.DaysRemaining, Expiring: r.Expiring, UtilizationLast: r.UtilizationLast,
-                Utilization7d: r.Utilization7d, Consumidores: consumidores, UnidadesEstimadas: unidadesEstimadas));
+                Utilization7d: r.Utilization7d, Consumidores: consumidores,
+                UnidadesEstimadas: unidadesEstimadas, ConsumidoresNoLeidos: noLeidos));
         }
 
         var motivo = reservas.Count > 0
@@ -189,10 +199,13 @@ public static class ReservasRecolector
     /// esta reserva puntual, degrada a "sin confirmados" (toda la cantidad pasa a estimada) en vez
     /// de propagar la excepcion — mismo criterio que el catch silencioso de
     /// <c>RiCoverageService.ComputeAsync</c> alrededor de la misma llamada.</summary>
-    private static async Task<IReadOnlyList<ConsumidorReserva>> ConsumidoresConfirmadosAsync(
+    private static async Task<(IReadOnlyList<ConsumidorReserva> Consumidores, bool NoLeidos)> ConsumidoresConfirmadosAsync(
         IAzureReservationsClient client, ReservationDto r, int diasConsumidores, CancellationToken ct)
     {
-        if (r.ReservationId is null) return [];
+        // Sin identificador no hay a quien preguntarle: no es una falla de lectura, es una reserva
+        // que Azure devolvio sin id. Se marca igual, porque el efecto sobre el ahorro es el mismo
+        // (queda toda en estimado) y quien depure necesita saber por que.
+        if (r.ReservationId is null) return ([], true);
 
         IReadOnlyList<ReservationConsumer> consumidores;
         try
@@ -201,14 +214,36 @@ public static class ReservasRecolector
         }
         catch
         {
-            return [];
+            // La lectura de ESTA reserva fallo. Se degrada sin tumbar la foto, pero se marca: una
+            // lista vacia por falla y una lista vacia por no haber consumidores llevan a
+            // decisiones opuestas.
+            return ([], true);
         }
 
-        return consumidores
+        return (consumidores
             .Where(c => c.UsedHours > 0)
             .Select(c => new ConsumidorReserva(
                 c.InstanceId, c.ResourceName, c.ResourceGroup, c.SubscriptionId, c.SkuName,
                 c.UsedHours, c.LastSeen, c.DaysSeen))
-            .ToList();
+            .ToList(), false);
     }
+
+    /// <summary>Estados en los que una reserva ya no entrega beneficio, aunque su fecha de
+    /// vencimiento todavia no haya pasado.
+    ///
+    /// <para>El plan solo nombra las vencidas porque es lo que se pidio, pero una reserva cancelada
+    /// tampoco esta ahorrando nada. El motivo de fondo pesa mas que el filtro: sin esto, el informe
+    /// de valor contaria el ahorro de una reserva cancelada mientras el motor de costos de la misma
+    /// plataforma la ignora. Dos piezas del producto con dos definiciones del mismo concepto, cada
+    /// una coherente consigo misma, es el defecto mas repetido de este modulo y el mas dificil de
+    /// ver, porque ninguna de las dos esta mal por separado.</para>
+    ///
+    /// <para><b>Esta lista es un espejo</b> de <c>InactiveStates</c> en <c>RiCoverageService</c>,
+    /// que es privado y vive en un archivo desplegado. Si alla cambia, aca tambien: son el mismo
+    /// criterio y tienen que seguir siendolo.</para></summary>
+    private static readonly HashSet<string> EstadosInactivos = new(StringComparer.OrdinalIgnoreCase)
+    { "cancelled", "canceled", "expired", "failed" };
+
+    private static bool EstadoInactivo(string? estado) =>
+        estado is not null && EstadosInactivos.Contains(estado.Trim());
 }

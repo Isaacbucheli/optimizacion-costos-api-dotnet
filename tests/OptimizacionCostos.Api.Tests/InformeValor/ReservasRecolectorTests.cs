@@ -241,6 +241,67 @@ public sealed class ReservasRecolectorTests
         Assert.Equal(2, fila.UnidadesEstimadas);
     }
 
+    /// <summary>
+    /// Una lista de consumidores vacía porque la lectura falló y una vacía porque la reserva
+    /// todavía no tiene consumidores confirmados llevan a decisiones opuestas: la primera significa
+    /// que el ahorro está subestimado y nadie lo sabe, la segunda es normal. Sin la marca las dos
+    /// se ven igual, que es el cero ambiguo que este módulo viene sacando en todos sus bloques.
+    /// </summary>
+    [Fact]
+    public async Task Una_lista_vacia_por_falla_se_distingue_de_una_vacia_por_no_haber_consumidores()
+    {
+        var svcFalla = new FakeReservationService([Cred()], [Reserva(id: "r1", cantidad: 2)], []);
+        var clientFalla = new FakeAzureReservationsClient(new()
+        {
+            ["r1"] = () => throw new InvalidOperationException("403 Consumption"),
+        });
+        var conFalla = Assert.Single((await ReservasRecolector.CapturarAsync(svcFalla, clientFalla, ClientId)).Reservas);
+
+        var svcVacio = new FakeReservationService([Cred()], [Reserva(id: "r1", cantidad: 2)], []);
+        var clientVacio = new FakeAzureReservationsClient(new()
+        {
+            ["r1"] = () => (IReadOnlyList<ReservationConsumer>)[],
+        });
+        var sinConsumidores = Assert.Single((await ReservasRecolector.CapturarAsync(svcVacio, clientVacio, ClientId)).Reservas);
+
+        // Las dos quedan sin consumidores y con todo en estimado: indistinguibles sin la marca.
+        Assert.Empty(conFalla.Consumidores);
+        Assert.Empty(sinConsumidores.Consumidores);
+        Assert.Equal(sinConsumidores.UnidadesEstimadas, conFalla.UnidadesEstimadas);
+
+        Assert.True(conFalla.ConsumidoresNoLeidos);
+        Assert.False(sinConsumidores.ConsumidoresNoLeidos);
+    }
+
+    /// <summary>
+    /// El plan solo nombra las vencidas, pero una reserva cancelada tampoco entrega ahorro, y
+    /// <c>RiCoverageService</c> ya la trata como inactiva. Sin este filtro el informe de valor
+    /// contaría el ahorro de una reserva cancelada mientras el motor de costos de la misma
+    /// plataforma la ignora: dos definiciones del mismo concepto, cada una coherente por separado.
+    /// </summary>
+    [Theory]
+    [InlineData("Cancelled")]
+    [InlineData("Canceled")]
+    [InlineData("Failed")]
+    [InlineData("expired")]
+    public async Task Una_reserva_en_estado_inactivo_no_entra_a_la_foto(string estado)
+    {
+        var svc = new FakeReservationService(
+            [Cred()],
+            [Reserva(id: "r1", estado: estado, vencida: false), Reserva(id: "r2", estado: "Succeeded")],
+            []);
+        var client = new FakeAzureReservationsClient(new()
+        {
+            ["r1"] = () => (IReadOnlyList<ReservationConsumer>)[Consumidor()],
+            ["r2"] = () => (IReadOnlyList<ReservationConsumer>)[Consumidor()],
+        });
+
+        var foto = await ReservasRecolector.CapturarAsync(svc, client, ClientId);
+
+        var fila = Assert.Single(foto.Reservas);
+        Assert.Equal("r2", fila.ReservationId);
+    }
+
     [Fact]
     public async Task La_foto_registra_el_instante_de_captura()
     {
