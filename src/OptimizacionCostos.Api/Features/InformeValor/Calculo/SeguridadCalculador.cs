@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using OptimizacionCostos.Api.Features.Cdc.AccessReview;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 
 namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
@@ -28,6 +29,21 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 ///
 /// <para><b>D13 (Restricciones).</b> Las tres reglas que comparan un cociente de asignaciones
 /// contra una fracción usan <see cref="Division.Cociente"/>, nunca <c>int/int</c>.</para>
+///
+/// <para><b>La clase de rol es por <see cref="RbacFila.RoleClass"/>, alineada con Revisión de
+/// accesos, con el nombre como respaldo.</b> Revisión de accesos (<see cref="AccessReviewRoleClassifier"/>)
+/// clasifica cada rol por los permisos reales que otorga, nunca por su nombre: un rol personalizado
+/// que dé permisos de Owner clasifica <c>owner</c> ahí sin importar cómo se llame. Clasificar acá
+/// por nombre en inglés (<c>^owner$</c>, <c>^contributor$</c>) contradecía esa fuente justo en los
+/// roles personalizados: uno llamado, por ejemplo, "Administrador de Producción" con permisos de
+/// Owner contaba cero Owners en este informe y <c>owner</c> en Revisión de accesos, para el mismo
+/// cliente. <see cref="EsOwner"/>/<see cref="EsUaa"/>/<see cref="EsContributor"/>/<see cref="EsPrivilegiado"/>
+/// usan <see cref="RbacFila.RoleClass"/> cuando no es <c>null</c> (los mismos literales que
+/// <see cref="AccessReviewRoleClassifier"/>: <c>owner</c>/<c>otorga_accesos</c>/<c>escritura_total</c>,
+/// y <see cref="AccessReviewRoleClassifier.IsElevated"/> para "privilegiado", que deja fuera a
+/// <c>escritura_servicio</c> a propósito — un <c>*Contributor</c> de un solo servicio, ver el
+/// comentario de esa clase) y caen al regex sobre el nombre SOLO cuando <c>RoleClass</c> es
+/// <c>null</c> (rol no resoluble, o un archivo de respaldo sin la columna "Clase de rol").</para>
 /// </summary>
 public static class SeguridadCalculador
 {
@@ -39,6 +55,30 @@ public static class SeguridadCalculador
     private static readonly Regex RolPrivilegiado = new(
         @"^(owner|contributor|user access administrator|role based access control administrator)$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>Owner por <see cref="RbacFila.RoleClass"/> (mismo literal que
+    /// <see cref="AccessReviewRoleClassifier.Owner"/>), con el nombre en inglés como respaldo
+    /// cuando la clase no está disponible.</summary>
+    private static bool EsOwner(RbacFila f) =>
+        f.RoleClass is { } clase ? clase == AccessReviewRoleClassifier.Owner : RolOwner.IsMatch(f.Rol);
+
+    /// <summary>User Access Administrator / Role Based Access Control Administrator por
+    /// <see cref="RbacFila.RoleClass"/> (<see cref="AccessReviewRoleClassifier.OtorgaAccesos"/>),
+    /// con el nombre como respaldo.</summary>
+    private static bool EsUaa(RbacFila f) =>
+        f.RoleClass is { } clase ? clase == AccessReviewRoleClassifier.OtorgaAccesos : RolUaa.IsMatch(f.Rol);
+
+    /// <summary>Contributor por <see cref="RbacFila.RoleClass"/> (<see cref="AccessReviewRoleClassifier.EscrituraTotal"/>:
+    /// escritura sobre cualquier provider, sin poder otorgar accesos — exactamente los permisos de
+    /// Contributor), con el nombre como respaldo.</summary>
+    private static bool EsContributor(RbacFila f) =>
+        f.RoleClass is { } clase ? clase == AccessReviewRoleClassifier.EscrituraTotal : RolContributor.IsMatch(f.Rol);
+
+    /// <summary>Privilegiado por <see cref="AccessReviewRoleClassifier.IsElevated"/> (owner,
+    /// otorga_accesos o escritura_total — deja fuera a escritura_servicio a propósito, igual que
+    /// Revisión de accesos), con el nombre como respaldo.</summary>
+    private static bool EsPrivilegiado(RbacFila f) =>
+        f.RoleClass is { } clase ? AccessReviewRoleClassifier.IsElevated(clase) : RolPrivilegiado.IsMatch(f.Rol);
 
     public static SeguridadModelo? Calcular(IReadOnlyList<RbacFila> filas, EjesRbac ejes)
     {
@@ -55,10 +95,10 @@ public static class SeguridadCalculador
             ? null
             : suscripciones.OrderByDescending(s => (int)s[2]!).First();
 
-        var owner = filas.Count(f => RolOwner.IsMatch(f.Rol));
-        var uaa = filas.Count(f => RolUaa.IsMatch(f.Rol));
-        var contrib = filas.Count(f => RolContributor.IsMatch(f.Rol));
-        var priv = filas.Count(f => RolPrivilegiado.IsMatch(f.Rol));
+        var owner = filas.Count(EsOwner);
+        var uaa = filas.Count(EsUaa);
+        var contrib = filas.Count(EsContributor);
+        var priv = filas.Count(EsPrivilegiado);
 
         int? sinLogin = ejes.UltimoLoginMedido
             ? usr.Count(f => string.IsNullOrWhiteSpace(f.UltimoLoginTexto))
@@ -97,9 +137,13 @@ public static class SeguridadCalculador
         ?? (!string.IsNullOrWhiteSpace(f.Nombre) ? f.Nombre : null)
         ?? f.PrincipalObjectId;
 
+    /// <summary>Agrupa por el nombre exacto del rol (igual que antes): dos filas del mismo rol
+    /// comparten nombre y, en la práctica, la misma definición y clase. "Privilegiado" por grupo
+    /// es <c>Any</c> sobre el criterio por fila (<see cref="EsPrivilegiado"/>, RoleClass con
+    /// respaldo por nombre): alcanza una fila privilegiada del grupo para marcarlo.</summary>
     private static IReadOnlyList<IReadOnlyList<object?>> AgruparRoles(IReadOnlyList<RbacFila> filas) =>
         filas.GroupBy(f => f.Rol)
-            .Select(g => (IReadOnlyList<object?>)[g.Key, g.Count(), RolPrivilegiado.IsMatch(g.Key)])
+            .Select(g => (IReadOnlyList<object?>)[g.Key, g.Count(), g.Any(EsPrivilegiado)])
             .OrderByDescending(r => (int)r[1]!)
             .ToList();
 
@@ -157,9 +201,9 @@ public static class SeguridadCalculador
         IReadOnlyList<object?>? spTop, EjesRbac ejes)
     {
         var f = new List<SeguridadHallazgo>();
-        var ownerFilas = filas.Where(x => RolOwner.IsMatch(x.Rol)).ToList();
-        var uaaFilas = filas.Where(x => RolUaa.IsMatch(x.Rol)).ToList();
-        var contribFilas = filas.Where(x => RolContributor.IsMatch(x.Rol)).ToList();
+        var ownerFilas = filas.Where(EsOwner).ToList();
+        var uaaFilas = filas.Where(EsUaa).ToList();
+        var contribFilas = filas.Where(EsContributor).ToList();
 
         if (owner > 0)
             f.Add(new("Crítica", $"{owner} asignaciones Owner activas",
