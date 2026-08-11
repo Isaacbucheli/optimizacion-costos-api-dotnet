@@ -247,6 +247,11 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
         public Task<EstadoRbacResultado> LeerEstadoRbacAsync(int clientId, CancellationToken ct = default) =>
             Task.FromResult(new EstadoRbacResultado(
                 DisponibilidadRbac.NoDisponible, new EjesRbac(false, false), null, "Sin datos de prueba."));
+
+        // Ningún test de este archivo pega a /estado (todos van a /preview): revienta a propósito
+        // si algo llega a llamarlo, mismo criterio que el resto de esta clase.
+        public Task<(EstadoRbacResultado Estado, string? Origen)> LeerEstadoRbacConOrigenAsync(
+            int clientId, CancellationToken ct = default) => throw new NotSupportedException();
     }
 
     /// <summary>Nombre por cliente en memoria; sin entrada, <c>GetNameAsync</c> devuelve null (mismo

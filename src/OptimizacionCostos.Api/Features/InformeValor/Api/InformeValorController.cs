@@ -54,6 +54,19 @@ public sealed class InformeValorController(
         new(StringComparer.OrdinalIgnoreCase)
         { SqlInformeValorStore.KindFacturacion, SqlInformeValorStore.KindCasos, SqlInformeValorStore.KindRbac };
 
+    /// <summary>
+    /// Qué insumos hay cargados y de cuándo, el estado de la condicional de RBAC con su motivo, y
+    /// (implícito en <c>insumos</c>) qué falta para poder generar el informe. Es la pantalla de
+    /// insumos la que llama esto -- al entrar y después de cada subida o borrado -- así que tiene
+    /// que quedar liviano: <c>estado_rbac</c> se resuelve con
+    /// <see cref="IInsumosBdRecolector.LeerEstadoRbacConOrigenAsync"/>, el camino que NO paga
+    /// Advisor/Matriz/Retiros ni el schema-ensure de WAF/Boletín (a diferencia de
+    /// <see cref="InsumosBd"/>, que sí los paga porque es el endpoint de diagnóstico).
+    ///
+    /// <para><c>estado_rbac</c> tiene la MISMA forma que el bloque homónimo de <c>/insumos-bd</c>
+    /// (mismos campos, mismos nombres -- <see cref="EstadoRbacBlock"/> construye los dos): el
+    /// front consume un solo tipo para los dos endpoints.</para>
+    /// </summary>
     [HttpGet("clients/{clientId:int}/estado")]
     public async Task<IActionResult> Estado(int clientId, CancellationToken ct)
     {
@@ -62,6 +75,7 @@ public sealed class InformeValorController(
 
         var cargados = await store.GetEstadoAsync(clientId, ct);
         var porKind = cargados.ToDictionary(x => x.Kind, StringComparer.OrdinalIgnoreCase);
+        var (estadoRbac, origenRbac) = await recolector.LeerEstadoRbacConOrigenAsync(clientId, ct);
 
         return Ok(new
         {
@@ -71,6 +85,7 @@ public sealed class InformeValorController(
                 Describe(SqlInformeValorStore.KindCasos, true, porKind),
                 Describe(SqlInformeValorStore.KindRbac, false, porKind),
             },
+            estado_rbac = EstadoRbacBlock(estadoRbac, origenRbac),
         });
     }
 
@@ -131,20 +146,7 @@ public sealed class InformeValorController(
                 gestionada_externamente = insumos.SeguridadGestionadaExternamente,
                 nota = insumos.SeguridadGestionadaNota,
             },
-            estado_rbac = new
-            {
-                disponibilidad = Disponibilidad(insumos.EstadoRbac.Disponibilidad),
-                estado_cuenta_medido = insumos.EstadoRbac.Ejes.EstadoCuentaMedido,
-                ultimo_login_medido = insumos.EstadoRbac.Ejes.UltimoLoginMedido,
-                fecha_corrida = insumos.EstadoRbac.FechaCorrida,
-                motivo = insumos.EstadoRbac.Motivo,
-                // De dónde salieron las filas de "rbac" arriba (el cable de la condicional de
-                // RBAC): "base"/"archivo", o null si ninguna de las dos fuentes tiene nada. Quien
-                // depure de dónde salió una cifra del bloque de seguridad necesita esto, no solo
-                // la disponibilidad de la base -- los dos pueden discrepar (base parcial, pero el
-                // insumo efectivo es el archivo).
-                origen = insumos.RbacOrigen,
-            },
+            estado_rbac = EstadoRbacBlock(insumos.EstadoRbac, insumos.RbacOrigen),
             leido_en = insumos.LeidoEn,
         });
     }
@@ -324,6 +326,31 @@ public sealed class InformeValorController(
         DisponibilidadRbac.ParcialFaltaIdentidad => "parcial_falta_identidad",
         DisponibilidadRbac.NoDisponible => "no_disponible",
         _ => d.ToString(),
+    };
+
+    /// <summary>
+    /// Forma del bloque <c>estado_rbac</c>, compartida por <see cref="Estado"/> e
+    /// <see cref="InsumosBd"/> para que las dos rutas devuelvan exactamente los mismos campos con
+    /// los mismos nombres -- en particular <c>origen</c>, nunca <c>rbac_origen</c> (nombre que ya
+    /// generó confusión una vez). <see cref="Estado"/> lo resuelve por el camino liviano
+    /// (<see cref="IInsumosBdRecolector.LeerEstadoRbacConOrigenAsync"/>); <see cref="InsumosBd"/>
+    /// lo resuelve como parte del <see cref="Recolector.InsumosBd"/> completo
+    /// (<see cref="IInsumosBdRecolector.LeerAsync"/>). Un solo método construye el JSON para los
+    /// dos, así que la forma no puede divergir por un campo que se agregue de un lado y no del
+    /// otro.
+    /// </summary>
+    private static object EstadoRbacBlock(EstadoRbacResultado estado, string? origen) => new
+    {
+        disponibilidad = Disponibilidad(estado.Disponibilidad),
+        estado_cuenta_medido = estado.Ejes.EstadoCuentaMedido,
+        ultimo_login_medido = estado.Ejes.UltimoLoginMedido,
+        fecha_corrida = estado.FechaCorrida,
+        motivo = estado.Motivo,
+        // De dónde saldrían las filas de RBAC que alimentan el informe: "base"/"archivo", o null
+        // si ninguna de las dos fuentes tiene nada. Quien depure de dónde salió una cifra del
+        // bloque de seguridad necesita esto, no solo la disponibilidad de la base -- los dos
+        // pueden discrepar (base parcial, pero el insumo efectivo es el archivo).
+        origen,
     };
 
     private static bool ExtensionValida(string? fileName) =>

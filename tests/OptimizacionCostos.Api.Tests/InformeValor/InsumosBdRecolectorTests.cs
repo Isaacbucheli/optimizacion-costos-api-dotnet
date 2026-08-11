@@ -197,6 +197,112 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
         Assert.DoesNotContain("vm-secreta", texto, StringComparison.OrdinalIgnoreCase);
     }
 
+    // ---- GET /estado: estado_rbac tiene que salir del camino liviano, con la misma forma que
+    // /insumos-bd (la pantalla de insumos dejó de pagar /insumos-bd completo solo para leer esta
+    // condicional al cargar y después de cada subida o borrado) ----
+
+    [Fact]
+    public async Task Estado_sin_acceso_al_cliente_devuelve_403()
+    {
+        _factory.Access.Deny(clientId: 99);
+        var client = ClientFor("e1@bit.ec", Roles.Consultor, canEdit: false);
+
+        var res = await client.GetAsync("/informe-valor/clients/99/estado");
+
+        Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task Estado_con_acceso_devuelve_insumos_y_estado_rbac()
+    {
+        _factory.Access.Allow(clientId: 7);
+        var client = ClientFor("e2@bit.ec", Roles.Consultor, canEdit: false);
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/informe-valor/clients/7/estado");
+
+        Assert.True(body.TryGetProperty("insumos", out _));
+        Assert.True(body.TryGetProperty("estado_rbac", out _));
+    }
+
+    /// <summary>
+    /// El requisito central de la tarea: /estado tiene que devolver estado_rbac con exactamente
+    /// los mismos campos y valores que /insumos-bd para el mismo cliente en el mismo instante --
+    /// el front consume un solo tipo para los dos. Comparar los NOMBRES de propiedad (no solo los
+    /// valores) detecta tanto un campo de más/menos como el defecto que ya causó confusión una vez
+    /// (rbac_origen en vez de origen).
+    /// </summary>
+    [Fact]
+    public async Task Estado_expone_el_mismo_bloque_estado_rbac_que_insumos_bd()
+    {
+        _factory.Access.Allow(clientId: 7);
+        _factory.Recolector.ConDatosDePrueba();
+        var client = ClientFor("e3@bit.ec", Roles.Consultor, canEdit: false);
+
+        var deEstado = (await client.GetFromJsonAsync<JsonElement>("/informe-valor/clients/7/estado"))
+            .GetProperty("estado_rbac");
+        var deInsumosBd = (await client.GetFromJsonAsync<JsonElement>("/informe-valor/clients/7/insumos-bd"))
+            .GetProperty("estado_rbac");
+
+        var nombresEstado = deEstado.EnumerateObject().Select(p => p.Name).OrderBy(n => n);
+        var nombresInsumosBd = deInsumosBd.EnumerateObject().Select(p => p.Name).OrderBy(n => n);
+        Assert.Equal(nombresInsumosBd, nombresEstado);
+
+        Assert.Equal(
+            deInsumosBd.GetProperty("disponibilidad").GetString(),
+            deEstado.GetProperty("disponibilidad").GetString());
+        Assert.Equal(
+            deInsumosBd.GetProperty("estado_cuenta_medido").GetBoolean(),
+            deEstado.GetProperty("estado_cuenta_medido").GetBoolean());
+        Assert.Equal(
+            deInsumosBd.GetProperty("ultimo_login_medido").GetBoolean(),
+            deEstado.GetProperty("ultimo_login_medido").GetBoolean());
+        Assert.Equal(deInsumosBd.GetProperty("motivo").GetString(), deEstado.GetProperty("motivo").GetString());
+        Assert.Equal(NullableString(deInsumosBd, "fecha_corrida"), NullableString(deEstado, "fecha_corrida"));
+        Assert.Equal(NullableString(deInsumosBd, "origen"), NullableString(deEstado, "origen"));
+    }
+
+    /// <summary>Ojo con el detalle que ya causó confusión una vez: el campo es "origen", nunca
+    /// "rbac_origen".</summary>
+    [Fact]
+    public async Task Estado_expone_el_origen_del_rbac_como_origen_no_rbac_origen()
+    {
+        _factory.Access.Allow(clientId: 7);
+        _factory.Recolector.ConOrigenRbac(InsumosBd.OrigenArchivo);
+        var client = ClientFor("e4@bit.ec", Roles.Consultor, canEdit: false);
+
+        var estadoRbac = (await client.GetFromJsonAsync<JsonElement>("/informe-valor/clients/7/estado"))
+            .GetProperty("estado_rbac");
+
+        Assert.Equal(InsumosBd.OrigenArchivo, estadoRbac.GetProperty("origen").GetString());
+        Assert.False(estadoRbac.TryGetProperty("rbac_origen", out _));
+    }
+
+    /// <summary>
+    /// El motivo de toda la tarea: la pantalla de insumos no puede volver a pagar Advisor/Matriz/
+    /// Retiros (el recolector completo, <see cref="FakeInsumosBdRecolector.LeerAsync"/>) solo para
+    /// leer esta condicional. Compara el conteo de llamadas antes/después en vez de un booleano
+    /// "prohibido": la Factory es un solo fixture compartido por toda la clase, así que un booleano
+    /// que un test deja en true contaminaría a cualquier test posterior sin relación con este.
+    /// </summary>
+    [Fact]
+    public async Task Estado_no_paga_el_recolector_completo()
+    {
+        _factory.Access.Allow(clientId: 7);
+        _factory.Recolector.ConDatosDePrueba();
+        var client = ClientFor("e5@bit.ec", Roles.Consultor, canEdit: false);
+        var llamadasAntes = _factory.Recolector.LeerAsyncLlamadas;
+
+        var res = await client.GetAsync("/informe-valor/clients/7/estado");
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        Assert.Equal(llamadasAntes, _factory.Recolector.LeerAsyncLlamadas);
+    }
+
+    /// <summary>Null en JSON real, no la cadena "null" ni una propiedad ausente -- mismo criterio
+    /// que Sin_ninguna_fuente_el_origen_es_null.</summary>
+    private static string? NullableString(JsonElement obj, string prop) =>
+        obj.GetProperty(prop).ValueKind == JsonValueKind.Null ? null : obj.GetProperty(prop).GetString();
+
     // ---- Fixture: API real en memoria, solo se fake-an auth/acceso/permisos y el ensamblador ----
 
     public sealed class Factory : WebApplicationFactory<Program>
@@ -263,8 +369,11 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
             => Task.FromResult(AccessCheck.NotFound("no aplica"));
     }
 
-    /// <summary>Store de insumos subidos: ningún test de esta clase lo llega a invocar (todos van a
-    /// /insumos-bd, no a /insumos/{kind}), así que revienta a propósito si algo lo llama.</summary>
+    /// <summary>Store de insumos subidos: las mutaciones (Replace*/Borrar) revientan a propósito
+    /// (ningún test de esta clase sube ni borra, todos van a /estado o /insumos-bd). GetEstadoAsync
+    /// sí responde -- vacío, no reventado -- porque GET /estado lo necesita para el bloque
+    /// "insumos"; ningún test de esta clase mira ese bloque en detalle, así que una lista vacía
+    /// (nada cargado) alcanza.</summary>
     public sealed class FakeInformeValorStoreVacio : IInformeValorStore
     {
         public Task<int> ReplaceFacturacionAsync(
@@ -282,7 +391,7 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
         public Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct) => throw new NotSupportedException();
 
         public Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct)
-            => throw new NotSupportedException();
+            => Task.FromResult<IReadOnlyList<InsumoEstado>>([]);
 
         public Task<IReadOnlyList<FacturacionRow>> GetFacturacionAsync(int clientId, CancellationToken ct)
             => throw new NotSupportedException();
@@ -301,6 +410,15 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
     public sealed class FakeInsumosBdRecolector : IInsumosBdRecolector
     {
         private InsumosBd _insumos = Vacio();
+
+        /// <summary>Cuántas veces se llamó <see cref="LeerAsync"/> (el recolector completo) en
+        /// total. Un contador que solo crece, nunca un booleano "prohibido" que reviente: la
+        /// Factory es <see cref="Xunit.IClassFixture{TFixture}"/> (una sola instancia para TODA la
+        /// clase de test), así que un booleano compartido que un test deja en true contaminaría a
+        /// cualquier otro test posterior que sí necesite <see cref="LeerAsync"/> -- el propio test
+        /// de esta guarda lo descubrió: comparar el conteo antes/después de una sola llamada es
+        /// insensible al orden en que xUnit corra el resto de la clase.</summary>
+        public int LeerAsyncLlamadas { get; private set; }
 
         private static InsumosBd Vacio() => new(
             Advisor: [],
@@ -372,9 +490,21 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
         /// sobre el estado actual.</summary>
         public void ConOrigenRbac(string? origen) => _insumos = _insumos with { RbacOrigen = origen };
 
-        public Task<InsumosBd> LeerAsync(int clientId, CancellationToken ct = default) => Task.FromResult(_insumos);
+        public Task<InsumosBd> LeerAsync(int clientId, CancellationToken ct = default)
+        {
+            LeerAsyncLlamadas++;
+            return Task.FromResult(_insumos);
+        }
 
         public Task<EstadoRbacResultado> LeerEstadoRbacAsync(int clientId, CancellationToken ct = default) =>
             Task.FromResult(_insumos.EstadoRbac);
+
+        /// <summary>Mismo par (EstadoRbac, RbacOrigen) que ve /insumos-bd, leído del mismo
+        /// <see cref="_insumos"/> de este falso -- así los tests de paridad entre /estado e
+        /// /insumos-bd (Estado_expone_el_mismo_bloque_estado_rbac_que_insumos_bd) comparan contra
+        /// una única fuente de verdad, en vez de mantener dos siembras que podrían desincronizarse.</summary>
+        public Task<(EstadoRbacResultado Estado, string? Origen)> LeerEstadoRbacConOrigenAsync(
+            int clientId, CancellationToken ct = default) =>
+            Task.FromResult((_insumos.EstadoRbac, _insumos.RbacOrigen));
     }
 }

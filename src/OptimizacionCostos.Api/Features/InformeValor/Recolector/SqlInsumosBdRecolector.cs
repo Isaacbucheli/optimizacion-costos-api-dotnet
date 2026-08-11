@@ -153,6 +153,36 @@ public sealed class SqlInsumosBdRecolector(
     }
 
     /// <summary>
+    /// <see cref="IInsumosBdRecolector.LeerEstadoRbacConOrigenAsync"/>: mismo camino liviano de
+    /// <see cref="LeerEstadoRbacAsync"/> arriba (conexión propia, sin schema-ensure de WAF/Boletín
+    /// ni Advisor/Matriz/Retiros), más el origen. <c>rbacBase</c> sale gratis del snapshot que ya
+    /// hay que leer para <see cref="EstadoRbac.Resolver"/> (proyección en memoria vía
+    /// <see cref="RbacRecolector.Mapear"/>, sin consulta nueva); <c>rbacArchivo</c> solo se pide
+    /// cuando la base no alcanza por sí sola, igual que <see cref="LeerAsync"/> arriba -- así que
+    /// el caso más común (Completo) sigue sin pagar ninguna consulta de más sobre lo que ya hacía
+    /// <see cref="LeerEstadoRbacAsync"/>. <see cref="ResolverRbac"/> es la misma función pura del
+    /// camino pesado: este método no reimplementa el criterio de "gana la base", lo reusa.
+    /// </summary>
+    public async Task<(EstadoRbacResultado Estado, string? Origen)> LeerEstadoRbacConOrigenAsync(
+        int clientId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+
+        var administradas = await SuscripcionesAdministradasAsync(conn, clientId, ct);
+        var run = await accessReviewStore.GetLatestFinishedRunAsync(clientId, ct);
+        var snapshot = run is null ? null : await accessReviewStore.GetSnapshotAsync(run.RunId, ct);
+        var estadoBase = EstadoRbac.Resolver(snapshot, administradas.Count > 0);
+        var rbacBase = snapshot is null ? [] : RbacRecolector.Mapear(snapshot);
+
+        var rbacArchivo = estadoBase.Disponibilidad == DisponibilidadRbac.Completo
+            ? []
+            : await informeValorStore.GetRbacAsync(clientId, ct);
+
+        var (_, ejes, origen) = ResolverRbac(estadoBase, rbacBase, rbacArchivo);
+        return (estadoBase with { Ejes = ejes }, origen);
+    }
+
+    /// <summary>
     /// Decisión 4 del brief ("precedencia: gana la base"), aplicada a las FILAS que va a consumir
     /// la calculadora — no solo al descarte del archivo al subirlo, que ya hacía el controller.
     /// Si <paramref name="estadoBase"/> ya es <see cref="DisponibilidadRbac.Completo"/>, gana la

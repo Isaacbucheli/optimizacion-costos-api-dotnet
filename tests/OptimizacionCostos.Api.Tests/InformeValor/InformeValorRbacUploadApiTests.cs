@@ -186,6 +186,11 @@ public sealed class InformeValorRbacUploadApiTests : IClassFixture<InformeValorR
 
         public Task<EstadoRbacResultado> LeerEstadoRbacAsync(int clientId, CancellationToken ct = default) =>
             Task.FromResult(new EstadoRbacResultado(Disponibilidad, new EjesRbac(false, false), null, "prueba"));
+
+        // Ningún test de este archivo pega a /estado (todos van a Subir/Borrar de rbac): revienta
+        // a propósito si algo llega a llamarlo, mismo criterio que el resto de esta clase.
+        public Task<(EstadoRbacResultado Estado, string? Origen)> LeerEstadoRbacConOrigenAsync(
+            int clientId, CancellationToken ct = default) => throw new NotSupportedException();
     }
 
     /// <summary>Store fake que registra si ReplaceRbacAsync llegó a llamarse: es la comprobación

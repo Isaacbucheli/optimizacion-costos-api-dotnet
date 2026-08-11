@@ -74,4 +74,27 @@ public interface IInsumosBdRecolector
     /// Service B1 de 1 core y 1,75 GB compartido con el resto de la API.
     /// </summary>
     Task<EstadoRbacResultado> LeerEstadoRbacAsync(int clientId, CancellationToken ct = default);
+
+    /// <summary>
+    /// <see cref="EstadoRbacResultado"/> más de dónde saldrían las filas de RBAC que alimentan el
+    /// informe (<see cref="InsumosBd.RbacOrigen"/>: <see cref="InsumosBd.OrigenBase"/>,
+    /// <see cref="InsumosBd.OrigenArchivo"/> o <c>null</c>), por el mismo camino liviano de
+    /// <see cref="LeerEstadoRbacAsync"/> -- sin Advisor, sin Matriz, sin Retiros y sin el
+    /// schema-ensure de WAF/Boletín. La pantalla de insumos (<c>InformeValorController.Estado</c>)
+    /// necesita el origen para explicar de dónde sale el insumo de RBAC, no solo si la base
+    /// alcanza; antes de este método la única forma de conseguirlo era <see cref="LeerAsync"/>
+    /// completo, que de paso paga Advisor/Matriz/Retiros por una pantalla que no los usa.
+    ///
+    /// <para>El resultado tiene que ser IDÉNTICO al bloque <c>estado_rbac</c> de
+    /// <c>/insumos-bd</c> para el mismo cliente en el mismo instante: la implementación reusa
+    /// <see cref="SqlInsumosBdRecolector.ResolverRbac"/>, la misma función pura del camino pesado,
+    /// sobre las mismas tres piezas (estado base, filas de la base, filas del archivo) -- nunca
+    /// recalcula el criterio por su cuenta. La única consulta que este método paga y
+    /// <see cref="LeerEstadoRbacAsync"/> no es la del archivo de respaldo
+    /// (<see cref="IInformeValorStore.GetRbacAsync"/>), y solo cuando la base no alcanza por sí
+    /// sola -- igual que <see cref="LeerAsync"/> -- así que el caso más común (base Completa) no
+    /// paga ninguna consulta de más.</para>
+    /// </summary>
+    Task<(EstadoRbacResultado Estado, string? Origen)> LeerEstadoRbacConOrigenAsync(
+        int clientId, CancellationToken ct = default);
 }
