@@ -20,9 +20,7 @@ public static class XlsxRowReader
     public static IReadOnlyList<string> ReadSheetNames(Stream stream)
     {
         using var doc = AbrirPaquete(stream);
-        var wbPart = doc.WorkbookPart
-            ?? throw new InvalidOperationException("El archivo no es un Excel (.xlsx) válido.");
-        return [.. wbPart.Workbook.Descendants<Sheet>().Select(s => s.Name?.Value ?? string.Empty)];
+        return [.. Hojas(doc).Select(s => s.Name?.Value ?? string.Empty)];
     }
 
     /// <summary>
@@ -36,11 +34,11 @@ public static class XlsxRowReader
         {
             var wbPart = doc.WorkbookPart
                 ?? throw new InvalidOperationException("El archivo no es un Excel (.xlsx) válido.");
+            var hojas = Hojas(doc);
             var sheet = sheetName is null
-                ? wbPart.Workbook.Descendants<Sheet>().FirstOrDefault()
+                ? hojas.FirstOrDefault()
                     ?? throw new InvalidOperationException("El Excel no contiene ninguna hoja.")
-                : wbPart.Workbook.Descendants<Sheet>()
-                    .FirstOrDefault(s => string.Equals(s.Name?.Value?.Trim(), sheetName, StringComparison.Ordinal))
+                : hojas.FirstOrDefault(s => string.Equals(s.Name?.Value?.Trim(), sheetName, StringComparison.Ordinal))
                     ?? throw new InvalidOperationException($"El Excel no contiene una hoja llamada '{sheetName}'.");
             var wsPart = (WorksheetPart)wbPart.GetPartById(sheet.Id!.Value!);
             var sst = wbPart.SharedStringTablePart?.SharedStringTable;
@@ -79,6 +77,16 @@ public static class XlsxRowReader
             // correcto para una falla que no es del archivo.
             throw new InvalidOperationException("El archivo no es un Excel (.xlsx) válido.");
         }
+    }
+
+    /// <summary>Las hojas del libro, sin abrir ninguna todavía. Un solo punto para la
+    /// desreferencia de WorkbookPart/Workbook (en vez de repetirla en cada llamador) es lo que le
+    /// permite al analizador de nulos confirmar que el resultado nunca es null.</summary>
+    private static IEnumerable<Sheet> Hojas(SpreadsheetDocument doc)
+    {
+        var workbook = (doc.WorkbookPart ?? throw new InvalidOperationException("El archivo no es un Excel (.xlsx) válido."))
+            .Workbook ?? throw new InvalidOperationException("El archivo no es un Excel (.xlsx) válido.");
+        return workbook.Descendants<Sheet>();
     }
 
     private static string[] Cells(Row row, SharedStringTable? sst)
