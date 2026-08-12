@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Features.Cdc;
 using OptimizacionCostos.Api.Features.Clients;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.InformeValor.Calculo;
@@ -36,7 +37,8 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Api;
 [RequireModule(Modules.InformeValor)]
 public sealed class InformeValorController(
     IInformeValorStore store, IAnalysisAccess access, ILogger<InformeValorController> logger,
-    IInsumosBdRecolector recolector, IClientStore clientStore) : ControllerBase
+    IInsumosBdRecolector recolector, IClientStore clientStore,
+    IReservationService reservations, IAzureReservationsClient reservationsClient) : ControllerBase
 {
     // Un export de BITCOST de 24 meses de un cliente grande está entre 8 y 18 MB, así que el
     // tope compartido de UploadValidation (10 MiB) rechazaría un archivo legítimo.
@@ -171,6 +173,13 @@ public sealed class InformeValorController(
     /// resuelve a fecha de Guayaquil UNA vez, acá — nunca <c>DateTime.Now</c>/<c>UtcNow</c> (Global
     /// Constraints): dos llamadas con el mismo <see cref="PreviewRequest"/> tienen que devolver
     /// exactamente el mismo modelo.</para>
+    ///
+    /// <para><b>Entrega 2d, cierre de la Tarea 1:</b> además de los cuatro insumos de base, este
+    /// endpoint captura la <see cref="FotoReservas"/> en vivo contra Azure
+    /// (<see cref="CapturarFotoReservasAsync"/>) y se la pasa a
+    /// <see cref="InformeValorEnsamblador.Ensamblar"/>. Es la única lectura de <c>/preview</c> que
+    /// no sale de la base propia ni del insumo BITCOST: por eso vive detrás de su propio guard de
+    /// fallos, ver el comentario de <see cref="CapturarFotoReservasAsync"/>.</para>
     /// </summary>
     [HttpPost("clients/{clientId:int}/preview")]
     public async Task<IActionResult> Preview(int clientId, [FromBody] PreviewRequest request, CancellationToken ct)
@@ -191,6 +200,7 @@ public sealed class InformeValorController(
         var casos = await store.GetCasosAsync(clientId, ct);
         var estados = await store.GetEstadoAsync(clientId, ct);
         var nombreCliente = await clientStore.GetNameAsync(clientId, ct) ?? $"Cliente {clientId}";
+        var fotoReservas = await CapturarFotoReservasAsync(clientId, ct);
 
         // D14: rows_processed + rows_merged de la ULTIMA carga de facturación (GetEstadoAsync ya
         // filtra a la más reciente por kind). 0 si nunca se cargó nada, igual que un insumo
@@ -201,9 +211,47 @@ public sealed class InformeValorController(
             .FirstOrDefault();
 
         var modelo = InformeValorEnsamblador.Ensamblar(
-            facturacion, filasAntesDeFusionar, casos, insumosBd, nombreCliente, contexto);
+            facturacion, filasAntesDeFusionar, casos, insumosBd, nombreCliente, contexto, fotoReservas);
 
         return Ok(modelo);
+    }
+
+    /// <summary>
+    /// Captura la <see cref="FotoReservas"/> (Tarea 1 de la entrega 2d) para <see cref="Preview"/>.
+    /// La lectura es en vivo contra Azure -- por credencial activa del cliente, más una llamada a
+    /// Consumption por cada reserva activa (ver el comentario de clase de
+    /// <see cref="ReservasRecolector"/>) -- así que puede fallar o tardar por motivos ajenos al
+    /// informe (SQL al listar credenciales, Azure caído, throttling). El resto de
+    /// <see cref="Preview"/> no depende de este eje, así que una falla acá NUNCA puede tumbar el
+    /// informe completo.
+    ///
+    /// <para><see cref="ReservasRecolector.CapturarAsync"/> ya atrapa los fallos de Azure que puede
+    /// anticipar (sin credenciales activas, <c>FetchAllAsync</c> completo, <c>GetConsumersAsync</c>
+    /// puntual de una reserva) y los traduce a <see cref="FotoReservas"/> con <c>Medido=false</c>.
+    /// Lo que NO atrapa es <c>IReservationService.ActiveCredentialsAsync</c> (una consulta SQL): ese
+    /// hueco, y cualquier otra falla que no se haya anticipado, se cierran acá -- con el MISMO
+    /// contrato (<c>Medido=false</c> + <c>Motivo</c> + <c>Errores</c>) que ya usa el recolector, sin
+    /// inventar un estado nuevo.</para>
+    /// </summary>
+    private async Task<FotoReservas> CapturarFotoReservasAsync(int clientId, CancellationToken ct)
+    {
+        try
+        {
+            return await ReservasRecolector.CapturarAsync(reservations, reservationsClient, clientId, ct: ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex,
+                "informe-valor preview: la lectura de reservas fallo, el eje se publica no medido. client_id={Cid}",
+                clientId);
+            return new FotoReservas(
+                Medido: false,
+                Motivo: "La lectura de reservas contra Azure fallo de forma inesperada: este eje no se midio.",
+                Errores: [new { error = ex.GetType().Name }],
+                AlertDays: ReservasRecolector.AlertDaysPorDefecto,
+                CapturadaEn: DateTime.UtcNow,
+                Reservas: []);
+        }
     }
 
     [HttpPost("clients/{clientId:int}/insumos/{kind}")]

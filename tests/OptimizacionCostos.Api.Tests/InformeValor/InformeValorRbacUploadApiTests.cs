@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Features.Cdc;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.Identity;
 using OptimizacionCostos.Api.Features.InformeValor;
@@ -141,6 +142,14 @@ public sealed class InformeValorRbacUploadApiTests : IClassFixture<InformeValorR
                 services.AddSingleton<IInformeValorStore>(Store);
                 services.RemoveAll<IInsumosBdRecolector>();
                 services.AddSingleton<IInsumosBdRecolector>(Recolector);
+                // Entrega 2d, cierre de la Tarea 1: el controller ahora también pide
+                // IReservationService/IAzureReservationsClient (la foto de reservas de /preview).
+                // Ningún test de esta clase pega a /preview (todos van a /insumos/rbac), pero sin
+                // este reemplazo el controller se construiria con las implementaciones reales.
+                services.RemoveAll<IReservationService>();
+                services.AddSingleton<IReservationService>(new FakeReservationServiceNoUsado());
+                services.RemoveAll<IAzureReservationsClient>();
+                services.AddSingleton<IAzureReservationsClient>(new FakeAzureReservationsClientNoUsado());
                 services.RemoveAll<IModulePermissionStore>();
                 services.AddSingleton<IModulePermissionStore>(Perms);
                 services.RemoveAll<IModulePermissionService>();
@@ -226,6 +235,36 @@ public sealed class InformeValorRbacUploadApiTests : IClassFixture<InformeValorR
             => throw new NotSupportedException();
 
         public Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct)
+            => throw new NotSupportedException();
+    }
+
+    /// <summary>Ningún test de esta clase pega a /preview: revienta a propósito si algo llega a
+    /// llamarlo, mismo criterio que FakeInsumosBdRecolectorConEstado.LeerEstadoRbacConOrigenAsync.</summary>
+    public sealed class FakeReservationServiceNoUsado : IReservationService
+    {
+        public Task<IReadOnlyList<CredentialRef>> ActiveCredentialsAsync(int clientId, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<(IReadOnlyList<ReservationDto> Reservations, IReadOnlyList<object> Errors)> FetchAllAsync(
+            IReadOnlyList<CredentialRef> credentials, int alertDays, bool includeUtilization, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyDictionary<string, object?>> ListClientReservationsAsync(
+            IReadOnlyList<CredentialRef> credentials, int alertDays, bool includeUtilization, CancellationToken ct = default)
+            => throw new NotSupportedException();
+    }
+
+    /// <summary>Mismo criterio que <see cref="FakeReservationServiceNoUsado"/>.</summary>
+    public sealed class FakeAzureReservationsClientNoUsado : IAzureReservationsClient
+    {
+        public Task<IReadOnlyList<ReservationDto>> FetchForCredentialAsync(
+            int credentialId, int alertDays, DateOnly today, bool includeUtilization, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<(string Last, string Avg7d)> GetUtilizationAsync(int credentialId, string reservationId, CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<ReservationConsumer>> GetConsumersAsync(int credentialId, string reservationId, int days, CancellationToken ct = default)
             => throw new NotSupportedException();
     }
 }

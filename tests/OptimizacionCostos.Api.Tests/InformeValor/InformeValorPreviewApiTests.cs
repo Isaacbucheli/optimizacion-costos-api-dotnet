@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Features.Cdc;
 using OptimizacionCostos.Api.Features.Clients;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.Identity;
@@ -127,7 +128,74 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
         Assert.Equal("Cliente 55", json.GetProperty("meta").GetProperty("cliente").GetString());
     }
 
-    // ---- Fixture: API real en memoria, solo se fake-an auth/acceso/permisos y las tres fuentes ----
+    /// <summary>
+    /// Cierre de la Tarea 1 de la entrega 2d (cableado de la foto de reservas en el controller):
+    /// una falla leyendo credenciales -- el hueco que <c>ReservasRecolector.CapturarAsync</c> no
+    /// atrapa (<c>IReservationService.ActiveCredentialsAsync</c> es una consulta SQL sin try/catch
+    /// alrededor, ver el comentario de clase de <c>InformeValorController.CapturarFotoReservasAsync</c>)
+    /// -- no puede tumbar el resto del informe. El eje de reservas sale "no medido", pero el resto
+    /// del informe (que no depende de reservas) llega intacto.
+    /// </summary>
+    [Fact]
+    public async Task Si_la_lectura_de_reservas_revienta_el_preview_sale_igual_con_el_eje_no_medido()
+    {
+        _factory.Access.Allow(clientId: 66);
+        _factory.Reservations.FallarLecturaDeCredenciales(66);
+        var client = ClientFor("p6@bit.ec", Roles.Consultor, canEdit: false);
+
+        var res = await client.PostAsJsonAsync("/informe-valor/clients/66/preview", CuerpoValido());
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var json = await res.Content.ReadFromJsonAsync<JsonElement>();
+        var reservas = json.GetProperty("fact").GetProperty("variacionConsumo").GetProperty("reservas");
+        Assert.False(reservas.GetProperty("medido").GetBoolean());
+        Assert.NotEmpty(reservas.GetProperty("motivo").GetString()!);
+        // El resto del informe no depende de reservas: la cifra de facturación llega intacta.
+        Assert.Equal(1500m, json.GetProperty("fact").GetProperty("total").GetDecimal());
+    }
+
+    /// <summary>
+    /// Cierre de la Tarea 1: con una credencial activa y una reserva con un consumidor confirmado,
+    /// la foto llega MEDIDA hasta el JSON de /preview. Antes de este cambio, /preview nunca llamaba
+    /// a <c>ReservasRecolector.CapturarAsync</c> y el eje salia "no medido" para todos los clientes,
+    /// siempre (<c>InformeValorEnsamblador.FotoReservasNoConectada</c>, el placeholder que se usaba
+    /// en ausencia de una foto real) -- este test prueba que el cable ya conecta datos de verdad, no
+    /// solo que el placeholder sigue funcionando.
+    /// </summary>
+    [Fact]
+    public async Task Con_una_reserva_activa_y_un_consumidor_confirmado_el_eje_llega_medido()
+    {
+        const int clientId = 67;
+        _factory.Access.Allow(clientId);
+        _factory.Reservations.ConCredencialYReservas(clientId, new CredentialRef(1, "cred-prueba"),
+        [
+            new ReservationDto(
+                ReservationId: "resv-1", CredentialId: 1, Name: "Reserva de prueba", Product: "Standard_D2s_v5",
+                Region: "eastus", Quantity: 2, Term: "P1Y", TermLabel: "1 ano", State: "Succeeded",
+                AppliedScopeType: null, AppliedScopes: [], ExpiresOn: "2027-06-01", DaysRemaining: 300,
+                Expired: false, Expiring: false, UtilizationLast: "80%", Utilization7d: "75%"),
+        ]);
+        _factory.ReservationsClient.ConConsumidores("resv-1",
+        [
+            new ReservationConsumer(
+                InstanceId: "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Compute/virtualMachines/vm-1",
+                ResourceName: "vm-1", ResourceGroup: "rg-1", SubscriptionId: "sub-1", SubscriptionName: null,
+                SkuName: "Standard_D2s_v5", UsedHours: 700, LastSeen: "2026-02-20", DaysSeen: 28),
+        ]);
+        var client = ClientFor("p7@bit.ec", Roles.Consultor, canEdit: false);
+
+        var res = await client.PostAsJsonAsync($"/informe-valor/clients/{clientId}/preview", CuerpoValido());
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var json = await res.Content.ReadFromJsonAsync<JsonElement>();
+        var reservas = json.GetProperty("fact").GetProperty("variacionConsumo").GetProperty("reservas");
+        Assert.True(reservas.GetProperty("medido").GetBoolean());
+        var confirmados = reservas.GetProperty("confirmados");
+        Assert.Equal(1, confirmados.GetArrayLength());
+        Assert.Equal("vm-1", confirmados[0].GetProperty("resource_name").GetString());
+    }
+
+    // ---- Fixture: API real en memoria, solo se fake-an auth/acceso/permisos y las cuatro fuentes ----
 
     public sealed class Factory : WebApplicationFactory<Program>
     {
@@ -137,6 +205,8 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
         public FakeInformeValorStoreConDatos Store { get; } = new();
         public FakeInsumosBdRecolectorVacio Recolector { get; } = new();
         public FakeClientStore ClientStore { get; } = new();
+        public FakeReservationServiceControlable Reservations { get; } = new();
+        public FakeAzureReservationsClientControlable ReservationsClient { get; } = new();
         public FakeModulePermissionStore Perms { get; } = new FakeModulePermissionStore().SeedDefaults();
         public IModulePermissionService Service => Services.GetRequiredService<IModulePermissionService>();
 
@@ -156,6 +226,15 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
                 services.AddSingleton<IInsumosBdRecolector>(Recolector);
                 services.RemoveAll<IClientStore>();
                 services.AddSingleton<IClientStore>(ClientStore);
+                // Entrega 2d, cierre de la Tarea 1: la foto de reservas de /preview. Por defecto
+                // (ningún test la configura) responde "sin credenciales activas" para cualquier
+                // client_id, el mismo estado seguro que ReservasRecolector.CapturarAsync da sin
+                // filas en client_azure_credentials -- así los cuatro tests existentes de este
+                // archivo no pagan ninguna llamada real a Azure ni a SQL.
+                services.RemoveAll<IReservationService>();
+                services.AddSingleton<IReservationService>(Reservations);
+                services.RemoveAll<IAzureReservationsClient>();
+                services.AddSingleton<IAzureReservationsClient>(ReservationsClient);
                 services.RemoveAll<IModulePermissionStore>();
                 services.AddSingleton<IModulePermissionStore>(Perms);
                 // El servicio cacheado debe ser singleton en tests para poder invalidarlo desde
@@ -277,5 +356,70 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
         public Task ClearLogoAsync(int clientId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<(bool Managed, string? Note)> GetSecurityManagementAsync(int clientId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task SetSecurityManagementAsync(int clientId, bool managed, string? note, CancellationToken ct = default) => throw new NotSupportedException();
+    }
+
+    /// <summary>
+    /// Fuente de reservas controlable, en memoria: por defecto responde "sin credenciales activas"
+    /// para cualquier client_id (mismo estado que <c>ReservasRecolector.CapturarAsync</c> da sin
+    /// filas en <c>client_azure_credentials</c>), así que ningún test paga una llamada real a Azure
+    /// ni a SQL. <see cref="FallarLecturaDeCredenciales"/> y <see cref="ConCredencialYReservas"/>
+    /// dejan que un test puntual configure, por client_id, el hueco que el controller tiene que
+    /// cubrir (<c>ActiveCredentialsAsync</c> revienta) o el camino feliz (una credencial con
+    /// reservas de verdad) sin afectar a los demás client_id de esta misma fixture compartida
+    /// (<see cref="IClassFixture{TFixture}"/> es una sola instancia para toda la clase).
+    /// </summary>
+    public sealed class FakeReservationServiceControlable : IReservationService
+    {
+        private readonly HashSet<int> _fallaCredenciales = [];
+        private readonly Dictionary<int, IReadOnlyList<CredentialRef>> _credencialesPorCliente = new();
+        private readonly Dictionary<int, IReadOnlyList<ReservationDto>> _reservasPorCredencial = new();
+
+        public void FallarLecturaDeCredenciales(int clientId) => _fallaCredenciales.Add(clientId);
+
+        public void ConCredencialYReservas(int clientId, CredentialRef credencial, IReadOnlyList<ReservationDto> reservas)
+        {
+            _credencialesPorCliente[clientId] = [credencial];
+            _reservasPorCredencial[credencial.CredentialId] = reservas;
+        }
+
+        public Task<IReadOnlyList<CredentialRef>> ActiveCredentialsAsync(int clientId, CancellationToken ct = default) =>
+            _fallaCredenciales.Contains(clientId)
+                ? throw new InvalidOperationException("Fallo simulado leyendo credenciales de Azure.")
+                : Task.FromResult(_credencialesPorCliente.GetValueOrDefault(clientId, (IReadOnlyList<CredentialRef>)[]));
+
+        public Task<(IReadOnlyList<ReservationDto> Reservations, IReadOnlyList<object> Errors)> FetchAllAsync(
+            IReadOnlyList<CredentialRef> credentials, int alertDays, bool includeUtilization, CancellationToken ct = default)
+        {
+            var todas = credentials
+                .SelectMany(c => _reservasPorCredencial.GetValueOrDefault(c.CredentialId, []))
+                .ToList();
+            return Task.FromResult<(IReadOnlyList<ReservationDto>, IReadOnlyList<object>)>((todas, []));
+        }
+
+        public Task<IReadOnlyDictionary<string, object?>> ListClientReservationsAsync(
+            IReadOnlyList<CredentialRef> credentials, int alertDays, bool includeUtilization, CancellationToken ct = default)
+            => throw new NotSupportedException("El recolector usa FetchAllAsync directo, no este wrapper de dict.");
+    }
+
+    /// <summary>Consumidores confirmados por reservation_id, en memoria. Sin entrada, responde vacío
+    /// (reserva sin consumidores confirmados, no una falla de lectura) -- mismo criterio que
+    /// <see cref="ReservasRecolectorTests"/>.</summary>
+    public sealed class FakeAzureReservationsClientControlable : IAzureReservationsClient
+    {
+        private readonly Dictionary<string, IReadOnlyList<ReservationConsumer>> _consumidoresPorReserva = new();
+
+        public void ConConsumidores(string reservationId, IReadOnlyList<ReservationConsumer> consumidores) =>
+            _consumidoresPorReserva[reservationId] = consumidores;
+
+        public Task<IReadOnlyList<ReservationDto>> FetchForCredentialAsync(
+            int credentialId, int alertDays, DateOnly today, bool includeUtilization, CancellationToken ct = default)
+            => throw new NotSupportedException("El recolector usa IReservationService.FetchAllAsync, no este método.");
+
+        public Task<(string Last, string Avg7d)> GetUtilizationAsync(int credentialId, string reservationId, CancellationToken ct = default)
+            => throw new NotSupportedException("La utilización ya viaja en ReservationDto (includeUtilization).");
+
+        public Task<IReadOnlyList<ReservationConsumer>> GetConsumersAsync(
+            int credentialId, string reservationId, int days, CancellationToken ct = default) =>
+            Task.FromResult(_consumidoresPorReserva.GetValueOrDefault(reservationId, []));
     }
 }
