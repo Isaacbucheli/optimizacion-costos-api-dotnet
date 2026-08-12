@@ -66,13 +66,15 @@ public static class PosturaCalculador
     /// </param>
     public static PosturaModelo? Calcular(
         IReadOnlyList<AdvisorFila> advisor, IReadOnlyList<RetiroFila> retiros,
-        bool seguridadGestionadaExternamente, string? seguridadGestionadaNota, ContextoInformeValor contexto)
+        bool seguridadGestionadaExternamente, string? seguridadGestionadaNota, ContextoInformeValor contexto,
+        CorridaBoletin? corridaBoletin = null)
     {
         if (advisor.Count == 0 && retiros.Count == 0) return null;
 
         var (bruto, real, lineas, porSub) = CalcularAhorro(advisor);
         var (top, topSuma) = CalcularTop(advisor);
         var (retirosCalculados, vencidos, proximos) = CalcularRetiros(retiros, contexto.Corte);
+        var (retirosMedido, retirosMotivo) = EstadoDeLosRetiros(retiros, corridaBoletin);
         var (numRecursos, recomendacionesConRecurso) = CalcularRecursos(advisor);
 
         return new PosturaModelo(
@@ -98,8 +100,53 @@ public static class PosturaCalculador
             Retiros: retirosCalculados,
             RetirosVencidos: vencidos,
             RetirosProximosATresMeses: proximos,
+            RetirosMedido: retirosMedido,
+            RetirosMotivo: retirosMotivo,
             SeguridadGestionadaExternamente: seguridadGestionadaExternamente,
             SeguridadGestionadaNota: seguridadGestionadaNota);
+    }
+
+    /// <summary>
+    /// Si alguien fue a buscar los retiros, y qué aclarar del insumo. Ver
+    /// <see cref="PosturaModelo.RetirosMedido"/>/<see cref="PosturaModelo.RetirosMotivo"/>.
+    ///
+    /// <para><b>Con retiros presentes está medido, sin mirar la corrida.</b> Que haya filas ya prueba
+    /// que alguien las buscó, y es lo que resuelve la ambigüedad del default <c>null</c> de
+    /// <see cref="InsumosBd.CorridaBoletin"/> ("nunca corrió" y "nadie preguntó" son el mismo valor).
+    /// El motivo sí se conserva cuando la corrida fue parcial: midió, pero pudo dejar algo afuera.</para>
+    ///
+    /// <para>Internal para probarlo como función pura, sin base de datos: mismo mecanismo que
+    /// <c>SqlInsumosBdRecolector.ResolverRbac</c>.</para>
+    /// </summary>
+    internal static (bool Medido, string? Motivo) EstadoDeLosRetiros(
+        IReadOnlyList<RetiroFila> retiros, CorridaBoletin? corrida)
+    {
+        var advertenciaParcial = corrida?.Estado == CorridaBoletin.Parcial
+            ? "La última sincronización del Boletín terminó con errores parciales, así que puede " +
+              "faltar algún retiro de una suscripción que no se pudo consultar."
+            : null;
+
+        if (retiros.Count > 0) return (true, advertenciaParcial);
+
+        return corrida?.Estado switch
+        {
+            null => (false, "El módulo Boletín todavía no sincronizó los anuncios de Azure para este " +
+                            "cliente, así que nadie buscó retiros sobre este parque: el cero de esta " +
+                            "sección es una medición que falta, no la ausencia de retiros."),
+            CorridaBoletin.Fallida => (false,
+                "La última sincronización del Boletín falló, así que la lista de retiros de este " +
+                "informe puede estar vacía por esa falla y no porque Azure no haya anunciado nada."),
+            CorridaBoletin.EnCurso => (false,
+                "La sincronización del Boletín está en curso y todavía no cerró: los retiros de este " +
+                "cliente no se pueden dar por leídos."),
+            CorridaBoletin.Parcial => (true,
+                "La sincronización del Boletín terminó con errores parciales y no encontró retiros " +
+                "vigentes: puede que falte alguna suscripción que no se pudo consultar."),
+            // Corrida cerrada sin errores y sin retiros vigentes: el cero es un hecho y se publica
+            // como tal. Se dice igual de dónde sale, porque el filtro también excluye el fin de
+            // soporte y las suscripciones que el cliente dejó de administrar.
+            _ => (true, null),
+        };
     }
 
     /// <summary>

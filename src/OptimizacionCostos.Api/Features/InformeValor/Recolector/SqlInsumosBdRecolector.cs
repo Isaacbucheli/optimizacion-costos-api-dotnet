@@ -107,6 +107,10 @@ public sealed class SqlInsumosBdRecolector(
         var advisor = await AdvisorRecolector.LeerAsync(conn, clientId, administradas, seguridadGestionadaExternamente, ct);
         var matriz = await MatrizRecolector.LeerAsync(conn, clientId, administradas, seguridadGestionadaExternamente, ct);
         var retiros = await RetirosRecolector.LeerAsync(conn, clientId, ct);
+        // El estado del insumo de retiros viaja con el insumo: "0 retiros" y "el Boletín nunca corrió
+        // para este cliente" son dos hechos distintos y hasta acá salían iguales. Misma conexión y
+        // mismo schema de Boletín ya asegurado arriba, así que cuesta una consulta de una fila.
+        var corridaBoletin = await RetirosRecolector.LeerUltimaCorridaAsync(conn, clientId, ct);
         // Tarea 2 de la entrega 2d (E3): mismo patron que Advisor/Matriz (misma conexion, mismo
         // schema WAF ya asegurado arriba, mismo filtro de suscripciones administradas).
         var hallazgosResueltos = await HallazgoResueltoRecolector.LeerAsync(
@@ -129,7 +133,8 @@ public sealed class SqlInsumosBdRecolector(
         return new InsumosBd(
             advisor, matriz, rbac, retiros, estadoBase with { Ejes = ejesRbac },
             seguridadGestionadaExternamente, seguridadGestionadaNota, DateTime.UtcNow,
-            RbacOrigen: rbacOrigen, HallazgosResueltos: hallazgosResueltos);
+            RbacOrigen: rbacOrigen, HallazgosResueltos: hallazgosResueltos,
+            CorridaBoletin: corridaBoletin);
     }
 
     /// <summary>

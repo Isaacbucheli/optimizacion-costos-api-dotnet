@@ -52,7 +52,19 @@ public sealed record InsumosBd(
     /// todavía. Default <c>null</c> (tratado como vacío por quien lo lee) por el mismo motivo que
     /// <see cref="RbacOrigen"/>: para no romper, con un parámetro nuevo requerido, a cada test de
     /// este módulo que ya construye <see cref="InsumosBd"/> a mano.</summary>
-    IReadOnlyList<HallazgoResueltoFila>? HallazgosResueltos = null)
+    IReadOnlyList<HallazgoResueltoFila>? HallazgosResueltos = null,
+    /// <summary>Última corrida del sync del Boletín (<see cref="CorridaBoletin"/>), o <c>null</c>
+    /// cuando el módulo nunca sincronizó a este cliente. Es el estado del INSUMO de
+    /// <see cref="Retiros"/>, no un retiro más: sin él, <see cref="Retiros"/> vacío no distingue
+    /// "Azure no anunció nada sobre este parque" de "nadie fue a buscarlo", y el informe publicaba
+    /// "0 retiros" como un hecho del negocio. Ver <see cref="RetirosRecolector.SqlUltimaCorrida"/>.
+    ///
+    /// <para>Default <c>null</c> por el mismo motivo que los dos parámetros de arriba (no romper los
+    /// tests que construyen este record a mano). Ojo con la ambigüedad de ese default: <c>null</c>
+    /// significa a la vez "el Boletín nunca corrió" y "nadie preguntó", así que
+    /// <c>PosturaCalculador</c> resuelve el empate por el otro lado — con retiros presentes, alguien
+    /// los buscó, y eso ya alcanza para declararlo medido.</para></summary>
+    CorridaBoletin? CorridaBoletin = null)
 {
     /// <summary><see cref="RbacOrigen"/> cuando <see cref="Rbac"/> salió de Revisión de accesos.</summary>
     public const string OrigenBase = "base";

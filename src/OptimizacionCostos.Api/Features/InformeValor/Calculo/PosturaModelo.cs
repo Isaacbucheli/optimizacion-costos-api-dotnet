@@ -94,6 +94,26 @@ public sealed record PosturaModelo(
     [property: JsonPropertyName("rets")] IReadOnlyList<PosturaRetiro> Retiros,
     [property: JsonPropertyName("vencidos")] int RetirosVencidos,
     [property: JsonPropertyName("proximos")] int RetirosProximosATresMeses,
+    /// <summary>
+    /// Si alguien FUE A BUSCAR los retiros de este cliente. <c>false</c> = <see cref="Retiros"/>
+    /// vacío porque el módulo Boletín nunca sincronizó a este cliente, su última corrida falló o
+    /// está en curso; <c>true</c> = la corrida cerró (o hay retiros, que ya prueba que se buscaron).
+    ///
+    /// <para>Sin este campo, "0 retiros" se ve igual cuando Azure no anunció nada sobre el parque y
+    /// cuando nadie miró, y el artefacto lo publicaba como un hecho ("el export no reporta
+    /// características en proceso de retiro sobre este parque"). La sincronización del Boletín es
+    /// manual, por cliente, y el módulo nace denegado en permisos: "nunca corrió" es el estado
+    /// inicial de todo cliente nuevo, no un borde. Es el mismo par medido/motivo que
+    /// <see cref="SeguridadModelo.EstadoCuentaMedido"/> (D9) y que <see cref="FotoReservas.Medido"/>.</para>
+    /// </summary>
+    [property: JsonPropertyName("retirosMedido")] bool RetirosMedido,
+    /// <summary>
+    /// Qué decir sobre el estado del insumo de retiros, o <c>null</c> cuando no hay nada que aclarar
+    /// (la corrida cerró sin errores). Existe además de <see cref="RetirosMedido"/> porque una
+    /// corrida <c>partial</c> SÍ midió, pero pudo dejarse retiros afuera: eso es una advertencia, no
+    /// un "sin medir", y colapsar los dos casos en un booleano perdería el segundo.
+    /// </summary>
+    [property: JsonPropertyName("retirosMotivo")] string? RetirosMotivo,
     [property: JsonPropertyName("seguridadGestionadaExternamente")] bool SeguridadGestionadaExternamente,
     [property: JsonPropertyName("seguridadGestionadaNota")] string? SeguridadGestionadaNota);
 

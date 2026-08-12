@@ -57,7 +57,7 @@ internal static class ModeloDePrueba
             SerieMensual: [["2026-01", 10, 1]],
             RachaMesesSinIncumplir: 0, RachaCasos: 0,
             Frentes: [new OperacionFrente("Mantenimiento", 10, false)],
-            TotalFrentes: 1, FrentesReactivos: 0, CasosReactivos: 0, CasosSinSubcategoria: 0,
+            TotalFrentes: 1, FrentesReactivos: 0, FrentesProactivos: 1, CasosReactivos: 0, CasosSinSubcategoria: 0,
             PorHorario: [["Horario laboral", 10]],
             Desde: "2026-01-05", Hasta: "2026-02-20",
             FueraDeSla: [["C-1", "2026-01-05", "Cómputo", "Falla", 4m, 9m]],
@@ -101,6 +101,7 @@ internal static class ModeloDePrueba
             { [SuscripcionConAcentos] = new(22005m, 22006m) },
             Retiros: [new PosturaRetiro("Clásico", "2026-06-30", 2, "Menos de tres meses", false, true)],
             RetirosVencidos: 0, RetirosProximosATresMeses: 1,
+            RetirosMedido: true, RetirosMotivo: null,
             SeguridadGestionadaExternamente: false, SeguridadGestionadaNota: null),
         Roadmap: null,
         CatSerie: new Dictionary<string, IReadOnlyDictionary<string, decimal>>

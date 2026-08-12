@@ -37,9 +37,16 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// exclusión: esos casos no matchean el regex reactivo (correcto, ya lo hacía la plantilla) pero
 /// tampoco pueden caer en "proactivo" por default. El titular/KPI por volumen
 /// (<see cref="OperacionModelo.CasosReactivos"/> sobre <see cref="OperacionModelo.Total"/>) y la
-/// métrica por frentes (<see cref="OperacionModelo.FrentesReactivos"/> sobre
-/// <see cref="OperacionModelo.TotalFrentes"/>) quedan las dos disponibles y pueden divergir; cuál
-/// se titula es una decisión de <c>render()</c> (entrega 3), no de este cálculo.</para>
+/// métrica por frentes (<see cref="OperacionModelo.FrentesReactivos"/> y
+/// <see cref="OperacionModelo.FrentesProactivos"/> sobre su suma) quedan las dos disponibles y
+/// pueden divergir; cuál se titula es una decisión de <c>render()</c> (entrega 3), no de este
+/// cálculo — la regla vigente es que el titular y el KPI usan la de volumen, y la de frentes se
+/// publica en el cuerpo rotulada como tal.</para>
+///
+/// <para>El residual de D1 obligó a publicar <see cref="OperacionModelo.FrentesProactivos"/> como
+/// campo propio: "todos los frentes menos los reactivos" lo contaba del lado proactivo, y con un
+/// export sin la columna Subcategoría poblada esa resta publicaba 100 % de trabajo proactivo junto
+/// al 0,0 % por volumen. Ver el docstring de ese campo.</para>
 /// </summary>
 public static class OperacionCalculador
 {
@@ -142,7 +149,10 @@ public static class OperacionCalculador
             SerieMensual: [.. meses.Select(m => (IReadOnlyList<object?>)[m.Clave.ToString("yyyy-MM"), m.Total, m.FueraDeSla])],
             RachaMesesSinIncumplir: racha, RachaCasos: rachaCasos,
             Frentes: frentes, TotalFrentes: frentes.Count,
-            FrentesReactivos: frentes.Count(f => f.EsReactivo), CasosReactivos: casosReactivos,
+            FrentesReactivos: frentes.Count(f => f.EsReactivo),
+            // El residual de D1 no es proactivo: no se clasificó. Ver OperacionModelo.FrentesProactivos.
+            FrentesProactivos: frentes.Count(f => !f.EsReactivo && f.Nombre != SinSubcategoria),
+            CasosReactivos: casosReactivos,
             CasosSinSubcategoria: casosSinSubcategoria,
             PorHorario: porHorario,
             Desde: fechas[0].ToString("yyyy-MM-dd"), Hasta: fechas[^1].ToString("yyyy-MM-dd"),

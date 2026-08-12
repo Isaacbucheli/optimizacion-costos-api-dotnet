@@ -128,6 +128,69 @@ public sealed class OperacionCalculadorTests
         Assert.Contains(m.Frentes, f => f.Nombre == "(sin subcategoría)" && f.Cantidad == 1 && !f.EsReactivo);
     }
 
+    /// <summary>
+    /// El residual de D1 no es reactivo, pero tampoco proactivo: no se clasificó. Antes de
+    /// <see cref="OperacionModelo.FrentesProactivos"/>, cualquiera que quisiera el conteo proactivo
+    /// tenía que restar (<c>TotalFrentes - FrentesReactivos</c>) y ahí el residual caía del lado
+    /// proactivo — el mismo defecto que D10 ya había corregido para el conteo por volumen y que
+    /// nadie había corregido para el conteo por frentes.
+    /// </summary>
+    [Fact]
+    public void El_frente_residual_no_se_cuenta_como_proactivo()
+    {
+        CasoRow[] casos =
+        [
+            Caso(caso: "1", subcategoria: "Falla de servicio"),   // reactivo
+            Caso(caso: "2", subcategoria: "Solicitud de acceso"), // proactivo
+            Caso(caso: "3", subcategoria: null),                  // residual: sin clasificar
+        ];
+
+        var m = OperacionCalculador.Calcular(casos, Contexto())!;
+
+        Assert.Equal(3, m.TotalFrentes);
+        Assert.Equal(1, m.FrentesReactivos);
+        Assert.Equal(1, m.FrentesProactivos);
+        // La resta que hacía la capa de dibujo habría dado 2, y con el residual como único frente,
+        // el 100 %.
+        Assert.NotEqual(m.TotalFrentes - m.FrentesReactivos, m.FrentesProactivos);
+    }
+
+    /// <summary>El caso extremo del defecto: un export sin la columna Subcategoría poblada. Los tres
+    /// conteos tienen que dejar claro que no hay nada clasificado, en vez de publicar el residual
+    /// como el 100 % del trabajo proactivo.</summary>
+    [Fact]
+    public void Con_todos_los_casos_sin_subcategoria_no_hay_ningun_frente_clasificado()
+    {
+        CasoRow[] casos = [Caso(caso: "1", subcategoria: null), Caso(caso: "2", subcategoria: "  ")];
+
+        var m = OperacionCalculador.Calcular(casos, Contexto())!;
+
+        Assert.Equal(1, m.TotalFrentes); // el residual
+        Assert.Equal(0, m.FrentesProactivos);
+        Assert.Equal(0, m.FrentesReactivos);
+        Assert.Equal(2, m.CasosSinSubcategoria);
+    }
+
+    /// <summary>Y la suma sigue cerrando: proactivos + reactivos + residual (0 o 1) = total de
+    /// frentes. Un campo nuevo que no cuadra con los otros dos es la forma en que dos piezas del
+    /// mismo modelo empiezan a discrepar.</summary>
+    [Theory]
+    [InlineData(null, 1)]        // hay residual
+    [InlineData("Mejora", 0)]    // no hay residual
+    public void Los_tres_conteos_de_frentes_suman_el_total(string? subcategoria, int residualEsperado)
+    {
+        CasoRow[] casos =
+        [
+            Caso(caso: "1", subcategoria: "Falla de servicio"),
+            Caso(caso: "2", subcategoria: "Solicitud de acceso"),
+            Caso(caso: "3", subcategoria: subcategoria),
+        ];
+
+        var m = OperacionCalculador.Calcular(casos, Contexto())!;
+
+        Assert.Equal(residualEsperado, m.TotalFrentes - m.FrentesProactivos - m.FrentesReactivos);
+    }
+
     [Fact]
     public void D1_Horario_no_lleva_residual_su_denominador_propio_puede_ser_menor_al_total()
     {

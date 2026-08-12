@@ -21,7 +21,7 @@ public sealed class ModeloInformeValorSerializacionTests
         SerieMensual: [["2026-01", 10, 1]],
         RachaMesesSinIncumplir: 2, RachaCasos: 4,
         Frentes: [new OperacionFrente("Solicitud de cambio", 5, false)],
-        TotalFrentes: 3, FrentesReactivos: 1, CasosReactivos: 2, CasosSinSubcategoria: 0,
+        TotalFrentes: 3, FrentesReactivos: 1, FrentesProactivos: 2, CasosReactivos: 2, CasosSinSubcategoria: 0,
         PorHorario: [["Hábil", 8]],
         Desde: "2026-01-01", Hasta: "2026-01-31",
         FueraDeSla: [["RF-1", "2026-01-05", "Cómputo", "Incidente", 4m, 9.5m]],
@@ -60,6 +60,7 @@ public sealed class ModeloInformeValorSerializacionTests
         },
         Retiros: [new PosturaRetiro("API en desuso", "3/5/2026", 4, "Menos de tres meses de margen.", false, true)],
         RetirosVencidos: 0, RetirosProximosATresMeses: 1,
+        RetirosMedido: true, RetirosMotivo: null,
         SeguridadGestionadaExternamente: false, SeguridadGestionadaNota: null);
 
     private static readonly RoadmapModelo Roadmap = new(

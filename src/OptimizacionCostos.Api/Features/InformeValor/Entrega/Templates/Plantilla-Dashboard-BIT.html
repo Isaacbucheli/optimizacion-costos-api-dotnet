@@ -974,11 +974,52 @@ function eje(v,medido,unidad,titulo,prosaMedida,prosaSinMedir){
     ? [num(v),unidad,v?'am':'',titulo,prosaMedida]
     : ['Sin medir','','na',titulo,prosaSinMedir];
 }
+/* D2 + el cero ambiguo, en su forma mas peligrosa. El cumplimiento de SLA solo existe si algun caso
+   lo trae evaluado: denominadorPct es cumple+noCumple, y con los dos en cero el modelo publica
+   pct = 0 (Division.Porcentaje devuelve 0 sin denominador). Dibujar ese 0 le afirma al cliente que
+   la mesa incumplio TODO, en el mismo documento que titula "ningun incumplimiento" porque noCumple
+   tambien vale 0: las dos cosas a la vez. Y pasa sin nada raro -- basta un export cuya columna
+   "Cumple SLA" traiga otro vocabulario ("CUMPLE", "Dentro", "TRUE", "1") o venga vacia en todo el
+   periodo. SeccionOperacion.tsx ya resolvia este caso con "Sin medir": el consultor aprobaba esa
+   version y el cliente recibia el cero. */
+function slaMedido(t){ return !!t && t.denominadorPct>0; }
+function slaSinMedir(t){
+  return num(t.n)+' casos registrados y ninguno trae el resultado del acuerdo registrado: el '+
+    'cumplimiento de SLA no se pudo medir en este período. No es un cumplimiento de cero, es un '+
+    'dato que el insumo no trajo.';
+}
+/* El porcentaje fuera del acuerdo sale de noCumple sobre el MISMO denominador que el cumplimiento,
+   nunca de restarle pct a 100: esa resta era una segunda definicion del mismo concepto y heredaba
+   el cero del denominador vacio para publicarlo como "100.00% de los casos con SLA evaluado". */
+function pctFueraSla(t){ return pct(t.noCumple,t.denominadorPct); }
+/* La racha cuenta meses sin ningun caso FUERA de SLA, asi que con todo sin evaluar sale completa y
+   diria que la mesa lleva N meses cumpliendo. Sin SLA evaluado no hay racha que declarar. */
+function rachaMedida(t){ return slaMedido(t) && t.racha>0; }
 /* D10: los casos sin subcategoria NO cuentan como proactivos. Antes caian de ese lado por omision
    -no matchean la expresion de "reactivo", asi que sobrevivian a la resta-, y el informe le
    atribuia al servicio trabajo que nadie clasifico. El modelo publica casosSinSubcategoria justo
    para poder sacarlos del numerador sin esconderlos. */
 function casosProactivos(t){ return Math.max(0, t.n - t.casosR - t.casosSinSubcategoria); }
+/* El trabajo proactivo se titula y se resume en VOLUMEN de casos, no en frentes: es la regla que
+   dejo escrita el plan de la 2b ("el titular y el KPI usan la metrica por volumen; la de frentes se
+   publica en el cuerpo, rotulada como tal"). Y sin ningun caso clasificado no hay proporcion que
+   publicar: un 0.0% afirmaria que todo el trabajo fue reactivo cuando lo que paso es que nadie
+   clasifico nada. */
+function proactivoMedido(t){ return !!t && (t.n - t.casosSinSubcategoria)>0; }
+/* Los frentes se agrupan por subcategoria y D1 agrega un frente residual "(sin subcategoria)" para
+   que la suma cierre contra el total. Ese residual NO es proactivo, pero "nFrentes - nFrentesR" lo
+   metia de ese lado: con un export sin subcategorias el artefacto publicaba 100% de trabajo
+   proactivo y, tres lineas mas abajo, 0.0% medido en volumen. El modelo publica nFrentesP (los
+   frentes con subcategoria que no describe un incidente) para no tener que restar, y el denominador
+   de la proporcion por frentes son los frentes CLASIFICADOS, no todos. */
+function frentesClasificados(t){ return t.nFrentesP + t.nFrentesR; }
+/* Advisor y los retiros vienen de dos tablas independientes (waf_resource_finding y
+   boletin_retirement), asi que el bloque de postura puede llegar NO nulo con cats/subs/tipos vacios:
+   cliente con el Boletin sincronizado y cero hallazgos activos de Advisor. La plantilla original no
+   podia llegar a ese estado -las dos mitades salian del mismo CSV- y leia cats[0]/subs[0]/tipos[0]
+   sin guarda, asi que render() reventaba con un TypeError y el artefacto salia con los contadores
+   del hero en su "0" literal y sin Eficiencia financiera, Roadmap ni Trazabilidad. */
+function primero(a){ return (a&&a.length)?a[0]:null; }
 /* D14: dos cifras de "registros", cada una con su nombre. La de la carga completa exagera cuanto se
    reviso PARA ESTE PERIODO -es la unica que publicaba la plantilla vieja, que nunca filtraba- y la
    del rango lo subestima, porque esas filas ya vienen fusionadas por clave natural. Las dos son
@@ -1020,10 +1061,13 @@ function render(){
 
   /* ---- hero ---- */
   var HK=[];
-  HK.push(t
-    ? ['<span class="cnt" data-v="'+t.pct.toFixed(2)+'" data-d="2">0</span>','%','',
-       num(t.n)+' casos registrados. '+num(t.cumple)+' de los '+num(t.denominadorPct)+' con SLA evaluado quedaron dentro del acuerdo'+(t.sinEvaluar?'; '+num(t.sinEvaluar)+' no traen resultado registrado':'')+'. Mediana de atención de '+t.mediana.toFixed(2)+' horas.','Operación']
-    : ['—','','na','Falta el export de la mesa de servicio para medir el cumplimiento de SLA.','Operación']);
+  HK.push(!t
+    ? ['—','','na','Falta el export de la mesa de servicio para medir el cumplimiento de SLA.','Operación']
+    : slaMedido(t)
+      ? ['<span class="cnt" data-v="'+t.pct.toFixed(2)+'" data-d="2">0</span>','%','',
+         num(t.n)+' casos registrados. '+num(t.cumple)+' de los '+num(t.denominadorPct)+' con SLA evaluado quedaron dentro del acuerdo'+(t.sinEvaluar?'; '+num(t.sinEvaluar)+' no traen resultado registrado':'')+'. Mediana de atención de '+t.mediana.toFixed(2)+' horas.','Operación']
+      : ['Sin medir','','na',
+         slaSinMedir(t)+' Mediana de atención de '+t.mediana.toFixed(2)+' horas.','Operación']);
   HK.push(rb
     ? ['<span class="cnt" data-v="'+rb.n+'" data-d="0">0</span>','','',
        'Asignaciones de acceso auditadas sobre '+rb.ids+' identidades y '+rb.subs.length+' suscripciones. '+rb.crit+' hallazgos críticos.','Seguridad']
@@ -1048,9 +1092,17 @@ function render(){
   /* ---- resumen ---- */
   var R=[];
   if(t){
-    R.push([t.pct.toFixed(2),'%','','Cumplimiento de SLA',num(t.n)+' casos entre '+t.desde+' y '+t.hasta+', de los cuales '+num(t.denominadorPct)+' tienen SLA evaluado. '+num(t.noCumple)+' quedaron fuera del acuerdo'+(t.sinEvaluar?' y '+num(t.sinEvaluar)+' no traen resultado registrado, así que no cuentan ni a favor ni en contra':'')+'.'+(t.racha?' La racha vigente sin incumplimientos es de '+t.racha+' meses y '+num(t.rachaCasos)+' casos.':'')]);
-    R.push([pct(t.nFrentes-t.nFrentesR,t.nFrentes).toFixed(1),'%','','Frentes de trabajo proactivos',
-      (t.nFrentes-t.nFrentesR)+' de '+t.nFrentes+' frentes nacieron de la vigilancia del servicio, no de un incidente. En volumen de casos la proporción es del '+pct(casosProactivos(t),t.n).toFixed(1)+'%.']);
+    R.push(slaMedido(t)
+      ? [t.pct.toFixed(2),'%','','Cumplimiento de SLA',num(t.n)+' casos entre '+t.desde+' y '+t.hasta+', de los cuales '+num(t.denominadorPct)+' tienen SLA evaluado. '+num(t.noCumple)+' quedaron fuera del acuerdo'+(t.sinEvaluar?' y '+num(t.sinEvaluar)+' no traen resultado registrado, así que no cuentan ni a favor ni en contra':'')+'.'+(rachaMedida(t)?' La racha vigente sin incumplimientos es de '+t.racha+' meses y '+num(t.rachaCasos)+' casos.':'')]
+      : ['Sin medir','','na','Cumplimiento de SLA',slaSinMedir(t)+' Los casos se registraron entre '+t.desde+' y '+t.hasta+'.']);
+    /* El KPI del resumen mide VOLUMEN de casos, igual que el titular de la sección: la proporción
+       por frentes trata cada subcategoría como una unidad, así que un frente de un solo caso pesa
+       igual que uno de doscientos. La de frentes se publica en el cuerpo, rotulada como tal. */
+    R.push(proactivoMedido(t)
+      ? [pct(casosProactivos(t),t.n).toFixed(1),'%','','Trabajo proactivo, en volumen de casos',
+         num(casosProactivos(t))+' de los '+num(t.n)+' casos nacieron de la vigilancia del servicio y no de un incidente'+(t.casosSinSubcategoria?'; '+num(t.casosSinSubcategoria)+' no traen subcategoría y quedan fuera del numerador en vez de contarse como proactivos por omisión':'')+'. Medido por frentes de trabajo la proporción es del '+(frentesClasificados(t)?pct(t.nFrentesP,frentesClasificados(t)).toFixed(1)+'%':'—')+'.']
+      : ['Sin medir','','na','Trabajo proactivo, en volumen de casos',
+         'Ninguno de los '+num(t.n)+' casos del período trae subcategoría, así que no se puede clasificar entre proactivo y reactivo. Un 0% acá diría que todo el trabajo nació de un incidente.']);
   }
   if(rb) R.push([num(rb.n),'','','Asignaciones de acceso auditadas',rb.ids+' identidades sobre '+rb.subs.length+' suscripciones, revisadas una por una. '+rb.find.length+' hallazgos abiertos, '+rb.crit+' de severidad crítica.']);
   if(f){
@@ -1092,16 +1144,27 @@ function render(){
   /* ---- operación ---- */
   if(!t){ $('#body-operacion').innerHTML=pendiente('Adjunta el Excel de requerimientos e incidentes de la mesa de servicio. Debe traer al menos Caso, Fecha de Registro, SLA horas, Duración, Cumple SLA, Categoría y Subcategoría.'); $('#sub-operacion').textContent=''; }
   else {
-    $('#h2-operacion').textContent = t.noCumple===0 ? 'La operación no registró un solo incumplimiento' : 'La operación no se detuvo';
+    /* "No registró un solo incumplimiento" exige que ALGUIEN los haya contado: con todo sin evaluar
+       noCumple también vale 0 y el titular afirmaba el resultado perfecto sobre una columna vacía. */
+    $('#h2-operacion').textContent = (slaMedido(t)&&t.noCumple===0) ? 'La operación no registró un solo incumplimiento' : 'La operación no se detuvo';
     $('#sub-operacion').textContent=num(t.n)+' casos registrados y '+num(t.cerrados)+' cerrados, entre '+t.desde+' y '+t.hasta+'. '+
-      (t.noCumple? num(t.noCumple)+' incumplimientos de SLA.':'Ningún incumplimiento de SLA en todo el período.')+
-      (t.racha?' Desde hace '+t.racha+' meses la mesa acumula '+num(t.rachaCasos)+' casos consecutivos dentro del acuerdo.':'');
+      (!slaMedido(t)? 'Ninguno trae el resultado del acuerdo registrado, así que el cumplimiento de SLA de este período no se pudo medir.'
+        : t.noCumple? num(t.noCumple)+' incumplimientos de SLA.':'Ningún incumplimiento de SLA en todo el período.')+
+      (rachaMedida(t)?' Desde hace '+t.racha+' meses la mesa acumula '+num(t.rachaCasos)+' casos consecutivos dentro del acuerdo.':'');
     $('#body-operacion').innerHTML=
       tarjetas([
-        [num(t.cumple),'/ '+num(t.denominadorPct),'','Casos dentro del acuerdo',t.pct.toFixed(2)+'% de cumplimiento sobre los '+num(t.denominadorPct)+' casos con SLA evaluado, de '+num(t.n)+' registrados en el período.'],
-        [num(t.noCumple),'',t.noCumple?'rd':'','Casos fuera del acuerdo',(100-t.pct).toFixed(2)+'% de los casos con SLA evaluado.'+(t.fuera.length?' El desvío mayor es '+t.fuera.sort(function(a,b){return b[5]-a[5];})[0][0]+', con '+num(Math.round(t.fuera[0][5]))+' horas frente a un SLA de '+t.fuera[0][4]+'.':'')],
-        [t.mediana.toFixed(2),'h','','Mediana de atención','La media general es de '+t.media.toFixed(2)+' horas y el percentil 90 está en '+t.p90.toFixed(2)+'. Sobre los casos dentro de SLA la media baja a '+t.mediaOk.toFixed(2)+'.'],
-        [t.racha,'meses','','Racha vigente sin incumplimientos',num(t.rachaCasos)+' casos consecutivos dentro del acuerdo.']
+        slaMedido(t)
+          ? [num(t.cumple),'/ '+num(t.denominadorPct),'','Casos dentro del acuerdo',t.pct.toFixed(2)+'% de cumplimiento sobre los '+num(t.denominadorPct)+' casos con SLA evaluado, de '+num(t.n)+' registrados en el período.']
+          : ['Sin medir','','na','Casos dentro del acuerdo',slaSinMedir(t)],
+        slaMedido(t)
+          ? [num(t.noCumple),'',t.noCumple?'rd':'','Casos fuera del acuerdo',pctFueraSla(t).toFixed(2)+'% de los casos con SLA evaluado.'+(t.fuera.length?' El desvío mayor es '+t.fuera.sort(function(a,b){return b[5]-a[5];})[0][0]+', con '+num(Math.round(t.fuera[0][5]))+' horas frente a un SLA de '+t.fuera[0][4]+'.':'')]
+          : ['Sin medir','','na','Casos fuera del acuerdo','Sin ningún caso evaluado no hay denominador: un cero acá se leería como que la mesa cumplió todo, y un 100% como que incumplió todo. Ninguna de las dos se puede afirmar.'],
+        [t.mediana.toFixed(2),'h','','Mediana de atención','La media general es de '+t.media.toFixed(2)+' horas y el percentil 90 está en '+t.p90.toFixed(2)+'.'+(slaMedido(t)?' Sobre los casos dentro de SLA la media baja a '+t.mediaOk.toFixed(2)+'.':'')],
+        rachaMedida(t)
+          ? [t.racha,'meses','','Racha vigente sin incumplimientos',num(t.rachaCasos)+' casos consecutivos dentro del acuerdo.']
+          : slaMedido(t)
+            ? [0,'meses','','Racha vigente sin incumplimientos','El último mes del período registró al menos un caso fuera del acuerdo.']
+            : ['Sin medir','','na','Racha vigente sin incumplimientos','La racha cuenta meses sin ningún caso fuera del acuerdo, y en este período nadie evaluó el acuerdo.']
       ])+
       '<div class="grid2" style="margin-top:16px">'+
         '<div class="panel"><h3>Cumplimiento de SLA</h3><div id="c-sla"></div>'+
@@ -1110,9 +1173,14 @@ function render(){
         '<div class="note">'+esc(t.cats[0].n)+' concentra '+num(t.cats[0].c)+' de los '+num(t.n)+' casos, con una mediana de resolución de '+t.cats[0].med.toFixed(2)+' horas.</div></div>'+
       '</div>'+
       '<div class="panel" style="margin-top:16px"><h3>Volumen mensual y cumplimiento</h3>'+
-        '<div class="leg"><span><i style="background:'+GREEN+'"></i>Meses sin incumplimientos</span><span><i style="background:'+AMBER+'"></i>Meses con al menos un caso fuera de SLA</span></div>'+
+        (slaMedido(t)?'<div class="leg"><span><i style="background:'+GREEN+'"></i>Meses sin incumplimientos</span><span><i style="background:'+AMBER+'"></i>Meses con al menos un caso fuera de SLA</span></div>':'')+
         '<div id="c-mes"></div><div class="note">El pico del período es '+ymAb(t.meses.reduce(function(a,m){return m[1]>a[1]?m:a;},t.meses[0])[0])+' con '+
-        num(Math.max.apply(null,t.meses.map(function(m){return m[1];})))+' casos.</div></div>'+
+        num(Math.max.apply(null,t.meses.map(function(m){return m[1];})))+' casos.'+
+        /* El color del mes sale de sus casos fuera de SLA: con el acuerdo sin evaluar todos los meses
+           salen del color "sin incumplimientos" sin que nadie los haya medido. Se dice, en vez de
+           dejar que la leyenda lo afirme. */
+        (slaMedido(t)?'':' El color no distingue cumplimiento en este período: ningún caso trae el resultado del acuerdo registrado, así que la barra mide solo volumen.')+
+        '</div></div>'+
       '<div class="panel" style="margin-top:16px"><h3>Detalle de los '+num(t.n)+' casos</h3>'+
         '<div class="ctrl">'+
         '<select id="fCat"><option value="">Todas las categorías</option></select>'+
@@ -1124,10 +1192,16 @@ function render(){
     /* D2: tres estados, no dos. La barra de "sin evaluar" solo aparece cuando hay casos en ese
        estado; con cero, la nota de arriba lo dice con palabras. Mezclarlos con los incumplidos era
        la definición que inflaba el promedio de horas "dentro de SLA" casi doce veces. */
-    var barrasSla=[
-      {k:'Dentro de SLA',v:t.cumple,lbl:num(t.cumple)+' casos ('+t.pct.toFixed(2)+'%)',c:GREEN,tip:num(t.cumple)+' de '+num(t.denominadorPct)+' casos con SLA evaluado'},
-      {k:'Fuera de SLA',v:t.noCumple||0.0001,lbl:num(t.noCumple)+' casos ('+(100-t.pct).toFixed(2)+'%)',c:RED,tip:num(t.noCumple)+' de '+num(t.denominadorPct)+' casos con SLA evaluado'}
-    ];
+    /* Sin SLA evaluado las dos primeras barras miden cero sobre cero: la de "fuera" salía con la
+       astilla roja mínima rotulada "0 casos (100.00%)" por el ||0.0001, que es la peor forma del
+       cero ambiguo (una barra roja al cien por ciento con un cero al lado). Se dibuja solo la barra
+       de "sin evaluar", que es lo único que hay. */
+    var barrasSla=slaMedido(t)
+      ? [
+        {k:'Dentro de SLA',v:t.cumple,lbl:num(t.cumple)+' casos ('+t.pct.toFixed(2)+'%)',c:GREEN,tip:num(t.cumple)+' de '+num(t.denominadorPct)+' casos con SLA evaluado'},
+        {k:'Fuera de SLA',v:t.noCumple||0.0001,lbl:num(t.noCumple)+' casos ('+pctFueraSla(t).toFixed(2)+'%)',c:RED,tip:num(t.noCumple)+' de '+num(t.denominadorPct)+' casos con SLA evaluado'}
+      ]
+      : [];
     if(t.sinEvaluar) barrasSla.push({k:'Sin SLA evaluado',v:t.sinEvaluar,lbl:num(t.sinEvaluar)+' casos',c:LIGHT,
       tip:num(t.sinEvaluar)+' de '+num(t.n)+' casos sin resultado del acuerdo registrado<br>No entran en el porcentaje'});
     barras($('#c-sla'),barrasSla,{W:560,rowH:56,padL:120,padR:180,fs:13});
@@ -1144,9 +1218,14 @@ function render(){
   /* ---- proactiva ---- */
   if(!t){ $('#body-proactiva').innerHTML=pendiente('La proporción entre trabajo proactivo y reactivo se calcula sobre las subcategorías del export de la mesa de servicio.'); $('#sub-proactiva').textContent=''; }
   else {
-    var pro=t.nFrentes-t.nFrentesR, pctPro=pct(pro,t.nFrentes);
-    $('#h2-proactiva').textContent = pctPro>=70 ? 'Casi todo el trabajo nació antes del problema' : 'Gestión proactiva del servicio';
-    $('#sub-proactiva').textContent='Los '+num(t.n)+' casos se agruparon en '+t.nFrentes+' frentes de trabajo, uno por subcategoría distinta. Un frente es reactivo cuando su subcategoría describe un incidente; es proactivo cuando nace de la vigilancia del servicio.';
+    /* pro/pctPro son la métrica POR FRENTES y se quedan en el cuerpo, rotuladas como tal. El titular
+       usa la de volumen: un frente de un solo caso pesaba igual que uno de doscientos, y el frente
+       residual "(sin subcategoría)" caía del lado proactivo al restar. */
+    var pro=t.nFrentesP, denFrentes=frentesClasificados(t), pctPro=pct(pro,denFrentes);
+    var pctVol=pct(casosProactivos(t),t.n);
+    $('#h2-proactiva').textContent = (proactivoMedido(t)&&pctVol>=70) ? 'Casi todo el trabajo nació antes del problema' : 'Gestión proactiva del servicio';
+    $('#sub-proactiva').textContent='Los '+num(t.n)+' casos se agruparon en '+t.nFrentes+' frentes de trabajo, uno por subcategoría distinta. Un frente es reactivo cuando su subcategoría describe un incidente; es proactivo cuando nace de la vigilancia del servicio.'+
+      (t.nFrentes>denFrentes?' Un frente agrupa los casos que llegaron sin subcategoría: no se clasifica, así que queda fuera de la proporción en vez de contarse como proactivo.':'');
     var crit='';
     if(ad&&!pub('ahorroAdvisor')){
       crit='<div class="panel" style="margin-top:16px"><h3>Criterio técnico: el dinero se protege antes de comprometerse</h3>'+
@@ -1177,14 +1256,21 @@ function render(){
     $('#body-proactiva').innerHTML=
       '<div class="grid2">'+
         '<div class="panel"><h3>Frentes de trabajo del período</h3><div id="c-pro"></div>'+
-        '<div class="note">'+pro+' de los '+t.nFrentes+' frentes fueron proactivos: <b>'+pctPro.toFixed(1)+'%</b>. Medido en volumen de casos la proporción es del <b>'+pct(casosProactivos(t),t.n).toFixed(1)+'%</b>, porque los frentes reactivos suman '+num(t.casosR)+' casos'+(t.casosSinSubcategoria?' y '+num(t.casosSinSubcategoria)+' casos no traen subcategoría, así que no se cuentan como proactivos por omisión':'')+'.</div></div>'+
+        '<div class="note">'+(proactivoMedido(t)
+          ? 'Medido en volumen de casos, <b>'+pctVol.toFixed(1)+'%</b> del trabajo fue proactivo: es la cifra del titular y la del resumen. '+
+            (denFrentes?'Medido por frentes de trabajo son '+pro+' de los '+denFrentes+' frentes clasificados, <b>'+pctPro.toFixed(1)+'%</b> — cada frente cuenta uno, sin importar su volumen. ':'')+
+            'Los frentes reactivos suman '+num(t.casosR)+' casos'+(t.casosSinSubcategoria?' y '+num(t.casosSinSubcategoria)+' casos no traen subcategoría, así que quedan fuera del numerador en vez de contarse como proactivos por omisión':'')+'.'
+          : 'Ninguno de los '+num(t.n)+' casos del período trae subcategoría, así que no hay nada que clasificar entre proactivo y reactivo. Ni un 0% ni un 100% se pueden afirmar acá.')+'</div></div>'+
         '<div class="panel"><h3>Los frentes de mayor volumen</h3><div id="c-frentes"></div>'+
         '<div class="note">Regla de clasificación: un frente es reactivo si su subcategoría menciona fallo, error, caída, indisponibilidad, degradación, interrupción o lentitud. El resto responde a mantenimiento, gobierno o mejora planificada.</div></div>'+
       '</div>'+crit;
-    barras($('#c-pro'),[
-      {k:'Frentes proactivos',v:pro,lbl:pro+' frentes ('+pctPro.toFixed(1)+'%)',c:GREEN,tip:pro+' de '+t.nFrentes+' frentes · '+num(casosProactivos(t))+' casos'},
-      {k:'Frentes reactivos',v:t.nFrentesR||0.0001,lbl:t.nFrentesR+' frentes ('+pct(t.nFrentesR,t.nFrentes).toFixed(1)+'%)',c:AMBER,tip:t.nFrentesR+' de '+t.nFrentes+' frentes · '+num(t.casosR)+' casos'}
-    ],{W:560,rowH:56,padL:150,padR:180,fs:13});
+    /* El residual no entra a ninguna de las dos barras ni al denominador de sus porcentajes: es un
+       tercer estado ("sin clasificar"), y con el export sin subcategorías las dos barras quedan
+       vacías, que es exactamente lo que hay que ver. */
+    barras($('#c-pro'),denFrentes?[
+      {k:'Frentes proactivos',v:pro,lbl:pro+' frentes ('+pctPro.toFixed(1)+'%)',c:GREEN,tip:pro+' de '+denFrentes+' frentes clasificados · '+num(casosProactivos(t))+' casos'},
+      {k:'Frentes reactivos',v:t.nFrentesR||0.0001,lbl:t.nFrentesR+' frentes ('+pct(t.nFrentesR,denFrentes).toFixed(1)+'%)',c:AMBER,tip:t.nFrentesR+' de '+denFrentes+' frentes clasificados · '+num(t.casosR)+' casos'}
+    ]:[],{W:560,rowH:56,padL:150,padR:180,fs:13});
     barras($('#c-frentes'),t.frentes.slice(0,13).map(function(fr,i){
       return {k:corta(fr.n,27),v:fr.c,lbl:num(fr.c)+' casos',c:fr.r?AMBER:(i===0?GREEN:(i<5?GREEND:PALE)),
         tip:esc(fr.n)+'<br>'+num(fr.c)+' casos · '+pct(fr.c,t.n).toFixed(1)+'% del período<br>'+(fr.r?'Frente reactivo':'Frente proactivo')};
@@ -1257,12 +1343,17 @@ function render(){
   /* ---- advisor ---- */
   if(!ad){ $('#body-advisor').innerHTML=pendiente('Adjunta el CSV de export de Azure Advisor. Para publicar además la variación del score por pilar hacen falta dos capturas del Overview: corte inicial y corte actual.'); $('#sub-advisor').textContent=''; }
   else {
-    var catAlta=ad.cats.slice().sort(function(a,b){return b.h-a.h;})[0];
-    $('#sub-advisor').textContent=num(ad.n)+' recomendaciones activas sobre '+num(ad.nRes)+' recursos de '+ad.subs.length+' suscripciones, contadas una por cada recurso afectado.';
+    var catAlta=primero(ad.cats.slice().sort(function(a,b){return b.h-a.h;}));
+    var subTop=primero(ad.subs), tipoTop=primero(ad.tipos);
+    $('#sub-advisor').textContent=ad.n
+      ? num(ad.n)+' recomendaciones activas sobre '+num(ad.nRes)+' recursos de '+ad.subs.length+' suscripciones, contadas una por cada recurso afectado.'
+      : 'Este cliente no tiene ninguna recomendación de Advisor activa en la plataforma. La sección conserva los retiros de Azure, que salen de otro insumo.';
     $('#body-advisor').innerHTML=
       tarjetas([
         [num(ad.n),'','','Recomendaciones activas','Sobre '+ad.tipos_rec+' tipos distintos de recomendación, contadas una por cada recurso afectado.'],
-        [num(ad.high),'','rd','De impacto alto','El '+pct(ad.high,ad.n).toFixed(1)+'% del backlog, contra '+num(ad.medium)+' de impacto medio y '+num(ad.low)+' de impacto bajo. '+esc(catAlta.n)+' concentra '+num(catAlta.h)+' de las altas, el '+pct(catAlta.h,ad.high).toFixed(1)+'% de todo lo urgente.'],
+        [num(ad.high),'',ad.high?'rd':'','De impacto alto',ad.n
+          ?'El '+pct(ad.high,ad.n).toFixed(1)+'% del backlog, contra '+num(ad.medium)+' de impacto medio y '+num(ad.low)+' de impacto bajo.'+(catAlta?' '+esc(catAlta.n)+' concentra '+num(catAlta.h)+' de las altas, el '+pct(catAlta.h,ad.high).toFixed(1)+'% de todo lo urgente.':'')
+          :'Sin recomendaciones activas no hay backlog que repartir por impacto.'],
         /* D11: el promedio se calcula sobre las recomendaciones QUE TRAEN RECURSO, no sobre todas.
            Con ad.n en el numerador, las filas de alcance de suscripcion -que no tienen recurso-
            inflan el promedio por recurso: 6/2 en vez de 5/2. El modelo publica el numerador
@@ -1276,9 +1367,19 @@ function render(){
                       el realizable vale cero por falta de DATO y no por falta de ahorro, y decirlo
                       con un cero seco afirma lo segundo. */
                    :['Sin medir','','na','Ahorro identificado','Ninguna de las '+num(ad.n)+' recomendaciones trae el ahorro anual cuantificado ('+num(ad.nSav)+' con cifra): Azure no siempre lo devuelve. No es un ahorro de cero, es una cifra que no se pudo medir.']),
-        ad.rets.length?[ad.rets.length,'retiros',ad.vencidos?'rd':'am','Retiros de Azure sobre el parque','Características que Azure deja de soportar.'+(ad.vencidos?' '+ad.vencidos+' con fecha ya vencida.':'')+(ad.proximos?' '+ad.proximos+' vence en menos de tres meses.':'')]
-                      :['0','retiros','','Retiros de Azure sobre el parque','El export no reporta características en proceso de retiro sobre este parque.'],
-        [pct(ad.topSum,ad.n).toFixed(1),'%','','Concentración del backlog','Las quince recomendaciones más repetidas suman '+num(ad.topSum)+' de las '+num(ad.n)+'. Son quince decisiones de estándar, no '+num(ad.topSum)+' tareas sueltas.']
+        /* Los retiros NO salen de Advisor: salen del módulo Boletín, que se sincroniza a mano y por
+           cliente. Un cero acá significaba dos cosas -Azure no anunció nada, o nadie fue a buscarlo-
+           y se publicaba como la primera, atribuida además a un export de Advisor que no es su
+           fuente. retirosMedido/retirosMotivo son la señal que faltaba. */
+        ad.rets.length?[ad.rets.length,'retiros',ad.vencidos?'rd':'am','Retiros de Azure sobre el parque','Características que Azure deja de soportar, según el Boletín de Azure de la plataforma.'+(ad.vencidos?' '+ad.vencidos+' con fecha ya vencida.':'')+(ad.proximos?' '+ad.proximos+' vence en menos de tres meses.':'')+(ad.retirosMotivo?' '+ad.retirosMotivo:'')]
+          :ad.retirosMedido
+            ?['0','retiros','','Retiros de Azure sobre el parque','El Boletín de Azure no registra ninguna característica en proceso de retiro vigente sobre las suscripciones administradas de este cliente.'+(ad.retirosMotivo?' '+ad.retirosMotivo:'')]
+            :['Sin medir','','na','Retiros de Azure sobre el parque',ad.retirosMotivo||'El estado de la sincronización del Boletín de Azure no se pudo determinar, así que este eje no se midió.'],
+        /* Sin recomendaciones activas pct() devuelve 0 y "0.0% de concentración" se lee como un
+           backlog disperso, no como que no hay backlog. La vista React ya lo declaraba así. */
+        ad.n
+          ? [pct(ad.topSum,ad.n).toFixed(1),'%','','Concentración del backlog','Las quince recomendaciones más repetidas suman '+num(ad.topSum)+' de las '+num(ad.n)+'. Son quince decisiones de estándar, no '+num(ad.topSum)+' tareas sueltas.']
+          : ['Sin medir','','na','Concentración del backlog','Sin recomendaciones activas no hay backlog que concentrar: no es un backlog disperso, es un backlog vacío.']
       ])+
       /* Un pilar de Seguridad ausente se ve EXACTAMENTE igual cuando el cliente no tiene hallazgos y
          cuando los gestiona por fuera y la consulta ya los excluyo. Sin esta nota, el informe
@@ -1287,17 +1388,21 @@ function render(){
         ?'<div class="ok-box"><b>El pilar de Seguridad se gestiona por fuera de este informe.</b> '+
           esc(ad.seguridadGestionadaNota||'Este cliente gestiona su seguridad con un servicio aparte.')+
           ' Sus recomendaciones quedaron excluidas a propósito: el conteo de esta sección no las incluye, así que no se lea como que no hay nada abierto en ese pilar.</div>':'')+
-      '<div class="panel" style="margin-top:16px"><h3>Peso de cada pilar y severidad de lo que queda abierto</h3>'+
+      /* Los tres paneles de concentración solo existen si hay algo que concentrar: sus notas leen el
+         primer elemento de cats/subs/tipos, y esas tres listas están vacías cuando Advisor no tiene
+         hallazgos activos aunque el bloque exista por los retiros. Sin el panel en el documento,
+         barras() sale por su propio `if(!cont) return`. */
+      (catAlta?'<div class="panel" style="margin-top:16px"><h3>Peso de cada pilar y severidad de lo que queda abierto</h3>'+
         '<div class="leg"><span><i style="background:'+RED+'"></i>Impacto alto</span><span><i style="background:'+AMBER+'"></i>Impacto medio</span><span><i style="background:'+PALE+'"></i>Impacto bajo</span></div>'+
         '<div id="c-adv-cat"></div>'+
-        '<div class="note"><b>'+esc(catAlta.n)+' concentra '+num(catAlta.h)+' de las '+num(ad.high)+' recomendaciones de impacto alto</b>, el '+pct(catAlta.h,ad.high).toFixed(1)+'% de todo lo urgente. Es el pilar por donde conviene empezar.</div></div>'+
-      '<div class="grid2" style="margin-top:16px">'+
-        '<div class="panel"><h3>Dónde se concentra: por suscripción</h3><div id="c-adv-sub"></div>'+
-        '<div class="note"><b>'+esc(ad.subs[0].n)+'</b> concentra '+num(ad.subs[0].c)+' de las '+num(ad.n)+' recomendaciones, el '+pct(ad.subs[0].c,ad.n).toFixed(1)+'%.</div></div>'+
-        '<div class="panel"><h3>Dónde se concentra: por tipo de recurso</h3><div id="c-adv-tipo"></div>'+
-        '<div class="note">'+esc(ad.tipos[0].n)+(ad.tipos[1]?' y '+esc(ad.tipos[1].n).toLowerCase():'')+' suman <b>'+num(ad.tipos[0].c+(ad.tipos[1]?ad.tipos[1].c:0))+' de '+num(ad.n)+'</b> recomendaciones. Atacar el estándar de esos tipos en bloque cierra la mayor parte del backlog.</div></div>'+
-      '</div>'+
-      '<div class="panel" style="margin-top:16px"><h3>Las quince recomendaciones que más recursos afectan</h3>'+
+        '<div class="note"><b>'+esc(catAlta.n)+' concentra '+num(catAlta.h)+' de las '+num(ad.high)+' recomendaciones de impacto alto</b>, el '+pct(catAlta.h,ad.high).toFixed(1)+'% de todo lo urgente. Es el pilar por donde conviene empezar.</div></div>':'')+
+      ((subTop||tipoTop)?'<div class="grid2" style="margin-top:16px">'+
+        (subTop?'<div class="panel"><h3>Dónde se concentra: por suscripción</h3><div id="c-adv-sub"></div>'+
+        '<div class="note"><b>'+esc(subTop.n)+'</b> concentra '+num(subTop.c)+' de las '+num(ad.n)+' recomendaciones, el '+pct(subTop.c,ad.n).toFixed(1)+'%.</div></div>':'')+
+        (tipoTop?'<div class="panel"><h3>Dónde se concentra: por tipo de recurso</h3><div id="c-adv-tipo"></div>'+
+        '<div class="note">'+esc(tipoTop.n)+(ad.tipos[1]?' y '+esc(ad.tipos[1].n).toLowerCase():'')+' suman <b>'+num(tipoTop.c+(ad.tipos[1]?ad.tipos[1].c:0))+' de '+num(ad.n)+'</b> recomendaciones. Atacar el estándar de esos tipos en bloque cierra la mayor parte del backlog.</div></div>':'')+
+      '</div>':'')+
+      (ad.top.length?'<div class="panel" style="margin-top:16px"><h3>Las quince recomendaciones que más recursos afectan</h3>'+
         '<div class="tbl"><table><thead><tr><th>Recomendación</th><th>Pilar</th><th style="width:1%">Impacto</th><th class="num">Recursos</th><th class="num">% del total</th></tr></thead><tbody>'+
         ad.top.map(function(r){
           return '<tr'+(r[2]==='High'?' class="bad"':(r[2]==='Medium'?' class="warn"':''))+'>'+
@@ -1306,7 +1411,7 @@ function render(){
            '<td class="num"><b>'+num(r[3])+'</b></td><td class="num">'+pct(r[3],ad.n).toFixed(1)+'%</td></tr>';
         }).join('')+
         '<tr class="tot"><td>Las quince recomendaciones más repetidas</td><td></td><td></td><td class="num">'+num(ad.topSum)+'</td><td class="num">'+pct(ad.topSum,ad.n).toFixed(1)+'%</td></tr>'+
-        '</tbody></table></div></div>'+
+        '</tbody></table></div></div>':'')+
       (ad.rets.length?
       '<div class="panel" style="margin-top:16px"><h3>Retiros de Azure anunciados sobre el parque</h3>'+
         '<div class="tbl"><table><thead><tr><th>Característica que Azure retira</th><th>Fecha de retiro</th><th class="num">Recursos</th><th>Situación</th></tr></thead><tbody>'+
@@ -1322,16 +1427,16 @@ function render(){
         }).join('')+'</tbody></table></div>'+
         (ad.vencidos?'<div class="bad-box"><b>'+ad.vencidos+' retiro'+(ad.vencidos>1?'s':'')+' con fecha ya vencida y recursos todavía afectados.</b> Es la deuda técnica con plazo impuesto por Azure, no por el cliente: el soporte ya terminó y cualquier incidente sobre esos recursos queda fuera del alcance del fabricante.</div>':'')+
         '</div>':'')+
-      '<div class="panel" style="margin-top:16px"><h3>Explorar el backlog completo</h3>'+
+      (ad.det.length?'<div class="panel" style="margin-top:16px"><h3>Explorar el backlog completo</h3>'+
         '<div class="ctrl">'+
         '<select id="aCat"><option value="">Todos los pilares</option></select>'+
         '<select id="aImp"><option value="">Todo impacto</option><option value="High">Alto</option><option value="Medium">Medio</option><option value="Low">Bajo</option></select>'+
         '<select id="aSub"><option value="">Todas las suscripciones</option></select>'+
         '<input id="aTxt" type="search" placeholder="Buscar recomendación…">'+
         '<span class="n" id="aCnt"></span></div>'+
-        '<div class="note" style="margin:0 0 12px">Las '+num(ad.n)+' recomendaciones desagregadas en '+ad.det.length+' filas de recomendación por suscripción. Los totales de cada filtro suman siempre contra el export original.</div>'+
-        '<div class="tbl scroll"><table><thead><tr><th>Recomendación</th><th>Pilar</th><th style="width:1%">Impacto</th><th>Suscripción</th><th class="num">Recursos</th></tr></thead><tbody id="tb-adv"></tbody></table></div></div>'+
-      '<div class="ok-box"><b>Lo que este informe no puede declarar todavía.</b> El export de Advisor contiene el detalle de recomendaciones, no la puntuación por pilar. Sin dos capturas del Overview, corte inicial y corte actual, no es posible publicar una variación de score, y este informe no publica cifras que no pueda sustentar.</div>';
+        '<div class="note" style="margin:0 0 12px">Las '+num(ad.n)+' recomendaciones desagregadas en '+ad.det.length+' filas de recomendación por suscripción. Los totales de cada filtro suman siempre contra la fuente original.</div>'+
+        '<div class="tbl scroll"><table><thead><tr><th>Recomendación</th><th>Pilar</th><th style="width:1%">Impacto</th><th>Suscripción</th><th class="num">Recursos</th></tr></thead><tbody id="tb-adv"></tbody></table></div></div>':'')+
+      '<div class="ok-box"><b>Lo que este informe no puede declarar todavía.</b> La sincronización de Advisor trae el detalle de recomendaciones, no la puntuación por pilar. Sin dos capturas del Overview, corte inicial y corte actual, no es posible publicar una variación de score, y este informe no publica cifras que no pueda sustentar.</div>';
     barras($('#c-adv-cat'),ad.cats.map(function(c){
       return {k:c.n,v:c.c,lbl:num(c.c)+'  ('+pct(c.c,ad.n).toFixed(1)+'%)',
         seg:[{n:'Impacto alto',v:c.h,c:RED},{n:'Impacto medio',v:c.m,c:AMBER},{n:'Impacto bajo',v:c.l,c:PALE}]};
@@ -1350,8 +1455,18 @@ function render(){
   /* ---- eficiencia ---- */
   if(!f){ $('#body-eficiencia').innerHTML=pendiente('Adjunta el export de bitcost con la facturación por servicio y el inventario de recursos. Debe traer al menos Recurso, PVP y Año/Mes.'); $('#sub-eficiencia').textContent=''; }
   else {
-    var creció = f.prom.length>1 && f.prom[f.prom.length-1][2]>f.prom[0][2];
-    $('#h2-eficiencia').textContent = creció ? 'El gasto creció por adopción, no por descontrol' : 'El gobierno del gasto dio resultado';
+    /* El titular compara los promedios mensuales del primer y del último año del período, y el
+       recorte del bloque "Gasto total" los anula los DOS (InformeValorHtmlExporter.Recortar). En
+       JavaScript null>null es false, así que la variante del cliente titulaba siempre "El gobierno
+       del gasto dio resultado" -la conclusión favorable al proveedor- construida con los montos que
+       el consultor decidió no publicar, y con los mismos datos la variante interna titulaba lo
+       contrario. Suprimir un monto puede callar una cifra; no puede invertir una afirmación.
+       Sin los dos promedios no hay comparación, y el titular se queda en el nombre de la sección
+       (que es también el caso de un período dentro de un solo año calendario: ahí tampoco había
+       nada que comparar y salía igual el titular afirmativo). */
+    var promComparables = f.prom.length>1 && f.prom[0][2]!=null && f.prom[f.prom.length-1][2]!=null;
+    $('#h2-eficiencia').textContent = !promComparables ? 'Eficiencia financiera'
+      : (f.prom[f.prom.length-1][2]>f.prom[0][2] ? 'El gasto creció por adopción, no por descontrol' : 'El gobierno del gasto dio resultado');
     $('#sub-eficiencia').textContent='Consumo total gobernado de '+fmt(f.total)+' en el período, revisado línea por línea sobre '+registros(f)+'.';
     var ef=[];
     ef.push([fmt(f.total),'','','Gasto gobernado del período',f.parciales.length?f.parciales.map(ymAb).join(' y ')+' son meses parciales en el insumo.':'Todos los meses del insumo tienen el ciclo cerrado.']);
@@ -1447,10 +1562,19 @@ function render(){
   /* ---- roadmap ---- */
   var RM='';
   if(mz){
+    /* mz.horas es null cuando el esfuerzo no está medido, nunca 0 (RoadmapModelo lo declara así). El
+       `mz.horas?` de antes trataba los dos casos igual y borraba la cláusula de horas sin decir nada,
+       así que la columna Esfuerzo salía con un guion en el 100% de las filas y nada en el documento
+       explicaba por qué. Un guion mudo se lee tan mal como un cero: "cerrar esto no cuesta trabajo".
+       La vista React ya lo declaraba tres veces. */
+    var esfuerzoSinMedir='El esfuerzo de la matriz se registra como texto libre ("2-3 días", "medio día") '+
+      'y todavía no se puede sumar en horas, así que la columna Esfuerzo sale sin medir. Un cero ahí '+
+      'diría que cerrar el roadmap no cuesta trabajo.';
     RM+=tarjetas([
       [mz.n,'hallazgos','','Matriz de optimización','Distribuidos en '+mz.amb.length+' ámbitos de trabajo.'],
       [mz.cerrados,'/ '+mz.n,'','Hallazgos cerrados','Con avance del 100% registrado en la matriz.'],
-      [mz.avance,'%','','Avance promedio del roadmap',mz.curso+' hallazgos en ejecución y '+mz.sinIniciar+' sin iniciar'+(mz.horas?', con '+mz.horas+' horas de esfuerzo estimadas para cerrarlos.':'.')]
+      [mz.avance,'%','','Avance promedio del roadmap',mz.curso+' hallazgos en ejecución y '+mz.sinIniciar+' sin iniciar'+
+        (mz.horas!=null?', con '+mz.horas+' horas de esfuerzo estimadas para cerrarlos.':'. '+esfuerzoSinMedir)]
     ])+
     '<div class="panel" style="margin-top:16px"><h3>Avance por ámbito</h3><div id="c-amb-mz"></div></div>'+
     '<div class="panel" style="margin-top:16px"><h3>Matriz priorizada</h3>'+
@@ -1463,10 +1587,11 @@ function render(){
          (x.f?'<br><span style="color:#8b8b8b;font-size:12.5px">detectado '+esc(x.f)+'</span>':'')+'</td>'+
          '<td class="num"'+(x.i===1?' style="color:'+RED+';font-weight:900"':'')+'>'+(x.i||'—')+'</td>'+
          '<td class="num">'+esc(x.p||'—')+'</td>'+
-         '<td class="num">'+(x.e||'—')+'</td>'+
+         '<td class="num">'+(x.e!=null?x.e:'<span style="color:#8b8b8b;font-size:12.5px">Sin medir</span>')+'</td>'+
          '<td class="num"><b style="color:'+(x.v>=100?GREEND:(x.v>0?AMBER:'#8b8b8b'))+'">'+x.v+'%</b></td></tr>';
       }).join('')+'</tbody></table></div>'+
-      '<div class="note">Escala de impacto: <b>1 alta</b>, 2 media, 3 baja. Ordenado por avance y luego por impacto: arriba queda lo que no ha empezado y más pesa.</div></div>';
+      '<div class="note">Escala de impacto: <b>1 alta</b>, 2 media, 3 baja. Ordenado por avance y luego por impacto: arriba queda lo que no ha empezado y más pesa.'+
+      (mz.items.some(function(x){return x.e==null;})?' '+esfuerzoSinMedir:'')+'</div></div>';
   } else {
     RM+=pendiente('Adjunta la matriz de optimización y mejoras en Excel, con ámbito, hallazgo, impacto, prioridad, esfuerzo y avance. Mientras tanto, los próximos pasos se construyen con los hallazgos verificados de los otros insumos.');
   }
@@ -1482,7 +1607,9 @@ function render(){
   if(rb&&(rb.sinNombre||!rb.estadoCuentaMedido)) PS.push(['Devolver visibilidad a la auditoría de identidad','Sin permisos de Microsoft Graph, cada revisión futura seguirá entregando identificadores en lugar de nombres y correos.','Permiso de Graph']);
   if(ad&&ad.real==null) PS.push(['Decidir el compromiso de cómputo','La revisión ya depuró el ahorro publicado por Advisor de duplicados y de opciones excluyentes. La cifra realizable se entrega por la vía interna, no en este documento.','Decisión del cliente']);
   else if(ad&&ad.real>0) PS.push(['Decidir el compromiso de cómputo',fmt(ad.real,0)+' anuales realizables, ya depurados de duplicados y de opciones excluyentes.','Decisión del cliente']);
-  if(ad) PS.push(['Atacar el pilar de mayor impacto por bloques de estándar',
+  /* Segundo punto donde cats[0] reventaba render(): con Advisor vacío no hay pilar que atacar, así
+     que el paso no existe en vez de existir con undefined adentro. */
+  if(ad&&ad.cats.length) PS.push(['Atacar el pilar de mayor impacto por bloques de estándar',
     (function(){var c=ad.cats.slice().sort(function(a,b){return b.h-a.h;})[0];
      return num(c.h)+' de las '+num(ad.high)+' recomendaciones de impacto alto son de '+c.n+'. Quince decisiones cierran el '+pct(ad.topSum,ad.n).toFixed(1)+'% del backlog.';})(),'Plan de mantenimiento']);
   if(f&&f.ahorro) PS.push(['Replicar el patrón de '+f.ahorro.cat+' en las siguientes categorías de gasto',(f.ahorro.dif==null?'El método que produjo el ahorro de esa línea es directamente aplicable a las de mayor peso.':'El método que produjo el ahorro de '+fmt(f.ahorro.dif)+' al mes es directamente aplicable a las líneas de mayor peso.'),'Nada. Ejecutable ya.']);
@@ -1498,7 +1625,13 @@ function render(){
   var TR=[];
   if(t) TR.push(['Operación y gestión proactiva','Export de la mesa de servicio',num(t.n)+' casos entre '+t.desde+' y '+t.hasta+'.']);
   if(rb) TR.push(['Seguridad bajo gobierno','Reporte de RBAC',num(rb.n)+' asignaciones sobre '+rb.ids+' identidades y '+rb.subs.length+' suscripciones.']);
-  if(ad) TR.push(['Postura Well-Architected','Export de Azure Advisor',num(ad.n)+' recomendaciones sobre '+num(ad.nRes)+' recursos. Corte único: no incluye la puntuación por pilar.']);
+  if(ad) TR.push(['Postura Well-Architected','Azure Advisor, sincronizado por la plataforma',num(ad.n)+' recomendaciones sobre '+num(ad.nRes)+' recursos. Corte único: no incluye la puntuación por pilar.']);
+  /* Los retiros son un insumo PROPIO, del módulo Boletín, no una columna del de Advisor: la única
+     fila de esta tabla los atribuía al "export de Azure Advisor", así que un lector que dudara del
+     cero no tenía a quién preguntarle. */
+  if(ad) TR.push(['Retiros de Azure','Boletín de Azure de la plataforma',ad.retirosMedido
+    ? num(ad.rets.length)+' anuncios vigentes sobre suscripciones administradas, clasificados contra la fecha de corte del informe.'+(ad.retirosMotivo?' '+ad.retirosMotivo:'')
+    : 'Sin medir. '+(ad.retirosMotivo||'No se pudo determinar el estado de la sincronización.')]);
   if(f) TR.push(['Eficiencia financiera','Bitcost: facturación e inventario',registros(f)+', entre '+ymAb(f.meses[0][0])+' y '+ymAb(f.meses[f.meses.length-1][0])+(f.parciales.length?'. Meses parciales: '+f.parciales.map(ymAb).join(', ')+'.':'.')]);
   if(mz) TR.push(['Roadmap','Matriz de optimización y mejoras',mz.n+' hallazgos en '+mz.amb.length+' ámbitos.']);
   if(TR.length) RM+='<div class="panel" style="margin-top:16px"><h3>Trazabilidad de las cifras</h3>'+

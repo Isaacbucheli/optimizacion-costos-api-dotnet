@@ -45,8 +45,82 @@ public sealed class PosturaCalculadorTests
     /// </summary>
     private static PosturaModelo? Calcular(
         IReadOnlyList<AdvisorFila> advisor, IReadOnlyList<RetiroFila> retiros, ContextoInformeValor contexto,
-        bool seguridadGestionadaExternamente = false, string? seguridadGestionadaNota = null) =>
-        PosturaCalculador.Calcular(advisor, retiros, seguridadGestionadaExternamente, seguridadGestionadaNota, contexto);
+        bool seguridadGestionadaExternamente = false, string? seguridadGestionadaNota = null,
+        CorridaBoletin? corridaBoletin = null) =>
+        PosturaCalculador.Calcular(
+            advisor, retiros, seguridadGestionadaExternamente, seguridadGestionadaNota, contexto, corridaBoletin);
+
+    private static CorridaBoletin Corrida(string estado) =>
+        new(estado, new DateTime(2026, 3, 30, 12, 0, 0, DateTimeKind.Utc), new DateTime(2026, 3, 30, 12, 5, 0, DateTimeKind.Utc));
+
+    // ================= "0 retiros" no es un hecho hasta que alguien fue a buscarlos =================
+
+    /// <summary>
+    /// Los retiros salen de <c>boletin_retirement</c>, que se llena con la sincronización MANUAL y por
+    /// cliente del módulo Boletín. Para un cliente recién incorporado —o uno cuya última corrida
+    /// falló— la tabla está vacía, y el informe publicaba "0 retiros" con la prosa "el export no
+    /// reporta características en proceso de retiro sobre este parque": afirma que no hay retiros
+    /// cuando nadie los buscó, y nombra una fuente que no es la que se consultó.
+    /// </summary>
+    [Fact]
+    public void Sin_corrida_del_boletin_los_retiros_salen_sin_medir_con_su_motivo()
+    {
+        var modelo = Calcular([Fila()], [], Contexto(Corte), corridaBoletin: null)!;
+
+        Assert.False(modelo.RetirosMedido);
+        Assert.NotNull(modelo.RetirosMotivo);
+        Assert.Contains("todavía no sincronizó", modelo.RetirosMotivo!, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(CorridaBoletin.Fallida)]
+    [InlineData(CorridaBoletin.EnCurso)]
+    public void Una_corrida_del_boletin_que_no_cerro_bien_deja_los_retiros_sin_medir(string estado)
+    {
+        var modelo = Calcular([Fila()], [], Contexto(Corte), corridaBoletin: Corrida(estado))!;
+
+        Assert.False(modelo.RetirosMedido);
+        Assert.NotNull(modelo.RetirosMotivo);
+    }
+
+    /// <summary>Con la corrida cerrada sin errores, el cero SÍ es un hecho del negocio y se publica
+    /// como tal, sin motivo que aclarar. Sin este caso, la guarda sería una mordaza.</summary>
+    [Fact]
+    public void Con_la_corrida_del_boletin_completa_y_sin_retiros_el_cero_es_un_hecho()
+    {
+        var modelo = Calcular([Fila()], [], Contexto(Corte), corridaBoletin: Corrida(CorridaBoletin.Completa))!;
+
+        Assert.True(modelo.RetirosMedido);
+        Assert.Null(modelo.RetirosMotivo);
+    }
+
+    /// <summary>Una corrida parcial SÍ midió, así que el cero se publica, pero con la advertencia:
+    /// pudo quedar afuera una suscripción que no se pudo consultar. Colapsar los dos casos en el
+    /// booleano perdería la advertencia.</summary>
+    [Fact]
+    public void Una_corrida_parcial_mide_pero_deja_dicho_que_puede_faltar_algo()
+    {
+        var sinRetiros = Calcular([Fila()], [], Contexto(Corte), corridaBoletin: Corrida(CorridaBoletin.Parcial))!;
+        var conRetiros = Calcular([Fila()], [Retiro()], Contexto(Corte), corridaBoletin: Corrida(CorridaBoletin.Parcial))!;
+
+        Assert.True(sinRetiros.RetirosMedido);
+        Assert.Contains("errores parciales", sinRetiros.RetirosMotivo!, StringComparison.Ordinal);
+        Assert.True(conRetiros.RetirosMedido);
+        Assert.Contains("errores parciales", conRetiros.RetirosMotivo!, StringComparison.Ordinal);
+    }
+
+    /// <summary>Que haya retiros ya prueba que alguien los buscó. Es lo que resuelve la ambigüedad del
+    /// default <c>null</c> de <c>InsumosBd.CorridaBoletin</c>, que significa a la vez "el Boletín
+    /// nunca corrió" y "nadie preguntó": sin esta regla, cada test y cada llamador que construye
+    /// <c>InsumosBd</c> a mano marcaría como no medidos unos retiros que tiene en la mano.</summary>
+    [Fact]
+    public void Con_retiros_presentes_el_eje_esta_medido_aunque_no_se_conozca_la_corrida()
+    {
+        var modelo = Calcular([], [Retiro()], Contexto(Corte), corridaBoletin: null)!;
+
+        Assert.True(modelo.RetirosMedido);
+        Assert.Null(modelo.RetirosMotivo);
+    }
 
     // ================= D7: la tabla de criterio técnico suma su propio total =================
 

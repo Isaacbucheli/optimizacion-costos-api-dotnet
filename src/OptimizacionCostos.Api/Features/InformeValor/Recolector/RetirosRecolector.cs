@@ -69,6 +69,42 @@ public static class RetirosRecolector
         ORDER BY retirement_date, announcement_key
         """;
 
+    /// <summary>
+    /// Última corrida del sync del Boletín para ese cliente (<c>boletin_sync</c>, la misma tabla y el
+    /// mismo <c>ORDER BY started_at DESC</c> que usa <c>BoletinService.LoadLastSyncAsync</c> para el
+    /// panel del Boletín). Sin fila, el módulo nunca sincronizó a este cliente.
+    ///
+    /// <para><b>Por qué el informe la necesita.</b> Sin ella, "0 retiros" se ve exactamente igual
+    /// cuando Azure no anunció nada sobre el parque y cuando nadie fue a buscarlo: la sincronización
+    /// del Boletín es manual y por cliente, y el módulo nace denegado en permisos, así que "nunca
+    /// corrió" no es un borde, es el estado inicial de todo cliente nuevo. El artefacto publicaba la
+    /// tarjeta "0 retiros" con la prosa "el export no reporta características en proceso de retiro
+    /// sobre este parque", que además nombra una fuente que no es la que se consultó.</para>
+    /// </summary>
+    internal const string SqlUltimaCorrida = """
+        SELECT TOP 1 status, started_at, finished_at
+        FROM dbo.boletin_sync WHERE client_id = @clientId ORDER BY started_at DESC
+        """;
+
+    /// <summary>Ver <see cref="SqlUltimaCorrida"/>. <c>null</c> = el Boletín nunca corrió para este
+    /// cliente.</summary>
+    public static async Task<CorridaBoletin?> LeerUltimaCorridaAsync(
+        SqlConnection conn, int clientId, CancellationToken ct = default)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = SqlUltimaCorrida;
+        cmd.Parameters.Add(new SqlParameter("@clientId", clientId));
+
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        if (!await rd.ReadAsync(ct)) return null;
+        return MapearCorrida(rd);
+    }
+
+    internal static CorridaBoletin MapearCorrida(SqlDataReader r) => new(
+        Estado: r.GetString(0),
+        IniciadaEn: r.GetDateTime(1),
+        FinalizadaEn: r.IsDBNull(2) ? null : r.GetDateTime(2));
+
     public static async Task<IReadOnlyList<RetiroFila>> LeerAsync(
         SqlConnection conn, int clientId, CancellationToken ct = default)
     {

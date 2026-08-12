@@ -71,7 +71,8 @@ public static class InformeValorEnsamblador
         var seguridad = SeguridadCalculador.Calcular(insumosBd.Rbac, insumosBd.EstadoRbac.Ejes);
         var postura = PosturaCalculador.Calcular(
             insumosBd.Advisor, insumosBd.Retiros,
-            insumosBd.SeguridadGestionadaExternamente, insumosBd.SeguridadGestionadaNota, contexto);
+            insumosBd.SeguridadGestionadaExternamente, insumosBd.SeguridadGestionadaNota, contexto,
+            insumosBd.CorridaBoletin);
         var roadmap = RoadmapCalculador.Calcular(insumosBd.Matriz);
 
         if (consumo is not null)

@@ -71,6 +71,21 @@ public sealed record OperacionModelo(
     [property: JsonPropertyName("frentes")] IReadOnlyList<OperacionFrente> Frentes,
     [property: JsonPropertyName("nFrentes")] int TotalFrentes,
     [property: JsonPropertyName("nFrentesR")] int FrentesReactivos,
+    /// <summary>
+    /// Frentes PROACTIVOS: los que traen subcategoría y su subcategoría no describe un incidente.
+    /// Existe porque <see cref="TotalFrentes"/> − <see cref="FrentesReactivos"/> no es esa cuenta: el
+    /// frente residual que D1 agrega para que la suma cierre ("(sin subcategoría)") no es reactivo,
+    /// así que la resta lo metía del lado proactivo. Con un export sin la columna Subcategoría
+    /// poblada, esa resta publicaba 100 % de trabajo proactivo en el mismo panel que declaraba 0,0 %
+    /// medido en volumen de casos: dos definiciones del mismo concepto, cada una coherente consigo
+    /// misma. D10 ya había sacado esos casos del numerador por VOLUMEN
+    /// (<see cref="CasosSinSubcategoria"/>) y nadie los había sacado del conteo por FRENTES.
+    ///
+    /// <para><see cref="TotalFrentes"/> − <see cref="FrentesProactivos"/> − <see cref="FrentesReactivos"/>
+    /// es el frente residual: 0 o 1. El denominador de cualquier proporción por frentes son los
+    /// frentes CLASIFICADOS (proactivos + reactivos), nunca <see cref="TotalFrentes"/>.</para>
+    /// </summary>
+    [property: JsonPropertyName("nFrentesP")] int FrentesProactivos,
     [property: JsonPropertyName("casosR")] int CasosReactivos,
     [property: JsonPropertyName("casosSinSubcategoria")] int CasosSinSubcategoria,
     [property: JsonPropertyName("hor")] IReadOnlyList<IReadOnlyList<object?>> PorHorario,

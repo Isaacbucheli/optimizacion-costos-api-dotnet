@@ -142,3 +142,22 @@ public sealed record RetiroFila(
     string? Titulo,
     string? AccionRecomendada,
     int RecursosAfectados);
+
+/// <summary>
+/// La última corrida del sync del Boletín para un cliente (<c>boletin_sync</c>, ver
+/// <see cref="RetirosRecolector.SqlUltimaCorrida"/>). Es lo que distingue "Azure no anunció ningún
+/// retiro sobre este parque" de "nadie fue a buscarlo": la sincronización del Boletín es manual, por
+/// cliente, y el módulo nace denegado en permisos.
+///
+/// <para><see cref="Estado"/> es el vocabulario que escribe <c>BoletinService</c>:
+/// <c>running</c> (en curso), <c>completed</c> (sin errores), <c>partial</c> (terminó con errores de
+/// alguna credencial o fuente) o <c>failed</c>. No se normaliza acá: quien lo consume decide qué
+/// significa cada uno, y traducirlo dos veces es cómo dos piezas empiezan a discrepar.</para>
+/// </summary>
+public sealed record CorridaBoletin(string Estado, DateTime IniciadaEn, DateTime? FinalizadaEn)
+{
+    public const string Completa = "completed";
+    public const string Parcial = "partial";
+    public const string Fallida = "failed";
+    public const string EnCurso = "running";
+}
