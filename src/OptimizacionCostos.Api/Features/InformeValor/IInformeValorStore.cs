@@ -1,3 +1,4 @@
+using OptimizacionCostos.Api.Features.InformeValor.Entrega;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 
 namespace OptimizacionCostos.Api.Features.InformeValor;
@@ -55,4 +56,24 @@ public interface IInformeValorStore
     /// para qué campos de <see cref="RbacFila"/> no sobreviven esta vía y por qué.
     /// </summary>
     Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct);
+
+    /// <summary>
+    /// Archiva una entrega generada (F4 de la entrega 3) y devuelve su <c>entrega_id</c>.
+    /// <b>Acumula, no reemplaza</b>: reemitir el mismo período es legítimo y el historial importa,
+    /// así que no hay unicidad por período y esta llamada nunca borra una fila anterior.
+    /// </summary>
+    Task<int> RegistrarEntregaAsync(EntregaNueva entrega, CancellationToken ct);
+
+    /// <summary>Las entregas de un cliente, de la más reciente a la más vieja (mismo orden que el
+    /// índice de la tabla). Sin la foto de reservas ni el resto de la trazabilidad: la tabla
+    /// paginada no las necesita y son las dos columnas grandes.</summary>
+    Task<IReadOnlyList<EntregaResumen>> GetEntregasAsync(int clientId, CancellationToken ct);
+
+    /// <summary>
+    /// Una entrega archivada completa, con la foto de reservas y el contexto de cálculo.
+    /// <c>null</c> si no existe <b>o si es de otro cliente</b>: el filtro por <paramref name="clientId"/>
+    /// va en el <c>WHERE</c> y no en una comparación posterior, para que un id de entrega adivinado
+    /// no devuelva el artefacto de otro cliente ni siquiera por un instante.
+    /// </summary>
+    Task<EntregaArchivada?> GetEntregaAsync(int clientId, int entregaId, CancellationToken ct);
 }

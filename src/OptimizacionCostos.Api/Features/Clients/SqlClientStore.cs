@@ -266,6 +266,12 @@ public sealed class SqlClientStore(ISqlConnectionFactory factory) : IClientStore
             "IF OBJECT_ID('dbo.informe_valor_rbac','U') IS NOT NULL DELETE FROM dbo.informe_valor_rbac WHERE client_id = @id;", clientId, ct);
         await CountedDeleteAsync(conn, tx, counts, "informe_valor_ingesta",
             "IF OBJECT_ID('dbo.informe_valor_ingesta','U') IS NOT NULL DELETE FROM dbo.informe_valor_ingesta WHERE client_id = @id;", clientId, ct);
+        // La bitácora de entregas (entrega 3). Borra el índice de los artefactos, no los blobs: el
+        // artefacto de un cliente eliminado queda huérfano en Storage y nadie lo va a encontrar. Es
+        // el mismo comportamiento que el resto del método (los logos de cliente también quedan), y
+        // conviene dejarlo dicho acá en vez de que alguien lo descubra auditando el contenedor.
+        await CountedDeleteAsync(conn, tx, counts, "informe_valor_entrega",
+            "IF OBJECT_ID('dbo.informe_valor_entrega','U') IS NOT NULL DELETE FROM dbo.informe_valor_entrega WHERE client_id = @id;", clientId, ct);
     }
 
     private static async Task CountedDeleteAsync(

@@ -108,6 +108,106 @@ public static class InformeValorSchema
             CREATE UNIQUE INDEX UX_iv_rbac_key ON dbo.informe_valor_rbac (client_id, natural_key_hash);
         END
         """,
+        // Bitácora de entregas (F4 del plan de la entrega 3). A diferencia de las tres tablas de
+        // insumo, ésta ACUMULA: reemitir un informe del mismo período es legítimo y el historial
+        // importa, así que NO lleva unicidad por (client_id, period_start, period_end).
+        //
+        // El criterio que fija cada columna: en el archivo va todo lo que haga falta para que el
+        // mismo informe, reemitido, dé el mismo resultado. Si un dato entra al cálculo y viene de
+        // una fuente que cambia sola, o se guarda acá o la fila miente. De ahí salen las columnas
+        // que el spec no nombraba (ver el comentario de cada una).
+        """
+        IF OBJECT_ID('dbo.informe_valor_entrega', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.informe_valor_entrega (
+                entrega_id INT IDENTITY(1,1) PRIMARY KEY,
+                client_id INT NOT NULL CONSTRAINT FK_iv_entrega_client REFERENCES dbo.clients(client_id),
+                -- El contexto de cálculo completo (ContextoInformeValor): sin los cuatro, reemitir
+                -- mide otra ventana.
+                period_start DATE NOT NULL,
+                period_end DATE NOT NULL,
+                corte DATE NOT NULL,
+                -- Tri-estado del spec 12.3.3, y por eso NVARCHAR nullable y no una tabla hija:
+                -- NULL = el consultor no declaró nada (manda la heurística automática);
+                -- '[]' = declaró "ningún mes parcial"; '["2026-01"]' = exactamente ésos.
+                -- Guardar la lista vacía como NULL cambiaría el resultado al reemitir.
+                meses_parciales NVARCHAR(2000) NULL,
+                variante NVARCHAR(20) NOT NULL,
+                -- JSON con las claves de los seis bloques económicos aprobados. NUNCA NULL: '[]'
+                -- significa "se generó sin aprobar ninguno", que es el default y un dato en sí.
+                bloques_publicados NVARCHAR(400) NOT NULL,
+                -- De dónde salió el insumo de RBAC ("base"/"archivo"/NULL si ninguna fuente tenía
+                -- nada) y de cuándo era la corrida de Revisión de accesos: las dos cambian solas
+                -- (una corrida nueva reemplaza a la anterior y mueve los ejes medidos, que deciden
+                -- qué hallazgos de seguridad se emiten y cuáles se suprimen por eje no medido).
+                rbac_origen NVARCHAR(20) NULL,
+                rbac_corrida_fecha DATETIME2 NULL,
+                -- La bandera por cliente de "la seguridad la gestiona otro": la mueve el consultor
+                -- desde otra pantalla y saca el pilar 3 de Advisor y de la matriz sin dejar rastro
+                -- en las cifras. Sin esto, dos emisiones con conteos distintos no se explican.
+                seguridad_gestionada_externamente BIT NOT NULL
+                    CONSTRAINT DF_iv_entrega_segext DEFAULT 0,
+                -- Qué carga de cada insumo alimentó ESTA entrega. Los insumos son vivos (cada carga
+                -- borra la anterior), así que las filas no se pueden restaurar; lo que sí se puede
+                -- es DETECTAR que ya no son las mismas y decirlo, en vez de reemitir en silencio
+                -- contra otro archivo. NULL = ese insumo no estaba cargado al generar.
+                facturacion_ingesta_id INT NULL,
+                casos_ingesta_id INT NULL,
+                rbac_ingesta_id INT NULL,
+                -- La foto de reservas (F4, heredada de la entrega 2d). Sin persistirla, reemitir un
+                -- informe viejo lo recalcularía contra las reservas de HOY. NULL y una foto con
+                -- Medido=false NO son lo mismo: NULL es "esta entrega es anterior a la foto",
+                -- Medido=false es "se intentó leerlas y no se pudo", con su motivo adentro.
+                foto_reservas_json NVARCHAR(MAX) NULL,
+                -- Huella de la plantilla embebida que dibujó el artefacto. La plantilla cambia con
+                -- el repo, no con los datos: dos emisiones idénticas que se ven distintas se
+                -- explican mirando esta columna en vez de investigando las cifras.
+                plantilla_version NVARCHAR(64) NULL,
+                blob_name NVARCHAR(400) NOT NULL,
+                blob_size_bytes INT NOT NULL,
+                file_name NVARCHAR(400) NOT NULL,
+                summary_json NVARCHAR(MAX) NULL,
+                generated_by NVARCHAR(200) NULL,
+                generated_at DATETIME2 NOT NULL,
+                CONSTRAINT CK_iv_entrega_rango CHECK (period_end >= period_start)
+            );
+            CREATE INDEX IX_iv_entrega_client ON dbo.informe_valor_entrega (client_id, generated_at DESC);
+        END
+        """,
+        // soft-migration entrega. La tabla nace completa arriba, pero EnsureSchemaAsync corre sobre
+        // bases que pueden haber aplicado una versión anterior de ESTE MISMO archivo (ya pasó dos
+        // veces en este módulo: rows_merged y role_class). Y justamente estas columnas son las que
+        // un informe reemitido necesita para no mentir: una base a la que le falten no falla, se
+        // queda callada y devuelve otras cifras.
+        """
+        IF COL_LENGTH('dbo.informe_valor_entrega', 'foto_reservas_json') IS NULL
+            ALTER TABLE dbo.informe_valor_entrega ADD foto_reservas_json NVARCHAR(MAX) NULL;
+        """,
+        """
+        IF COL_LENGTH('dbo.informe_valor_entrega', 'rbac_corrida_fecha') IS NULL
+            ALTER TABLE dbo.informe_valor_entrega ADD rbac_corrida_fecha DATETIME2 NULL;
+        """,
+        """
+        IF COL_LENGTH('dbo.informe_valor_entrega', 'seguridad_gestionada_externamente') IS NULL
+            ALTER TABLE dbo.informe_valor_entrega ADD seguridad_gestionada_externamente BIT NOT NULL
+                CONSTRAINT DF_iv_entrega_segext DEFAULT 0;
+        """,
+        """
+        IF COL_LENGTH('dbo.informe_valor_entrega', 'facturacion_ingesta_id') IS NULL
+            ALTER TABLE dbo.informe_valor_entrega ADD facturacion_ingesta_id INT NULL;
+        """,
+        """
+        IF COL_LENGTH('dbo.informe_valor_entrega', 'casos_ingesta_id') IS NULL
+            ALTER TABLE dbo.informe_valor_entrega ADD casos_ingesta_id INT NULL;
+        """,
+        """
+        IF COL_LENGTH('dbo.informe_valor_entrega', 'rbac_ingesta_id') IS NULL
+            ALTER TABLE dbo.informe_valor_entrega ADD rbac_ingesta_id INT NULL;
+        """,
+        """
+        IF COL_LENGTH('dbo.informe_valor_entrega', 'plantilla_version') IS NULL
+            ALTER TABLE dbo.informe_valor_entrega ADD plantilla_version NVARCHAR(64) NULL;
+        """,
         // soft-migration ingesta (tablas preexistentes de la entrega 1, ya en PR): la calculadora
         // publica "revisado línea por línea sobre N registros" y en la plantilla ese N son las
         // filas aceptadas ANTES de fusionar (ver BitcostParser.ParseResult.RowsMerged). Sin esta

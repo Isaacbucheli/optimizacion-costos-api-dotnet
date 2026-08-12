@@ -12,6 +12,7 @@ using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.Identity;
 using OptimizacionCostos.Api.Features.InformeValor;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
+using OptimizacionCostos.Api.Features.InformeValor.Entrega;
 
 namespace OptimizacionCostos.Api.Tests.InformeValor;
 
@@ -234,6 +235,19 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
 
         public Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<RbacFila>>([]);
+
+        // Entrega 3, F4: la bitacora de entregas no la ejercita ningun test de esta clase. Revienta
+        // en vez de devolver vacio: un archivo de entregas silenciosamente vacio es justo el cero
+        // ambiguo que este modulo saca de todos lados.
+        public Task<int> RegistrarEntregaAsync(EntregaNueva entrega, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<EntregaResumen>> GetEntregasAsync(int clientId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<EntregaArchivada?> GetEntregaAsync(int clientId, int entregaId, CancellationToken ct)
+            => throw new NotSupportedException();
+
     }
 
     /// <summary>Ensamblador falso que revienta si se lo llega a usar: ver el comentario de
