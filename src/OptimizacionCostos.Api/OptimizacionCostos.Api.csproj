@@ -24,6 +24,10 @@
     <EmbeddedResource Include="Features\Boletin\Seed\lifecycle_seed.json" />
     <EmbeddedResource Include="Features\Boletin\Seed\migracion_seed.json" />
     <EmbeddedResource Include="Features\PolicyCatalog\Seed\policy_seed.json" />
+    <!-- Plantilla del informe de valor (entrega 3, F3): el artefacto HTML autocontenido reusa su
+         capa de dibujo con el modelo inyectado. Va embebida y no como Content porque el exportador
+         la lee en memoria y no debe depender de que el archivo exista en el output. -->
+    <EmbeddedResource Include="Features\InformeValor\Entrega\Templates\Plantilla-Dashboard-BIT.html" />
     <!-- Plantilla XLSX del export WAF (B7): se copia al output para que el exporter la encuentre. -->
     <Content Include="Features\Waf\Templates\BIT_Matriz_Template_V1_2.xlsx" CopyToOutputDirectory="PreserveNewest" />
     <!-- Plantilla DOCX del informe mensual (B8): la rellena ReportWordExporter (template-fill). -->
