@@ -1,10 +1,15 @@
+using System.Globalization;
+using System.Text.Json;
+using Azure;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using OptimizacionCostos.Api.Auth;
+using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Features.Cdc;
 using OptimizacionCostos.Api.Features.Clients;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.InformeValor.Calculo;
+using OptimizacionCostos.Api.Features.InformeValor.Entrega;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 using OptimizacionCostos.Api.Features.Storage;
 
@@ -14,7 +19,8 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Api;
 /// Informe de valor del servicio administrado: carga de los insumos que no se pueden obtener
 /// desde la credencial del cliente (BITCOST y la mesa de servicio, más el RBAC de respaldo), y
 /// <see cref="Preview"/> (Tarea 8 de la entrega 2b), que calcula el modelo completo sin persistir
-/// nada. La generación del artefacto HTML y el archivo de entregas son de la entrega 3.
+/// nada, más <see cref="Generar"/>/<see cref="Entregas"/>/<see cref="DescargarEntrega"/> (Tarea 4 de
+/// la entrega 3): la generación del artefacto HTML, su subida a Blob y la bitácora de entregas.
 ///
 /// La vista previa se sirve en DOS fases: <see cref="Preview"/> devuelve el informe con lo que sale
 /// de la base propia y del insumo BITCOST, y <see cref="VariacionConsumo"/> devuelve aparte el
@@ -43,7 +49,8 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Api;
 public sealed class InformeValorController(
     IInformeValorStore store, IAnalysisAccess access, ILogger<InformeValorController> logger,
     IInsumosBdRecolector recolector, IClientStore clientStore,
-    IReservationService reservations, IAzureReservationsClient reservationsClient) : ControllerBase
+    IReservationService reservations, IAzureReservationsClient reservationsClient,
+    IBlobStorageService blobs, AppConfig config) : ControllerBase
 {
     // Un export de BITCOST de 24 meses de un cliente grande está entre 8 y 18 MB, así que el
     // tope compartido de UploadValidation (10 MiB) rechazaría un archivo legítimo.
@@ -200,19 +207,27 @@ public sealed class InformeValorController(
         var estados = await store.GetEstadoAsync(clientId, ct);
         var nombreCliente = await clientStore.GetNameAsync(clientId, ct) ?? $"Cliente {clientId}";
 
-        // D14: rows_processed + rows_merged de la ULTIMA carga de facturación (GetEstadoAsync ya
-        // filtra a la más reciente por kind). 0 si nunca se cargó nada, igual que un insumo
-        // ausente: ConsumoCalculador.Calcular devuelve null si además no hay ninguna fila en rango.
-        var filasAntesDeFusionar = estados
-            .Where(e => string.Equals(e.Kind, SqlInformeValorStore.KindFacturacion, StringComparison.OrdinalIgnoreCase))
-            .Select(e => e.Filas + e.RowsMerged)
-            .FirstOrDefault();
-
         var modelo = InformeValorEnsamblador.Ensamblar(
-            facturacion, filasAntesDeFusionar, casos, insumosBd, nombreCliente, contexto);
+            facturacion, FilasAntesDeFusionar(estados), casos, insumosBd, nombreCliente, contexto);
 
         return Ok(modelo);
     }
+
+    /// <summary>
+    /// D14: rows_processed + rows_merged de la ÚLTIMA carga de facturación (<c>GetEstadoAsync</c> ya
+    /// filtra a la más reciente por kind). 0 si nunca se cargó nada, igual que un insumo ausente:
+    /// <c>ConsumoCalculador.Calcular</c> devuelve null si además no hay ninguna fila en rango.
+    ///
+    /// <para>Lo comparten <see cref="Preview"/> y <see cref="Generar"/>: es el N de "revisado línea
+    /// por línea sobre N registros" y tiene que salir igual en la vista previa que en el informe
+    /// entregado. Dos cálculos separados del mismo conteo, cada uno coherente consigo mismo, es el
+    /// defecto que este módulo arrastra.</para>
+    /// </summary>
+    private static int FilasAntesDeFusionar(IReadOnlyList<InsumoEstado> estados) =>
+        EstadoDe(estados, SqlInformeValorStore.KindFacturacion) is { } e ? e.Filas + e.RowsMerged : 0;
+
+    private static InsumoEstado? EstadoDe(IReadOnlyList<InsumoEstado> estados, string kind) =>
+        estados.FirstOrDefault(e => string.Equals(e.Kind, kind, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Fase 2 de <see cref="Preview"/>: el bloque <c>fact.variacionConsumo</c> con las reservas del
@@ -320,6 +335,355 @@ public sealed class InformeValorController(
                 Reservas: []);
         }
     }
+
+    // ===================================================================================
+    // Entrega (Tarea 4 de la entrega 3): generar, listar y descargar.
+    // ===================================================================================
+
+    private const string ContentTypeHtml = "text/html; charset=utf-8";
+
+    /// <summary>
+    /// Calcula el informe, arma el artefacto HTML, lo sube a Blob y archiva la entrega. Es la única
+    /// escritura de este flujo, así que lleva <c>ModuleAccess.Edit</c>; <see cref="Entregas"/> y
+    /// <see cref="DescargarEntrega"/> son <c>View</c> (spec, tabla de la API).
+    ///
+    /// <para><b>Acá SÍ se captura la foto de reservas</b> (E7 de la entrega 2d, decisión del
+    /// usuario), y es el único lugar donde se captura para archivar: la foto que vale es la del
+    /// momento de generar, para que un informe reemitido meses después muestre lo que era cierto
+    /// entonces y no lo que Azure devuelve hoy. Es una acción deliberada del consultor, así que unos
+    /// segundos de espera son aceptables — a diferencia de <see cref="Preview"/>, de donde la lectura
+    /// se sacó a propósito porque es lo primero que se pinta en pantalla. Se captura para las DOS
+    /// variantes, aunque la del cliente no publique el bloque: la fila archivada tiene que quedar
+    /// completa igual, o reemitirla como interna volvería a leer las reservas de hoy.</para>
+    ///
+    /// <para><b>El orden de lo que se persiste importa:</b> primero el blob, después la fila. Al
+    /// revés, un fallo de Storage dejaría una entrega archivada que apunta a un artefacto que no
+    /// existe, y la descarga fallaría más adelante sin explicación. Así, un fallo de Storage no
+    /// archiva nada y el consultor puede volver a intentar; lo que queda suelto es a lo sumo un blob
+    /// que nadie referencia, y eso se dice en el log.</para>
+    ///
+    /// <para><b>Lo que se archiva es lo que el artefacto HACE, no lo que se pidió</b>
+    /// (<see cref="ArtefactoInforme.BloquesPublicados"/>): pedir la variante interna con tres bloques
+    /// aprobados produce el informe completo, y la bitácora dice los seis. La respuesta devuelve el
+    /// mismo dato para que quien llama vea qué pasó de verdad.</para>
+    /// </summary>
+    [HttpPost("clients/{clientId:int}/generar")]
+    [RequireModule(Modules.InformeValor, ModuleAccess.Edit)]
+    public async Task<IActionResult> Generar(
+        int clientId, [FromBody] GenerarRequest request, CancellationToken ct)
+    {
+        // El guard de acceso va primero, igual que en Subir: nada del cuerpo se valida —ni se lee
+        // Azure— para un cliente al que quien llama no tiene acceso.
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+
+        // La variante es obligatoria y no tiene default seguro: asumir "interna" publicaría el
+        // informe completo a un cliente, y asumir "cliente" entregaría un informe sin cifras al
+        // consultor que las esperaba.
+        if (VarianteInformeExtensions.Parsear(request.Variante) is not { } variante)
+            return BadRequest(new
+            {
+                detail = "La variante del informe es obligatoria y debe ser 'interna' o 'cliente'.",
+            });
+
+        // Un bloque que no se reconoce es un 400, nunca un bloque que se ignora: el consultor creyó
+        // aprobarlo y el informe saldría sin esa cifra sin que nadie se lo diga (F1).
+        var bloques = new List<BloqueEconomico>();
+        foreach (var clave in request.Bloques ?? [])
+        {
+            if (BloqueEconomicoExtensions.Parsear(clave) is not { } bloque)
+                return BadRequest(new
+                {
+                    detail = $"Bloque economico desconocido: '{clave}'. Los validos son: " +
+                        string.Join(", ", BloqueEconomicoExtensions.Todos.Select(b => b.Clave())) + ".",
+                });
+            bloques.Add(bloque);
+        }
+
+        if (ContextoDe(request.Periodo) is not { } contexto) return BadRequest(new { detail = RangoInvalido });
+
+        // La lectura de Azure (decenas de segundos con varias reservas) arranca antes de las
+        // consultas a SQL y se espera al final, igual que en VariacionConsumo y por el mismo motivo:
+        // son independientes, y CapturarFotoReservasAsync no propaga ninguna excepción, así que
+        // dejarla en vuelo no puede terminar en una tarea con excepción sin observar.
+        var fotoPendiente = CapturarFotoReservasAsync(clientId, ct);
+
+        var insumosBd = await recolector.LeerAsync(clientId, ct);
+        var facturacion = await store.GetFacturacionAsync(clientId, ct);
+        var casos = await store.GetCasosAsync(clientId, ct);
+        var estados = await store.GetEstadoAsync(clientId, ct);
+        var nombreCliente = await clientStore.GetNameAsync(clientId, ct) ?? $"Cliente {clientId}";
+        var foto = await fotoPendiente;
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, FilasAntesDeFusionar(estados), casos, insumosBd, nombreCliente, contexto, foto);
+
+        ArtefactoInforme artefacto;
+        try
+        {
+            artefacto = InformeValorHtmlExporter.Exportar(modelo, variante, bloques);
+        }
+        catch (InvalidOperationException ex)
+        {
+            // La plantilla embebida perdió uno de sus marcadores. El exportador falla a propósito en
+            // vez de entregar un artefacto a medias (por ejemplo con la zona de carga adentro), así
+            // que acá se traduce a un 500 que dice qué revisar, no a un 500 opaco.
+            logger.LogError(ex, "informe-valor generar: la plantilla embebida no se pudo instanciar client_id={Cid}", clientId);
+            return Problem(statusCode: 500,
+                detail: "La plantilla del informe no se pudo instanciar: no se generó ningún archivo.");
+        }
+
+        var container = config.StorageContainerOutputs;
+        var blobName = NombreDeBlob(clientId, contexto, variante);
+        try
+        {
+            await blobs.UploadAsync(container, blobName, artefacto.Contenido, ContentTypeHtml, ct);
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex,
+                "informe-valor generar: no se pudo subir el artefacto client_id={Cid} blob={Blob}", clientId, blobName);
+            return Problem(statusCode: 500,
+                detail: "El informe se calculó pero no se pudo guardar en el almacenamiento: no se archivó ninguna entrega.");
+        }
+
+        int entregaId;
+        try
+        {
+            entregaId = await store.RegistrarEntregaAsync(
+                new EntregaNueva(
+                    ClientId: clientId,
+                    PeriodStart: contexto.PeriodStart,
+                    PeriodEnd: contexto.PeriodEnd,
+                    Corte: contexto.Corte,
+                    // El tri-estado tal cual llegó, sin normalizar: null (heurística automática) y
+                    // lista vacía ("ningún mes parcial") reemiten distinto.
+                    MesesParcialesForzados: contexto.MesesParcialesForzados,
+                    Variante: variante,
+                    BloquesPublicados: artefacto.BloquesPublicados,
+                    RbacOrigen: insumosBd.RbacOrigen,
+                    RbacCorridaFecha: insumosBd.EstadoRbac.FechaCorrida,
+                    SeguridadGestionadaExternamente: insumosBd.SeguridadGestionadaExternamente,
+                    FacturacionIngestaId: EstadoDe(estados, SqlInformeValorStore.KindFacturacion)?.IngestaId,
+                    CasosIngestaId: EstadoDe(estados, SqlInformeValorStore.KindCasos)?.IngestaId,
+                    RbacIngestaId: EstadoDe(estados, SqlInformeValorStore.KindRbac)?.IngestaId,
+                    FotoReservas: foto,
+                    PlantillaVersion: artefacto.PlantillaVersion,
+                    BlobContainer: container,
+                    BlobName: blobName,
+                    BlobSizeBytes: artefacto.Contenido.Length,
+                    FileName: artefacto.FileName,
+                    SummaryJson: Resumen(modelo, foto, artefacto),
+                    GeneratedBy: User.FindFirst("sub")?.Value),
+                ct);
+        }
+        catch (Exception ex)
+        {
+            // El artefacto quedó subido y sin fila que lo referencie. Se dice con el nombre del blob
+            // adentro: es la única forma de encontrarlo después, y callarlo dejaría un archivo con
+            // datos del cliente en el contenedor sin que nadie sepa que está ahí.
+            logger.LogError(ex,
+                "informe-valor generar: el artefacto se subió pero la entrega no se archivó client_id={Cid} blob={Blob}",
+                clientId, blobName);
+            return Problem(statusCode: 500,
+                detail: "El informe se generó y se guardó, pero la entrega no se pudo archivar: no quedó registrada.");
+        }
+
+        return Ok(new
+        {
+            entrega_id = entregaId,
+            variante = variante.Clave(),
+            // Lo que el artefacto publica de verdad (ver el comentario del método).
+            bloques_publicados = artefacto.BloquesPublicados.Select(b => b.Clave()),
+            bloques_totales = BloqueEconomicoExtensions.Todos.Count,
+            file_name = artefacto.FileName,
+            container,
+            blob_name = blobName,
+            blob_size_bytes = artefacto.Contenido.Length,
+            plantilla_version = artefacto.PlantillaVersion,
+            // El eje de reservas, en la respuesta y no solo dentro del archivo: si la lectura falló,
+            // el balde sale en cero y quien generó el informe tiene que poder saber que ese cero es
+            // "no se midió" y no "el cliente no tiene reservas".
+            reservas = new
+            {
+                medido = foto.Medido,
+                motivo = foto.Motivo,
+                capturada_en = foto.CapturadaEn,
+                total = foto.Reservas.Count,
+            },
+            download_url = DownloadUrl(clientId, entregaId),
+        });
+    }
+
+    /// <summary>
+    /// La bitácora de entregas de un cliente, de la más reciente a la más vieja. Solo lectura:
+    /// hereda <c>[RequireModule(Modules.InformeValor)]</c> (<c>ModuleAccess.View</c>) de la clase.
+    ///
+    /// <para><c>bloques_totales</c> viaja al lado de <c>bloques_publicados</c> para que la tabla no
+    /// tenga que inventar el denominador: "0 de 6 bloques económicos" y "0" no afirman lo mismo, y
+    /// hardcodear el 6 del otro lado es exactamente cómo dos piezas empiezan a discrepar.</para>
+    /// </summary>
+    [HttpGet("clients/{clientId:int}/entregas")]
+    public async Task<IActionResult> Entregas(int clientId, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+
+        var entregas = await store.GetEntregasAsync(clientId, ct);
+
+        return Ok(new
+        {
+            entregas = entregas.Select(e => new
+            {
+                entrega_id = e.EntregaId,
+                period_start = e.PeriodStart,
+                period_end = e.PeriodEnd,
+                corte = e.Corte,
+                variante = e.Variante,
+                bloques_publicados = e.BloquesPublicados,
+                bloques_totales = BloqueEconomicoExtensions.Todos.Count,
+                rbac_origen = e.RbacOrigen,
+                file_name = e.FileName,
+                blob_size_bytes = e.BlobSizeBytes,
+                generated_by = e.GeneratedBy,
+                generated_at = e.GeneratedAt,
+                download_url = DownloadUrl(clientId, e.EntregaId),
+            }),
+        });
+    }
+
+    /// <summary>
+    /// Devuelve el artefacto archivado tal cual se entregó. Solo lectura (<c>ModuleAccess.View</c>
+    /// heredado de la clase) y con la misma verificación de acceso por cliente que el resto; el
+    /// filtro por <c>client_id</c> además va dentro del <c>WHERE</c> del store, así que un
+    /// <c>entregaId</c> adivinado no devuelve el informe de otro cliente.
+    ///
+    /// <para><b>El contenedor sale de la FILA, no de la configuración de hoy</b>: es lo que ya hacen
+    /// las dos descargas del módulo de informes (<c>ExcelController</c> lee
+    /// <c>record.StorageContainer</c> y <c>ReportsController</c> lee <c>reference.Container</c>).
+    /// Deducirlo de <c>STORAGE_CONTAINER_OUTPUTS</c> significa que cambiar esa variable deja sin
+    /// artefacto a todo lo ya archivado, con un 404 que no se explica mirando la fila.</para>
+    ///
+    /// <para><b>Los tres finales son tres hechos distintos y se responden distinto</b>: la entrega no
+    /// existe para este cliente (404), la entrega existe pero su artefacto ya no está en Storage
+    /// (404 con otro texto), y el almacenamiento no se pudo leer (500). Colapsarlos en un solo 404
+    /// convertiría una credencial vencida de Storage en "el archivo se borró".</para>
+    ///
+    /// <para>Se sirve como adjunto (<c>File(...)</c> con nombre) y nunca en línea: es HTML con datos
+    /// del cliente adentro y no tiene por qué ejecutarse en el origen de la API.</para>
+    /// </summary>
+    [HttpGet("clients/{clientId:int}/entregas/{entregaId:int}/descargar")]
+    public async Task<IActionResult> DescargarEntrega(int clientId, int entregaId, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+
+        var entrega = await store.GetEntregaAsync(clientId, entregaId, ct);
+        if (entrega is null) return NotFound(new { detail = "La entrega no existe para este cliente." });
+
+        var container = entrega.BlobContainer;
+        if (string.IsNullOrWhiteSpace(container))
+        {
+            // Solo puede pasar con una fila escrita antes de que la columna existiera. Se asume el
+            // contenedor configurado hoy —la única suposición razonable— pero se registra: si la
+            // descarga falla, quien depure necesita saber que el contenedor lo puso el entorno y no
+            // la fila.
+            container = config.StorageContainerOutputs;
+            logger.LogWarning(
+                "informe-valor descargar: la entrega no tiene contenedor archivado, se asume el configurado. entrega_id={Eid} container={Cont}",
+                entregaId, container);
+        }
+
+        byte[] data;
+        try
+        {
+            data = await blobs.DownloadAsync(container, entrega.BlobName, ct);
+        }
+        catch (RequestFailedException ex) when (ex.Status == StatusCodes.Status404NotFound)
+        {
+            logger.LogWarning(ex,
+                "informe-valor descargar: el artefacto archivado ya no está en Storage entrega_id={Eid} blob={Blob}",
+                entregaId, entrega.BlobName);
+            return NotFound(new
+            {
+                detail = "La entrega está archivada pero su artefacto ya no está en el almacenamiento: " +
+                    "no se puede descargar. Hay que volver a generar el informe.",
+            });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex,
+                "informe-valor descargar: el almacenamiento no se pudo leer entrega_id={Eid} blob={Blob}",
+                entregaId, entrega.BlobName);
+            return Problem(statusCode: 500,
+                detail: "El artefacto está archivado pero el almacenamiento no respondió: la descarga no se pudo completar.");
+        }
+
+        return File(data, ContentTypeHtml, entrega.Resumen.FileName);
+    }
+
+    private static string DownloadUrl(int clientId, int entregaId) =>
+        $"/informe-valor/clients/{clientId}/entregas/{entregaId}/descargar";
+
+    /// <summary>
+    /// Ruta del artefacto dentro del contenedor de salidas. Misma forma que el informe de gestión
+    /// mensual (<c>reports/client-{id}/...</c>) con una diferencia deliberada: lleva un sufijo único,
+    /// porque reemitir el mismo período es legítimo (F4) y un nombre derivado solo del período haría
+    /// que la segunda emisión sobrescribiera el artefacto de la primera — la fila vieja quedaría
+    /// apuntando a un archivo con contenido nuevo, que es peor que no tenerla.
+    ///
+    /// <para><b>No lleva el nombre de descarga</b> (<see cref="ArtefactoInforme.FileName"/>): ése
+    /// depende del nombre del cliente y puede ser largo, y <c>blob_name</c> se guarda en un
+    /// <c>NVARCHAR(400)</c> que el store trunca. Un nombre truncado al guardarlo dejaría de coincidir
+    /// con el que se subió y la descarga fallaría con un 404 inexplicable. Acá el largo es fijo.</para>
+    /// </summary>
+    private static string NombreDeBlob(int clientId, ContextoInformeValor contexto, VarianteInforme variante) =>
+        $"informe-valor/client-{clientId}/" +
+        $"{contexto.PeriodStart.ToString("yyyyMM", CultureInfo.InvariantCulture)}-" +
+        $"{contexto.PeriodEnd.ToString("yyyyMM", CultureInfo.InvariantCulture)}-" +
+        $"{variante.Clave()}-{Guid.NewGuid():N}.html";
+
+    /// <summary>
+    /// <c>summary_json</c> de la entrega: para qué sirve la fila sin bajar el artefacto de 200+ KB.
+    ///
+    /// <para><b>Sin montos, a propósito.</b> La bitácora guarda las dos variantes en la misma tabla,
+    /// así que un resumen con cifras sería un camino por el que un monto suprimido en la variante del
+    /// cliente podría reaparecer en cualquier pantalla que muestre el historial. Los montos viven en
+    /// el artefacto, que es el único lugar donde la decisión de publicación ya está aplicada. Lo que
+    /// sí va es todo lo que explica de dónde salieron: qué bloques del modelo se pudieron armar, qué
+    /// meses se trataron como parciales y en qué estado quedó el eje de reservas.</para>
+    ///
+    /// <para>Las claves van escritas en minúsculas dentro del objeto anónimo para que no dependan de
+    /// la política de nombres: se serializa con <see cref="InformeValorJsonOptions"/> (la misma que
+    /// las otras dos columnas JSON de esta tabla), que no transforma nada.</para>
+    /// </summary>
+    private static string Resumen(ModeloInformeValor modelo, FotoReservas foto, ArtefactoInforme artefacto) =>
+        JsonSerializer.Serialize(new
+        {
+            cliente = modelo.Meta.Cliente,
+            periodo = modelo.Meta.Periodo,
+            corte = modelo.Meta.Corte,
+            suscripciones = modelo.Meta.Cobertura.Total,
+            bloques_del_modelo = new
+            {
+                consumo = modelo.Consumo is not null,
+                operacion = modelo.Operacion is not null,
+                seguridad = modelo.Seguridad is not null,
+                postura = modelo.Postura is not null,
+                roadmap = modelo.Roadmap is not null,
+            },
+            // null cuando no hay bloque de consumo ("no se pudo determinar"), lista vacía cuando sí
+            // lo hay y ningún mes resultó parcial. Son dos cosas distintas.
+            meses_parciales = modelo.Consumo?.MesesParciales,
+            reservas = new
+            {
+                medido = foto.Medido,
+                motivo = foto.Motivo,
+                capturada_en = foto.CapturadaEn,
+                total = foto.Reservas.Count,
+            },
+            plantilla_version = artefacto.PlantillaVersion,
+        }, InformeValorJsonOptions.Instance);
 
     [HttpPost("clients/{clientId:int}/insumos/{kind}")]
     [RequireModule(Modules.InformeValor, ModuleAccess.Edit)]
@@ -555,3 +919,30 @@ public sealed record PreviewRequest(
     DateOnly PeriodEnd,
     DateTimeOffset Corte,
     IReadOnlyList<string>? MesesParcialesForzados);
+
+/// <summary>
+/// Cuerpo de <see cref="InformeValorController.Generar"/>: el mismo período que
+/// <see cref="PreviewRequest"/> más las dos decisiones de entrega (la variante y los bloques
+/// económicos aprobados).
+///
+/// <para><see cref="Periodo"/> devuelve exactamente un <see cref="PreviewRequest"/> para que las tres
+/// rutas resuelvan el contexto de cálculo con la MISMA función
+/// (<c>InformeValorController.ContextoDe</c>). Si <c>/generar</c> resolviera el corte o el tri-estado
+/// de meses parciales por su cuenta, el informe entregado podría medir otra ventana que la vista
+/// previa que el consultor aprobó, y las dos piezas serían coherentes consigo mismas.</para>
+///
+/// <para><see cref="Bloques"/> ausente, <c>null</c> o vacío es "ninguno aprobado": los seis nacen
+/// apagados (F1) y generar sin decidir produce la versión sin cifras, que es el default del spec y no
+/// un error. <see cref="Variante"/>, en cambio, es obligatoria — ver <c>Generar</c> para por qué no
+/// hay default seguro.</para>
+/// </summary>
+public sealed record GenerarRequest(
+    DateOnly PeriodStart,
+    DateOnly PeriodEnd,
+    DateTimeOffset Corte,
+    IReadOnlyList<string>? MesesParcialesForzados,
+    string? Variante,
+    IReadOnlyList<string>? Bloques)
+{
+    public PreviewRequest Periodo => new(PeriodStart, PeriodEnd, Corte, MesesParcialesForzados);
+}
