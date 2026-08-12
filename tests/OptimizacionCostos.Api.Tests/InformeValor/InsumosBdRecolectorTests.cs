@@ -516,6 +516,13 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
         public Task<(EstadoRbacResultado Estado, string? Origen)> LeerEstadoRbacConOrigenAsync(
             int clientId, CancellationToken ct = default) =>
             Task.FromResult((_insumos.EstadoRbac, _insumos.RbacOrigen));
+
+        /// <summary>Mismo <see cref="_insumos"/> que el camino completo, para que los dos caminos no
+        /// puedan devolver universos distintos en un test. Ningún test de esta clase pega a
+        /// /preview/variacion-consumo, que es su único consumidor.</summary>
+        public Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
+            int clientId, CancellationToken ct = default) =>
+            Task.FromResult(_insumos.HallazgosResueltos ?? []);
     }
 
     /// <summary>Ningún test de esta clase pega a /preview/variacion-consumo: revienta a propósito si

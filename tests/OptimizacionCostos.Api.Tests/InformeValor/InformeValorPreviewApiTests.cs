@@ -241,7 +241,79 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
         Assert.True(reservas.GetProperty("medido").GetBoolean());
         var confirmados = reservas.GetProperty("confirmados");
         Assert.Equal(1, confirmados.GetArrayLength());
-        Assert.Equal("vm-1", confirmados[0].GetProperty("resource_name").GetString());
+        // camelCase, igual que el bloque hermano `atribucion`: el nombre lo declara el modelo, no lo
+        // infiere la política de serialización (ver ModeloInformeValorSerializacionTests).
+        Assert.Equal("vm-1", confirmados[0].GetProperty("resourceName").GetString());
+        Assert.Equal(0, reservas.GetProperty("reservasConConsumidoresNoLeidos").GetInt32());
+    }
+
+    /// <summary>
+    /// El caso que se veía igual que un cliente sin ahorro confirmado: la credencial lista reservas
+    /// (Microsoft.Capacity) pero no puede leer consumidores (Microsoft.Consumption). El eje sigue
+    /// medido —la lista se leyó— pero la respuesta tiene que decir que la cifra está incompleta, en
+    /// el conteo, en la fila de la reserva y en el motivo. Sin eso, "cero confirmados" significa dos
+    /// cosas opuestas con el mismo JSON.
+    /// </summary>
+    [Fact]
+    public async Task Si_los_consumidores_no_se_pudieron_leer_la_respuesta_lo_dice_en_vez_de_publicar_cero()
+    {
+        const int clientId = 69;
+        _factory.Access.Allow(clientId);
+        SembrarUnaReservaConConsumidor(clientId, credentialId: 3, reservationId: "resv-69");
+        _factory.ReservationsClient.ConFallaDeConsumidores("resv-69");
+        var client = ClientFor("p11@bit.ec", Roles.Consultor, canEdit: false);
+
+        var res = await client.PostAsJsonAsync(
+            $"/informe-valor/clients/{clientId}/preview/variacion-consumo", CuerpoValido());
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var reservas = (await res.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("reservas");
+        Assert.True(reservas.GetProperty("medido").GetBoolean());
+        Assert.Empty(reservas.GetProperty("confirmados").EnumerateArray());
+        Assert.Equal(0m, reservas.GetProperty("ahorroConfirmado").GetDecimal());
+
+        Assert.Equal(1, reservas.GetProperty("reservasConConsumidoresNoLeidos").GetInt32());
+        var estimado = Assert.Single(reservas.GetProperty("estimados").EnumerateArray().ToList());
+        Assert.True(estimado.GetProperty("consumidoresNoLeidos").GetBoolean());
+        Assert.DoesNotContain("completas", reservas.GetProperty("motivo").GetString()!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// La fase 2 no vuelve a pagar el recolector completo (Advisor, Matriz, Retiros, la corrida de
+    /// Revisión de accesos con su snapshot y el Excel de RBAC): de todo eso, el bloque de variación
+    /// del consumo usa un solo campo, los hallazgos resueltos. La fase 1 ya pagó el resto hace un
+    /// segundo, en la misma vista previa.
+    /// </summary>
+    [Fact]
+    public async Task La_variacion_de_consumo_no_vuelve_a_pagar_el_recolector_completo()
+    {
+        _factory.Access.Allow(clientId: 70);
+        var client = ClientFor("p12@bit.ec", Roles.Consultor, canEdit: false);
+        var completoAntes = _factory.Recolector.LeerAsyncLlamadas;
+        var angostoAntes = _factory.Recolector.LeerHallazgosResueltosLlamadas;
+
+        var res = await client.PostAsJsonAsync(
+            "/informe-valor/clients/70/preview/variacion-consumo", CuerpoValido());
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        Assert.Equal(completoAntes, _factory.Recolector.LeerAsyncLlamadas);
+        Assert.Equal(angostoAntes + 1, _factory.Recolector.LeerHallazgosResueltosLlamadas);
+    }
+
+    /// <summary>El contraste del test de arriba: la fase 1 sí necesita el recolector completo (los
+    /// otros cuatro bloques del informe salen de ahí), así que el camino angosto no lo reemplaza,
+    /// lo complementa.</summary>
+    [Fact]
+    public async Task El_preview_si_paga_el_recolector_completo()
+    {
+        _factory.Access.Allow(clientId: 71);
+        var client = ClientFor("p13@bit.ec", Roles.Consultor, canEdit: false);
+        var antes = _factory.Recolector.LeerAsyncLlamadas;
+
+        var res = await client.PostAsJsonAsync("/informe-valor/clients/71/preview", CuerpoValido());
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        Assert.Equal(antes + 1, _factory.Recolector.LeerAsyncLlamadas);
     }
 
     /// <summary>Una credencial activa, una reserva viva y un consumidor confirmado sobre vm-1, que es
@@ -388,12 +460,26 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
 
     public sealed class FakeInsumosBdRecolectorVacio : IInsumosBdRecolector
     {
-        public Task<InsumosBd> LeerAsync(int clientId, CancellationToken ct = default) => Task.FromResult(new InsumosBd(
-            Advisor: [], Matriz: [], Rbac: [], Retiros: [],
-            EstadoRbac: new EstadoRbacResultado(
-                DisponibilidadRbac.NoDisponible, new EjesRbac(false, false), null, "Sin datos de prueba."),
-            SeguridadGestionadaExternamente: false, SeguridadGestionadaNota: null,
-            LeidoEn: new DateTime(2026, 1, 1)));
+        /// <summary>Cuántas veces se pidió el recolector COMPLETO (Advisor, Matriz, Retiros, la
+        /// corrida de accesos con su snapshot y, si hace falta, el Excel de RBAC). Contadores por
+        /// método y no un booleano: la Factory es <see cref="IClassFixture{TFixture}"/>, o sea una
+        /// sola instancia para toda la clase, así que cada test compara el delta de su propia
+        /// llamada -- mismo criterio que el contador de InsumosBdRecolectorTests.</summary>
+        public int LeerAsyncLlamadas { get; private set; }
+
+        /// <summary>Ídem para el camino angosto del balde 2.</summary>
+        public int LeerHallazgosResueltosLlamadas { get; private set; }
+
+        public Task<InsumosBd> LeerAsync(int clientId, CancellationToken ct = default)
+        {
+            LeerAsyncLlamadas++;
+            return Task.FromResult(new InsumosBd(
+                Advisor: [], Matriz: [], Rbac: [], Retiros: [],
+                EstadoRbac: new EstadoRbacResultado(
+                    DisponibilidadRbac.NoDisponible, new EjesRbac(false, false), null, "Sin datos de prueba."),
+                SeguridadGestionadaExternamente: false, SeguridadGestionadaNota: null,
+                LeidoEn: new DateTime(2026, 1, 1)));
+        }
 
         public Task<EstadoRbacResultado> LeerEstadoRbacAsync(int clientId, CancellationToken ct = default) =>
             Task.FromResult(new EstadoRbacResultado(
@@ -403,6 +489,13 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
         // a propósito si algo llega a llamarlo, mismo criterio que el resto de esta clase.
         public Task<(EstadoRbacResultado Estado, string? Origen)> LeerEstadoRbacConOrigenAsync(
             int clientId, CancellationToken ct = default) => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
+            int clientId, CancellationToken ct = default)
+        {
+            LeerHallazgosResueltosLlamadas++;
+            return Task.FromResult<IReadOnlyList<HallazgoResueltoFila>>([]);
+        }
     }
 
     /// <summary>Nombre por cliente en memoria; sin entrada, <c>GetNameAsync</c> devuelve null (mismo
@@ -485,23 +578,33 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
 
     /// <summary>Consumidores confirmados por reservation_id, en memoria. Sin entrada, responde vacío
     /// (reserva sin consumidores confirmados, no una falla de lectura) -- mismo criterio que
-    /// <see cref="ReservasRecolectorTests"/>.</summary>
+    /// <see cref="ReservasRecolectorTests"/>. <see cref="ConFallaDeConsumidores"/> simula el otro
+    /// caso, el que hay que poder distinguir: la reserva existe pero Consumption no la deja leer.
+    ///
+    /// <para>La utilización se pide de a una reserva ya filtrada (el recolector nunca la pide dentro
+    /// de la lista, ver el comentario de clase de <c>ReservasRecolector</c>), así que este falso la
+    /// responde en vez de reventar.</para></summary>
     public sealed class FakeAzureReservationsClientControlable : IAzureReservationsClient
     {
         private readonly Dictionary<string, IReadOnlyList<ReservationConsumer>> _consumidoresPorReserva = new();
+        private readonly HashSet<string> _fallaConsumidores = [];
 
         public void ConConsumidores(string reservationId, IReadOnlyList<ReservationConsumer> consumidores) =>
             _consumidoresPorReserva[reservationId] = consumidores;
+
+        public void ConFallaDeConsumidores(string reservationId) => _fallaConsumidores.Add(reservationId);
 
         public Task<IReadOnlyList<ReservationDto>> FetchForCredentialAsync(
             int credentialId, int alertDays, DateOnly today, bool includeUtilization, CancellationToken ct = default)
             => throw new NotSupportedException("El recolector usa IReservationService.FetchAllAsync, no este método.");
 
         public Task<(string Last, string Avg7d)> GetUtilizationAsync(int credentialId, string reservationId, CancellationToken ct = default)
-            => throw new NotSupportedException("La utilización ya viaja en ReservationDto (includeUtilization).");
+            => Task.FromResult(("80%", "75%"));
 
         public Task<IReadOnlyList<ReservationConsumer>> GetConsumersAsync(
             int credentialId, string reservationId, int days, CancellationToken ct = default) =>
-            Task.FromResult(_consumidoresPorReserva.GetValueOrDefault(reservationId, []));
+            _fallaConsumidores.Contains(reservationId)
+                ? throw new InvalidOperationException("403 Consumption (falla simulada).")
+                : Task.FromResult(_consumidoresPorReserva.GetValueOrDefault(reservationId, []));
     }
 }

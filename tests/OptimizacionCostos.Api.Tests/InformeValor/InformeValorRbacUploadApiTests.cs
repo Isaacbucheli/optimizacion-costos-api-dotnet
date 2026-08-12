@@ -200,6 +200,10 @@ public sealed class InformeValorRbacUploadApiTests : IClassFixture<InformeValorR
         // a propósito si algo llega a llamarlo, mismo criterio que el resto de esta clase.
         public Task<(EstadoRbacResultado Estado, string? Origen)> LeerEstadoRbacConOrigenAsync(
             int clientId, CancellationToken ct = default) => throw new NotSupportedException();
+
+        // Ídem: /preview/variacion-consumo es el único que lo llama, y no se toca acá.
+        public Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
+            int clientId, CancellationToken ct = default) => throw new NotSupportedException();
     }
 
     /// <summary>Store fake que registra si ReplaceRbacAsync llegó a llamarse: es la comprobación

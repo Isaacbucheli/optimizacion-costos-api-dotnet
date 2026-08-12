@@ -78,7 +78,8 @@ public static class InformeValorEnsamblador
             consumo = consumo with
             {
                 VariacionConsumo = CalcularVariacionConsumo(
-                    facturacion, insumosBd, contexto, fotoReservas, consumo.MesesParciales),
+                    facturacion, insumosBd.HallazgosResueltos ?? [], contexto, fotoReservas,
+                    consumo.MesesParciales),
             };
 
         // D0: la misma definición de "en rango" que usa ConsumoCalculador (promovida a internal
@@ -114,13 +115,19 @@ public static class InformeValorEnsamblador
     /// contado dos veces y una variación total inflada — la invariante de E1 vale para la respuesta
     /// completa o no vale para nada. Quien consume reemplaza <c>fact.variacionConsumo</c> entero.</para>
     ///
-    /// <para><paramref name="facturacion"/>/<paramref name="insumosBd"/>/<paramref name="contexto"/>
+    /// <para><paramref name="facturacion"/>/<paramref name="hallazgosResueltos"/>/<paramref name="contexto"/>
     /// tienen que ser los mismos que se le pasaron a <see cref="Ensamblar"/> para el informe que se
     /// está completando: si el consultor cambió el período entre las dos llamadas, el bloque que
     /// vuelve mide otra ventana.</para>
+    ///
+    /// <para><b>Recibe los hallazgos resueltos, no el <see cref="InsumosBd"/> completo</b>, porque es
+    /// lo único de ese record que este bloque lee (<see cref="AtribucionCalculador"/> es su único
+    /// consumidor). Pedir el record entero obligaba a quien llama a leer los cuatro insumos de base
+    /// para usar un solo campo: ver <c>IInsumosBdRecolector.LeerHallazgosResueltosAsync</c>, el camino
+    /// angosto que existe justo por eso.</para>
     /// </summary>
     public static VariacionConsumoModelo EnsamblarVariacionConsumo(
-        IReadOnlyList<FacturacionRow> facturacion, InsumosBd insumosBd,
+        IReadOnlyList<FacturacionRow> facturacion, IReadOnlyList<HallazgoResueltoFila> hallazgosResueltos,
         ContextoInformeValor contexto, FotoReservas fotoReservas)
     {
         // De todo el bloque de consumo solo se necesitan los meses parciales ya resueltos, y salen de
@@ -135,7 +142,7 @@ public static class InformeValorEnsamblador
         // haya reservas que leer. Sin meses en rango no hay ventana fija, así que la atribución sale
         // null y con ella la variación total, exactamente como en la fase 1.
         return CalcularVariacionConsumo(
-            facturacion, insumosBd, contexto, fotoReservas, consumo?.MesesParciales ?? []);
+            facturacion, hallazgosResueltos, contexto, fotoReservas, consumo?.MesesParciales ?? []);
     }
 
     /// <summary>
@@ -152,14 +159,14 @@ public static class InformeValorEnsamblador
     /// informe, ya resueltos: los dos bloques de la ventana fija los reciben, nunca los vuelven a
     /// detectar por su cuenta.</param>
     private static VariacionConsumoModelo CalcularVariacionConsumo(
-        IReadOnlyList<FacturacionRow> facturacion, InsumosBd insumosBd, ContextoInformeValor contexto,
-        FotoReservas? fotoReservas, IReadOnlyList<string> mesesParciales)
+        IReadOnlyList<FacturacionRow> facturacion, IReadOnlyList<HallazgoResueltoFila> hallazgosResueltos,
+        ContextoInformeValor contexto, FotoReservas? fotoReservas, IReadOnlyList<string> mesesParciales)
     {
         var foto = fotoReservas ?? FotoReservasPedidaAparte(contexto);
         var reservas = AhorroReservasCalculador.Calcular(foto, facturacion, mesesParciales, contexto);
 
         var atribucion = AtribucionCalculador.Calcular(
-            facturacion, insumosBd.HallazgosResueltos ?? [], mesesParciales,
+            facturacion, hallazgosResueltos, mesesParciales,
             reservas.RecursosQueExplicanElPeriodo.ToHashSet(), contexto);
 
         var variacionTotal = atribucion is null

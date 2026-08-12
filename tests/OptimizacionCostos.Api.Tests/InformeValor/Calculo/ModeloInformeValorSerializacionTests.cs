@@ -179,6 +179,109 @@ public sealed class ModeloInformeValorSerializacionTests
         Assert.True(linea.GetProperty("contada").GetBoolean());
     }
 
+    // ── El bloque de variación del consumo tiene UNA sola forma, salga por donde salga ──
+
+    /// <summary>Un <c>fact.variacionConsumo</c> con los dos sub-bloques poblados y el MISMO recurso
+    /// en los dos (confirmado por reserva en el balde 1, anotado como excluido en la atribución):
+    /// es el cruce que E3/E9 obliga a hacer para conciliar, y el que se rompe si cada lado escribe
+    /// la terna con una grafía distinta.</summary>
+    private static VariacionConsumoModelo VariacionConsumoDePrueba() => new(
+        Reservas: new AhorroReservasModelo(
+            Medido: true, Motivo: "Las reservas activas se leyeron completas desde Azure.",
+            Errores: [], AlertDays: 30, AhorroConfirmado: 120m,
+            Confirmados:
+            [
+                new AhorroPorRecurso(
+                    ResourceName: "vm-1", ResourceGroup: "rg-1", SubscriptionId: "sub-1",
+                    ReservationId: "resv-1", ReservationName: "Reserva de prueba", Term: "P1Y",
+                    InicioReserva: "2026-04-10", UsedHours: 700, UtilizationLast: "80%",
+                    Utilization7d: "75%", Expiring: false, TarifaAntesPorHora: 1m,
+                    TarifaDespuesPorHora: 0.5m, Ahorro: 120m, MotivoSinCalcular: null,
+                    ExplicaElPeriodo: true, AporteAlPeriodo: 250m),
+            ],
+            Estimados: [new EstimadoPorReserva("resv-1", "Reserva de prueba", "Standard_D2s_v5", "eastus", "P1Y", 1, false)],
+            Discrepancias: [],
+            AporteAlPeriodo: 250m, RecursosQueExplicanElPeriodo: ["sub-1|rg-1|vm-1"],
+            ReservasConConsumidoresNoLeidos: 0),
+        Atribucion: new AtribucionModelo(
+            PorRecomendacion: new AtribucionBalde(0m, 0, []),
+            SinAtribuir: new SinAtribuirModelo(
+                new AtribucionBalde(0m, 0, []), new AtribucionBalde(0m, 0, []),
+                new AtribucionBalde(0m, 0, []), new AtribucionBalde(0m, 0, []), 0m),
+            Crecimiento: 0m, VariacionTotal: 0m,
+            ExcluidosPorReserva:
+            [
+                // Valores sin acentos a propósito: los dos juegos de opciones usan encoders
+                // distintos (Instance relaja el escapado), y este fixture compara NOMBRES DE CLAVE,
+                // no cómo se escapa el contenido.
+                new AtribucionRecurso("sub-1", "Suscripcion de prueba", "rg-1", "vm-1", 400m, 150m, 250m, []),
+            ]),
+        VariacionTotal: 250m);
+
+    /// <summary>
+    /// El bloque tiene que salir con las MISMAS claves con las dos opciones de serialización que
+    /// existen en el módulo: la política global de <c>Program.cs</c> (snake_case, la que usa
+    /// <c>/preview</c>) y <see cref="InformeValorJsonOptions.Instance"/> (sin política, la que el
+    /// artefacto HTML de la entrega 3 tiene que usar sí o sí). Solo se cumple si cada campo declara
+    /// su <c>[JsonPropertyName]</c>: sin atributos, el mismo bloque sale en snake_case por un lado y
+    /// en PascalCase por el otro, o sea dos nombres para el mismo dato según por dónde salga.
+    /// </summary>
+    [Fact]
+    public void La_variacion_del_consumo_serializa_igual_con_las_dos_opciones_del_modulo()
+    {
+        var opcionesGlobalesDelRepo = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+            DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower,
+        };
+        var bloque = VariacionConsumoDePrueba();
+
+        var conInstance = JsonSerializer.Serialize(bloque, InformeValorJsonOptions.Instance);
+        var conLaGlobal = JsonSerializer.Serialize(bloque, opcionesGlobalesDelRepo);
+
+        Assert.Equal(conInstance, conLaGlobal);
+    }
+
+    /// <summary>La otra mitad del mismo contrato: la terna del recurso se escribe igual en el balde
+    /// de reservas y en <c>excluidosPorReserva</c>, que es contra lo que hay que cruzarla (E3/E9).
+    /// Antes convivían <c>resource_name</c> y <c>resourceName</c> en la misma respuesta.</summary>
+    [Fact]
+    public void La_terna_del_recurso_se_escribe_igual_en_los_dos_sub_bloques()
+    {
+        var json = JsonSerializer.Serialize(VariacionConsumoDePrueba(), InformeValorJsonOptions.Instance);
+        using var doc = JsonDocument.Parse(json);
+
+        var confirmado = doc.RootElement.GetProperty("reservas").GetProperty("confirmados")[0];
+        var excluido = doc.RootElement.GetProperty("atribucion").GetProperty("excluidosPorReserva")[0];
+
+        Assert.Equal("vm-1", confirmado.GetProperty("resourceName").GetString());
+        Assert.Equal("vm-1", excluido.GetProperty("resourceName").GetString());
+        Assert.Equal("rg-1", confirmado.GetProperty("resourceGroup").GetString());
+        Assert.Equal("sub-1", confirmado.GetProperty("subscriptionId").GetString());
+        // El resto del bloque de reservas, en la misma convención camelCase que su hermano.
+        var reservas = doc.RootElement.GetProperty("reservas");
+        Assert.Equal(120m, reservas.GetProperty("ahorroConfirmado").GetDecimal());
+        Assert.Equal(30, reservas.GetProperty("alertDays").GetInt32());
+        Assert.Equal(250m, reservas.GetProperty("aporteAlPeriodo").GetDecimal());
+        Assert.Equal(0, reservas.GetProperty("reservasConConsumidoresNoLeidos").GetInt32());
+    }
+
+    /// <summary>El bloque cuelga de <c>fact</c> en el modelo completo, así que también viaja por el
+    /// artefacto de la entrega 3, no solo por el endpoint de vista previa.</summary>
+    [Fact]
+    public void La_variacion_del_consumo_viaja_dentro_de_fact_en_el_modelo_completo()
+    {
+        var modelo = ModeloCompleto();
+        modelo = modelo with { Consumo = modelo.Consumo! with { VariacionConsumo = VariacionConsumoDePrueba() } };
+
+        var json = JsonSerializer.Serialize(modelo, InformeValorJsonOptions.Instance);
+        using var doc = JsonDocument.Parse(json);
+
+        var reservas = doc.RootElement.GetProperty("fact").GetProperty("variacionConsumo").GetProperty("reservas");
+        Assert.True(reservas.GetProperty("medido").GetBoolean());
+        Assert.Equal("vm-1", reservas.GetProperty("confirmados")[0].GetProperty("resourceName").GetString());
+    }
+
     /// <summary>El modelo se puede reconstruir de vuelta desde su propio JSON: no es solo una
     /// serialización de ida, un futuro lector (p. ej. releer una entrega archivada) puede
     /// deserializar con las mismas opciones y estas mismas clases.</summary>

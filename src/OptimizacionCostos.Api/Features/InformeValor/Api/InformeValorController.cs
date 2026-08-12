@@ -238,6 +238,12 @@ public sealed class InformeValorController(
     /// momento de generar el informe, para que un informe reemitido no cambie de cifras; eso es de la
     /// entrega 3 (<c>/generar</c>, que la persiste junto a la entrega). Esta es una vista previa en
     /// vivo: dos llamadas seguidas pueden diferir si Azure cambió en el medio.</para>
+    ///
+    /// <para><b>De la base pide solo lo que este bloque usa</b>
+    /// (<see cref="IInsumosBdRecolector.LeerHallazgosResueltosAsync"/>, no <c>LeerAsync</c>): el único
+    /// insumo de base que la variación del consumo lee son los hallazgos resueltos, y el recolector
+    /// completo —Advisor, Matriz, Retiros y la corrida de Revisión de accesos con su snapshot— ya lo
+    /// pagó <see cref="Preview"/> hace un segundo, en la primera fase de la MISMA vista previa.</para>
     /// </summary>
     [HttpPost("clients/{clientId:int}/preview/variacion-consumo")]
     public async Task<IActionResult> VariacionConsumo(
@@ -247,12 +253,18 @@ public sealed class InformeValorController(
         if (!chk.Ok) return Translate(chk);
         if (ContextoDe(request) is not { } contexto) return BadRequest(new { detail = RangoInvalido });
 
-        var fotoReservas = await CapturarFotoReservasAsync(clientId, ct);
-        var insumosBd = await recolector.LeerAsync(clientId, ct);
+        // La lectura de Azure (decenas de segundos con varias reservas) arranca ANTES de las dos
+        // consultas a SQL y se espera al final: son independientes entre sí, así que la latencia del
+        // endpoint es la mayor de las dos y no la suma. Es seguro dejarla en vuelo mientras corren
+        // los await de abajo porque CapturarFotoReservasAsync no propaga ninguna excepción (traduce
+        // todo a una foto "no medida"): si una de esas dos consultas falla, esta tarea queda
+        // abandonada pero nunca con una excepción sin observar.
+        var fotoPendiente = CapturarFotoReservasAsync(clientId, ct);
+        var hallazgosResueltos = await recolector.LeerHallazgosResueltosAsync(clientId, ct);
         var facturacion = await store.GetFacturacionAsync(clientId, ct);
 
         var variacion = InformeValorEnsamblador.EnsamblarVariacionConsumo(
-            facturacion, insumosBd, contexto, fotoReservas);
+            facturacion, hallazgosResueltos, contexto, await fotoPendiente);
 
         return Ok(variacion);
     }

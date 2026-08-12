@@ -98,12 +98,7 @@ public sealed class SqlInsumosBdRecolector(
         // 2 alcanzan (WAF sirve para Advisor y Matriz a la vez). Y correrlos una sola vez por
         // proceso (ver _schemaEnsured) evita repetir esas ~19+ sentencias en cada request de un
         // endpoint que no escribe nada.
-        if (!_schemaEnsured)
-        {
-            await WafSchema.EnsureWafSchemaAsync(conn, ct);
-            await BoletinService.EnsureSchemaAsync(conn, ct);
-            _schemaEnsured = true;
-        }
+        await AsegurarSchemaAsync(conn, ct);
 
         var administradas = await SuscripcionesAdministradasAsync(conn, clientId, ct);
         var (seguridadGestionadaExternamente, seguridadGestionadaNota) =
@@ -135,6 +130,44 @@ public sealed class SqlInsumosBdRecolector(
             advisor, matriz, rbac, retiros, estadoBase with { Ejes = ejesRbac },
             seguridadGestionadaExternamente, seguridadGestionadaNota, DateTime.UtcNow,
             RbacOrigen: rbacOrigen, HallazgosResueltos: hallazgosResueltos);
+    }
+
+    /// <summary>
+    /// <see cref="IInsumosBdRecolector.LeerHallazgosResueltosAsync"/>: el camino angosto del balde 2,
+    /// para la segunda llamada de la vista previa (<c>/preview/variacion-consumo</c>). Paga lo que el
+    /// <c>WHERE</c> de <see cref="HallazgoResueltoRecolector"/> necesita —suscripciones administradas
+    /// y bandera de seguridad— y nada mas.
+    ///
+    /// <para>El schema-ensure se hace completo (WAF y Boletin), no solo el de WAF que esta consulta
+    /// necesita: <see cref="_schemaEnsured"/> es UNA bandera por proceso para los dos. Asegurar solo
+    /// WAF y darla por buena dejaria a un <see cref="LeerAsync"/> posterior sin el schema de Boletin
+    /// que si necesita <see cref="RetirosRecolector"/>. Es DDL idempotente y corre una sola vez por
+    /// proceso, asi que no hay nada que ganar partiendo la bandera en dos.</para>
+    /// </summary>
+    public async Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
+        int clientId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+
+        await AsegurarSchemaAsync(conn, ct);
+
+        var administradas = await SuscripcionesAdministradasAsync(conn, clientId, ct);
+        var (seguridadGestionadaExternamente, _) = await SeguridadGestionadaExternamenteAsync(conn, clientId, ct);
+
+        return await HallazgoResueltoRecolector.LeerAsync(
+            conn, clientId, administradas, seguridadGestionadaExternamente, ct);
+    }
+
+    /// <summary>Ver <see cref="_schemaEnsured"/>: DDL idempotente de WAF y Boletin, una sola vez por
+    /// proceso. Compartido por <see cref="LeerAsync"/> y <see cref="LeerHallazgosResueltosAsync"/>,
+    /// los dos caminos que consultan tablas de esos dos modulos.</summary>
+    private static async Task AsegurarSchemaAsync(SqlConnection conn, CancellationToken ct)
+    {
+        if (_schemaEnsured) return;
+
+        await WafSchema.EnsureWafSchemaAsync(conn, ct);
+        await BoletinService.EnsureSchemaAsync(conn, ct);
+        _schemaEnsured = true;
     }
 
     /// <summary>

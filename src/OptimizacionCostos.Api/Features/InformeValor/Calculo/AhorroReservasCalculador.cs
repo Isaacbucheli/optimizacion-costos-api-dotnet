@@ -48,6 +48,14 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// Las unidades estimadas (<see cref="ReservaActiva.UnidadesEstimadas"/>) no tienen terna: se
 /// publican rotuladas en <see cref="AhorroReservasModelo.Estimados"/>, sin costo.</para>
 ///
+/// <para><b>Una reserva que no pudo informar sus consumidores sale rotulada, no en silencio.</b>
+/// <see cref="ReservaActiva.ConsumidoresNoLeidos"/> viaja hasta el modelo publicado
+/// (<see cref="AhorroReservasModelo.ReservasConConsumidoresNoLeidos"/> y
+/// <see cref="EstimadoPorReserva.ConsumidoresNoLeidos"/>): sin eso, una reserva que Consumption no
+/// dejo leer produce exactamente la misma salida que una reserva sin consumidores confirmados
+/// —cero confirmados, cero aporte, la cantidad entera en estimado— y la primera significa que la
+/// cifra esta subestimada mientras la segunda es normal.</para>
+///
 /// <para><b>Discrepancia, no correccion.</b> Cuando la tarifa de despues no baja respecto de la de
 /// antes para un recurso confirmado, eso se publica como discrepancia
 /// (<see cref="AhorroReservasModelo.Discrepancias"/>): puede ser una reserva vencida que la lectura
@@ -92,7 +100,10 @@ public static class AhorroReservasCalculador
             return new AhorroReservasModelo(
                 Medido: false, Motivo: foto.Motivo, Errores: foto.Errores, AlertDays: foto.AlertDays,
                 AhorroConfirmado: 0m, Confirmados: [], Estimados: [], Discrepancias: [],
-                AporteAlPeriodo: 0m, RecursosQueExplicanElPeriodo: []);
+                AporteAlPeriodo: 0m, RecursosQueExplicanElPeriodo: [],
+                // Sin foto medida no hay reservas que contar: el eje entero ya viaja rotulado como
+                // no medido, que es una afirmacion mas fuerte que "algunas no informaron consumidores".
+                ReservasConConsumidoresNoLeidos: 0);
 
         var porTerna = facturacion
             .GroupBy(f => ClaveTerna(f.SubscriptionId, f.ResourceGroup, f.ResourceName))
@@ -156,10 +167,14 @@ public static class AhorroReservasCalculador
                         "no muestra una baja de tarifa despues del inicio de la reserva."));
             }
 
-            if (reserva.UnidadesEstimadas > 0)
+            // La condicion no es solo "quedaron unidades sin confirmar": una reserva cuya lectura de
+            // consumidores fallo tiene que publicarse aunque su Quantity venga null (y por lo tanto
+            // UnidadesEstimadas en cero), porque esta es la unica fila del modelo que habla de esa
+            // reserva puntual. Sin esto la falla desaparece del bloque publicado.
+            if (reserva.UnidadesEstimadas > 0 || reserva.ConsumidoresNoLeidos)
                 estimados.Add(new EstimadoPorReserva(
                     reserva.ReservationId, reserva.Nombre, reserva.Producto, reserva.Region, reserva.Term,
-                    reserva.UnidadesEstimadas));
+                    reserva.UnidadesEstimadas, reserva.ConsumidoresNoLeidos));
         }
 
         var total = confirmados.Where(c => c.Ahorro is not null).Sum(c => c.Ahorro!.Value);
@@ -173,7 +188,11 @@ public static class AhorroReservasCalculador
             Medido: true, Motivo: foto.Motivo, Errores: foto.Errores, AlertDays: foto.AlertDays,
             AhorroConfirmado: Redondeo.ComoJs(total), Confirmados: confirmados, Estimados: estimados,
             Discrepancias: discrepancias, AporteAlPeriodo: aporteAlPeriodoTotal,
-            RecursosQueExplicanElPeriodo: [.. aportesPorRecurso.Keys]);
+            RecursosQueExplicanElPeriodo: [.. aportesPorRecurso.Keys],
+            // La marca por reserva que trae la foto no puede morir aca: es lo unico que separa un
+            // ahorro confirmado en cero de un ahorro confirmado que no se pudo medir (ver
+            // AhorroReservasModelo.ReservasConConsumidoresNoLeidos).
+            ReservasConConsumidoresNoLeidos: foto.Reservas.Count(r => r.ConsumidoresNoLeidos));
     }
 
     /// <summary>Deriva el inicio de la reserva desde <see cref="ReservaActiva.ExpiresOn"/> ("aaaa-MM-dd")

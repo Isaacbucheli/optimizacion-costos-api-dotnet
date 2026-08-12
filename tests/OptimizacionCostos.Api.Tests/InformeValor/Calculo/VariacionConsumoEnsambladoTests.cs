@@ -220,8 +220,10 @@ public sealed class VariacionConsumoEnsambladoTests
             facturacion, filasAntesDeFusionar: facturacion.Count, casos: [], insumos,
             nombreCliente: "Cliente de prueba", Contexto(), fotoReservas: foto).Consumo!.VariacionConsumo;
 
+        // La fase 2 recibe SOLO los hallazgos resueltos (lo único que el bloque lee de InsumosBd):
+        // es el mismo insumo que la fase 1 sacó del record completo.
         var deLaFase2 = InformeValorEnsamblador.EnsamblarVariacionConsumo(
-            facturacion, insumos, Contexto(), foto);
+            facturacion, insumos.HallazgosResueltos!, Contexto(), foto);
 
         // Se comparan serializados y no con la igualdad de record: los baldes son listas, y la
         // igualdad sintetizada de un record compara sus miembros de referencia por referencia, así

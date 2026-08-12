@@ -105,4 +105,22 @@ public interface IInsumosBdRecolector
     /// </summary>
     Task<(EstadoRbacResultado Estado, string? Origen)> LeerEstadoRbacConOrigenAsync(
         int clientId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Solo <see cref="InsumosBd.HallazgosResueltos"/>, por el mismo motivo que
+    /// <see cref="LeerEstadoRbacAsync"/> existe: <c>InformeValorController.VariacionConsumo</c> es el
+    /// unico consumidor del bloque de variacion del consumo y de todo <see cref="InsumosBd"/> usa este
+    /// campo y nada mas (<c>AtribucionCalculador</c> es el unico que lo lee). Con
+    /// <see cref="LeerAsync"/> esa segunda llamada de la vista previa volvia a pagar Advisor, Matriz,
+    /// Retiros, la ultima corrida de Revision de accesos con su snapshot completo y, si la base no
+    /// alcanza, el Excel de RBAC del store — todo eso por segunda vez en la misma vista previa, en un
+    /// App Service B1 de 1 core.
+    ///
+    /// <para>Lo que igual se paga, porque el <c>WHERE</c> de <see cref="HallazgoResueltoRecolector"/>
+    /// lo necesita: la lista de suscripciones administradas, la bandera de seguridad gestionada
+    /// externamente y el schema-ensure de WAF. Fuera quedan las tres lecturas grandes y la corrida de
+    /// accesos.</para>
+    /// </summary>
+    Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
+        int clientId, CancellationToken ct = default);
 }

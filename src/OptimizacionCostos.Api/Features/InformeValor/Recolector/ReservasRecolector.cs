@@ -42,13 +42,26 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
 /// terna propia (no hay a que recurso atribuirselo), asi que Tarea 2 lo publica aparte, rotulado,
 /// sin intentar cruzarlo contra facturacion.</para>
 ///
-/// <para><b>Una falla puntual de Consumption no tumba toda la foto.</b> Si
-/// <see cref="IAzureReservationsClient.GetConsumersAsync"/> lanza para una reserva especifica (un
+/// <para><b>Una falla puntual de Consumption no tumba toda la foto, pero se dice en el Motivo.</b>
+/// Si <see cref="IAzureReservationsClient.GetConsumersAsync"/> lanza para una reserva especifica (un
 /// permiso distinto al de listar reservas), esa reserva queda sin consumidores confirmados y toda
 /// su cantidad pasa a estimada — mismo criterio que el <c>catch</c> silencioso de
 /// <c>RiCoverageService.ComputeAsync</c> alrededor de la misma llamada. Es una degradacion mas
 /// angosta que la del eje completo: una credencial que no puede leer <i>consumers</i> de una
-/// reserva puntual no significa que el resto de la lectura de reservas sea invalida.</para>
+/// reserva puntual no significa que el resto de la lectura de reservas sea invalida. Pero
+/// <see cref="FotoReservas.Motivo"/> NO puede seguir diciendo "se leyeron completas" cuando eso paso:
+/// el ahorro confirmado sale subestimado y quien lee la cifra no tiene como saberlo (ver
+/// <see cref="ReservaActiva.ConsumidoresNoLeidos"/>, que es la misma distincion por reserva).</para>
+///
+/// <para><b>La utilizacion se pide DESPUES de filtrar, no antes (dos fases).</b> La lista de reservas
+/// se pide con <c>includeUtilization: false</c> y la utilizacion se lee reserva por reserva, una vez
+/// que las vencidas e inactivas ya quedaron afuera. Pedirla dentro de la lista significa una llamada
+/// a <c>reservationSummaries</c> por CADA reserva que el tenant devuelve, incluidas las vencidas que
+/// la linea de abajo tira sin mirarlas: en un cliente con 40 reservas acumuladas de las cuales 10
+/// siguen activas, son 30 llamadas para nada. Los dos precedentes del propio producto hacen esto
+/// mismo: <c>RiCoverageService</c> pide la lista con <c>includeUtilization: false</c> y filtra
+/// inactivas antes de seguir, y la pantalla de reservas pide primero la lista y despues la
+/// utilizacion solo de las que muestra.</para>
 /// </summary>
 public sealed record FotoReservas(
     bool Medido,
@@ -145,7 +158,11 @@ public static class ReservasRecolector
         IReadOnlyList<object> errores;
         try
         {
-            (todas, errores) = await reservations.FetchAllAsync(credenciales, alertDays, includeUtilization: true, ct);
+            // includeUtilization: false a proposito (ver el comentario de clase): con true, el
+            // cliente REST pide reservationSummaries por cada reserva que devuelve el tenant —
+            // vencidas incluidas— dentro del mismo bucle de paginas, o sea antes del filtro de
+            // abajo. La utilizacion se lee despues, solo de las que sobreviven.
+            (todas, errores) = await reservations.FetchAllAsync(credenciales, alertDays, includeUtilization: false, ct);
         }
         catch (Exception ex)
         {
@@ -172,24 +189,68 @@ public static class ReservasRecolector
         var reservas = new List<ReservaActiva>(activas.Count);
         foreach (var r in activas)
         {
+            var (utilizacionUltima, utilizacion7d) = await UtilizacionAsync(client, r, ct);
             var (consumidores, noLeidos) = await ConsumidoresConfirmadosAsync(client, r, diasConsumidores, ct);
             var unidadesEstimadas = Math.Max(0, (r.Quantity ?? 0) - consumidores.Count);
 
             reservas.Add(new ReservaActiva(
                 ReservationId: r.ReservationId, Nombre: r.Name, Producto: r.Product, Region: r.Region,
                 Cantidad: r.Quantity, Term: r.Term, TermLabel: r.TermLabel, ExpiresOn: r.ExpiresOn,
-                DaysRemaining: r.DaysRemaining, Expiring: r.Expiring, UtilizationLast: r.UtilizationLast,
-                Utilization7d: r.Utilization7d, Consumidores: consumidores,
+                DaysRemaining: r.DaysRemaining, Expiring: r.Expiring, UtilizationLast: utilizacionUltima,
+                Utilization7d: utilizacion7d, Consumidores: consumidores,
                 UnidadesEstimadas: unidadesEstimadas, ConsumidoresNoLeidos: noLeidos));
         }
 
-        var motivo = reservas.Count > 0
-            ? "Las reservas activas se leyeron completas desde Azure."
-            : "El cliente tiene credenciales activas y la lectura de reservas no encontro ninguna " +
-              "reserva activa: es un cero legitimo, no una falla de lectura.";
+        return new FotoReservas(Medido: true, Motivo: MotivoDeLaLectura(reservas), Errores: [],
+            AlertDays: alertDays, CapturadaEn: capturadaEn, Reservas: reservas);
+    }
 
-        return new FotoReservas(Medido: true, Motivo: motivo, Errores: [], AlertDays: alertDays,
-            CapturadaEn: capturadaEn, Reservas: reservas);
+    /// <summary>
+    /// El motivo de una lectura que SI se midio. Tres casos, no dos: ninguna reserva activa (cero
+    /// legitimo), todas leidas completas, y el intermedio — la lista de reservas se leyo bien pero
+    /// una o mas no pudieron informar sus consumidores.
+    ///
+    /// <para>Ese tercer caso existe porque una falla de <c>GetConsumersAsync</c> no aparece en
+    /// <c>errors</c>: <c>FetchAllAsync</c> solo registra los fallos de la lista (Microsoft.Capacity),
+    /// mientras que los consumidores son otro permiso y otro proveedor (Microsoft.Consumption). Sin
+    /// esta distincion la foto afirma "se leyeron completas" mientras publica un ahorro confirmado
+    /// subestimado, indistinguible del de un cliente cuyas reservas todavia no tienen consumidores
+    /// confirmados — que es el cero ambiguo que este modulo saca de todos sus bloques.</para>
+    /// </summary>
+    private static string MotivoDeLaLectura(IReadOnlyList<ReservaActiva> reservas)
+    {
+        if (reservas.Count == 0)
+            return "El cliente tiene credenciales activas y la lectura de reservas no encontro ninguna " +
+                   "reserva activa: es un cero legitimo, no una falla de lectura.";
+
+        var noLeidas = reservas.Count(r => r.ConsumidoresNoLeidos);
+        if (noLeidas == 0) return "Las reservas activas se leyeron completas desde Azure.";
+
+        return $"Las reservas activas se leyeron desde Azure, pero {noLeidas} de {reservas.Count} no " +
+               "pudieron informar sus consumidores: el ahorro confirmado esta subestimado y las " +
+               "unidades de esas reservas figuran enteras como estimadas.";
+    }
+
+    /// <summary>Utilizacion de UNA reserva ya filtrada (ver el comentario de clase: por eso la lista
+    /// se pide sin utilizacion). Sin id no hay a quien preguntarle. Degrada a "n/d" ante cualquier
+    /// falla, que es exactamente el valor con el que ya degrada <c>AzureReservationsClient</c> cuando
+    /// la consulta de resumenes falla del otro lado: la utilizacion es un dato de contexto del panel
+    /// de reservas, no una entrada del calculo de ahorro, asi que su falla no cambia ninguna cifra ni
+    /// merece tumbar la foto.</summary>
+    private static async Task<(string? Ultima, string? Promedio7d)> UtilizacionAsync(
+        IAzureReservationsClient client, ReservationDto r, CancellationToken ct)
+    {
+        if (r.ReservationId is null) return (null, null);
+
+        try
+        {
+            var (ultima, promedio7d) = await client.GetUtilizationAsync(r.CredentialId, r.ReservationId, ct);
+            return (ultima, promedio7d);
+        }
+        catch
+        {
+            return ("n/d", "n/d");
+        }
     }
 
     /// <summary>Consumidores confirmados de UNA reserva (ver el docstring de

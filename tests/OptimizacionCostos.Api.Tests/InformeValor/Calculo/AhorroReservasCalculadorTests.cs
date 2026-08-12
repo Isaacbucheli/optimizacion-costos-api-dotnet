@@ -266,6 +266,53 @@ public sealed class AhorroReservasCalculadorTests
         Assert.Empty(modelo.Estimados);
     }
 
+    // ── La marca de "no se pudieron leer los consumidores" llega al modelo publicado ──
+
+    /// <summary>
+    /// El caso que este test protege: el app registration del cliente lista reservas
+    /// (Microsoft.Capacity) pero no puede leer consumidores (Microsoft.Consumption). La foto sale
+    /// MEDIDA —la lista se leyo bien, y esa falla nunca aparece en <c>errores</c>— con cada reserva
+    /// marcada. Si la marca muere en la foto, lo que se publica es indistinguible del caso legitimo:
+    /// cero confirmados, cero ahorro, la cantidad entera en estimado. Uno significa "el ahorro esta
+    /// subestimado y nadie lo sabe" y el otro es normal.
+    /// </summary>
+    [Fact]
+    public void Una_reserva_cuyos_consumidores_no_se_pudieron_leer_no_se_publica_igual_que_una_sin_consumidores()
+    {
+        var conFalla = AhorroReservasCalculador.Calcular(
+            Foto(reservas: [Reserva(cantidad: 2, unidadesEstimadas: 2, consumidoresNoLeidos: true)]),
+            [], [], ContextoAmplio);
+        var sinConsumidores = AhorroReservasCalculador.Calcular(
+            Foto(reservas: [Reserva(cantidad: 2, unidadesEstimadas: 2, consumidoresNoLeidos: false)]),
+            [], [], ContextoAmplio);
+
+        // Todo lo demas es identico entre los dos: es exactamente por eso que hace falta la marca.
+        Assert.Equal(sinConsumidores.AhorroConfirmado, conFalla.AhorroConfirmado);
+        Assert.Equal(sinConsumidores.Estimados[0].UnidadesEstimadas, conFalla.Estimados[0].UnidadesEstimadas);
+
+        Assert.Equal(1, conFalla.ReservasConConsumidoresNoLeidos);
+        Assert.True(conFalla.Estimados[0].ConsumidoresNoLeidos);
+        Assert.Equal(0, sinConsumidores.ReservasConConsumidoresNoLeidos);
+        Assert.False(sinConsumidores.Estimados[0].ConsumidoresNoLeidos);
+    }
+
+    /// <summary>Una reserva que Azure devuelve sin <c>quantity</c> deja
+    /// <see cref="ReservaActiva.UnidadesEstimadas"/> en cero: la fila de estimado se publica igual
+    /// cuando la lectura fallo, porque es el unico lugar del modelo donde esa reserva puntual
+    /// aparece. Sin esto la falla desaparece del bloque, salvo por el conteo.</summary>
+    [Fact]
+    public void Una_reserva_sin_cantidad_cuya_lectura_fallo_igual_se_publica_como_estimada()
+    {
+        var reserva = Reserva(cantidad: null, unidadesEstimadas: 0, consumidoresNoLeidos: true);
+
+        var modelo = AhorroReservasCalculador.Calcular(Foto(reservas: [reserva]), [], [], ContextoAmplio);
+
+        var estimado = Assert.Single(modelo.Estimados);
+        Assert.Equal(0, estimado.UnidadesEstimadas);
+        Assert.True(estimado.ConsumidoresNoLeidos);
+        Assert.Equal(1, modelo.ReservasConConsumidoresNoLeidos);
+    }
+
     // ── El total confirmado suma los ahorros calculables, ignora los que no se pudieron calcular ──
 
     [Fact]

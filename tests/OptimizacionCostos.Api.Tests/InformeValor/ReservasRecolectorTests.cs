@@ -35,12 +35,20 @@ public sealed class ReservasRecolectorTests
         IReadOnlyList<ReservationDto> reservas,
         IReadOnlyList<object> errores) : IReservationService
     {
+        /// <summary>El valor con el que el recolector pidio la lista. Es el eje del test de la
+        /// utilizacion: con <c>true</c>, el cliente REST paga una consulta de resumenes por CADA
+        /// reserva del tenant, vencidas incluidas, antes de que este recolector filtre nada.</summary>
+        public bool? IncludeUtilizationPedido { get; private set; }
+
         public Task<IReadOnlyList<CredentialRef>> ActiveCredentialsAsync(int clientId, CancellationToken ct = default) =>
             Task.FromResult(credenciales);
 
         public Task<(IReadOnlyList<ReservationDto> Reservations, IReadOnlyList<object> Errors)> FetchAllAsync(
-            IReadOnlyList<CredentialRef> creds, int alertDays, bool includeUtilization, CancellationToken ct = default) =>
-            Task.FromResult((reservas, errores));
+            IReadOnlyList<CredentialRef> creds, int alertDays, bool includeUtilization, CancellationToken ct = default)
+        {
+            IncludeUtilizationPedido = includeUtilization;
+            return Task.FromResult((reservas, errores));
+        }
 
         public Task<IReadOnlyDictionary<string, object?>> ListClientReservationsAsync(
             IReadOnlyList<CredentialRef> creds, int alertDays, bool includeUtilization, CancellationToken ct = default) =>
@@ -48,15 +56,23 @@ public sealed class ReservasRecolectorTests
     }
 
     /// <summary>Consumidores por reservationId; una reserva ausente del diccionario o cuyo delegate
-    /// lanza simula la falla puntual de <c>GetConsumersAsync</c> para esa reserva sola.</summary>
+    /// lanza simula la falla puntual de <c>GetConsumersAsync</c> para esa reserva sola.
+    /// <see cref="UtilizacionPedidaPara"/> registra por que reservas se pregunto la utilizacion: el
+    /// recolector la pide de a una, despues de filtrar (ver el comentario de clase de
+    /// <c>ReservasRecolector</c>).</summary>
     private sealed class FakeAzureReservationsClient(
         Dictionary<string, Func<IReadOnlyList<ReservationConsumer>>> consumidoresPorReserva) : IAzureReservationsClient
     {
+        public List<string> UtilizacionPedidaPara { get; } = [];
+
         public Task<IReadOnlyList<ReservationDto>> FetchForCredentialAsync(int credentialId, int alertDays, DateOnly today, bool includeUtilization, CancellationToken ct = default) =>
             throw new NotSupportedException("Lo resuelve IReservationService en este recolector.");
 
-        public Task<(string Last, string Avg7d)> GetUtilizationAsync(int credentialId, string reservationId, CancellationToken ct = default) =>
-            throw new NotSupportedException("La utilizacion ya viaja en ReservationDto (includeUtilization).");
+        public Task<(string Last, string Avg7d)> GetUtilizationAsync(int credentialId, string reservationId, CancellationToken ct = default)
+        {
+            UtilizacionPedidaPara.Add(reservationId);
+            return Task.FromResult(("85%", "80%"));
+        }
 
         public Task<IReadOnlyList<ReservationConsumer>> GetConsumersAsync(int credentialId, string reservationId, int days, CancellationToken ct = default)
         {
@@ -271,6 +287,106 @@ public sealed class ReservasRecolectorTests
 
         Assert.True(conFalla.ConsumidoresNoLeidos);
         Assert.False(sinConsumidores.ConsumidoresNoLeidos);
+    }
+
+    /// <summary>
+    /// El complemento del test de arriba, del lado del Motivo: una falla de <c>GetConsumersAsync</c>
+    /// NO aparece en <c>errors</c> (eso solo registra fallos de la lista, que es otro proveedor y
+    /// otro permiso), asi que el eje sigue medido. Pero el motivo no puede seguir afirmando que se
+    /// leyeron completas: el ahorro confirmado que se publica esta subestimado y quien lo lea no
+    /// tiene ninguna otra senal de nivel superior para saberlo.
+    /// </summary>
+    [Fact]
+    public async Task El_motivo_no_afirma_lectura_completa_cuando_una_reserva_no_pudo_informar_consumidores()
+    {
+        var svc = new FakeReservationService(
+            [Cred()], [Reserva(id: "r1", cantidad: 2), Reserva(id: "r2", cantidad: 1)], []);
+        var client = new FakeAzureReservationsClient(new()
+        {
+            ["r1"] = () => throw new InvalidOperationException("403 Consumption"),
+            ["r2"] = () => (IReadOnlyList<ReservationConsumer>)[Consumidor()],
+        });
+
+        var foto = await ReservasRecolector.CapturarAsync(svc, client, ClientId);
+
+        Assert.True(foto.Medido);
+        Assert.Empty(foto.Errores); // la falla de consumidores nunca llega a `errors`
+        Assert.DoesNotContain("completas", foto.Motivo, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("1 de 2", foto.Motivo, StringComparison.Ordinal);
+        Assert.Contains("consumidores", foto.Motivo, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Con_todas_las_reservas_leidas_el_motivo_si_afirma_lectura_completa()
+    {
+        var svc = new FakeReservationService([Cred()], [Reserva(id: "r1")], []);
+        var client = new FakeAzureReservationsClient(new()
+        {
+            ["r1"] = () => (IReadOnlyList<ReservationConsumer>)[Consumidor()],
+        });
+
+        var foto = await ReservasRecolector.CapturarAsync(svc, client, ClientId);
+
+        Assert.Contains("completas", foto.Motivo, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ── La utilizacion se pide DESPUES de filtrar: nunca por una reserva que se va a descartar ──
+
+    /// <summary>
+    /// Pedir la lista con <c>includeUtilization: true</c> hace que <c>AzureReservationsClient</c>
+    /// dispare una consulta a <c>reservationSummaries</c> por CADA reserva que el tenant devuelve,
+    /// dentro del bucle de paginas, antes de que este recolector descarte las vencidas e inactivas.
+    /// Un cliente con reservas viejas acumuladas paga esas llamadas para nada. Los dos precedentes
+    /// del producto (RiCoverageService y la pantalla de reservas) piden la lista sin utilizacion y la
+    /// resuelven despues, solo para las que sobreviven al filtro.
+    /// </summary>
+    [Fact]
+    public async Task La_utilizacion_no_se_pide_por_las_reservas_que_el_filtro_descarta()
+    {
+        var svc = new FakeReservationService(
+            [Cred()],
+            [
+                Reserva(id: "r-vencida", vencida: true),
+                Reserva(id: "r-cancelada", estado: "Cancelled"),
+                Reserva(id: "r-activa"),
+            ],
+            []);
+        var client = new FakeAzureReservationsClient([]);
+
+        var foto = await ReservasRecolector.CapturarAsync(svc, client, ClientId);
+
+        Assert.False(svc.IncludeUtilizationPedido); // la lista no la trae: se pide aparte
+        Assert.Equal("r-activa", Assert.Single(client.UtilizacionPedidaPara));
+        Assert.Equal("85%", Assert.Single(foto.Reservas).UtilizationLast);
+    }
+
+    /// <summary>Una falla leyendo la utilizacion de una reserva no cambia ninguna cifra del informe
+    /// (es un dato de contexto del panel, no una entrada del calculo de ahorro): degrada al mismo
+    /// "n/d" con el que ya degrada el cliente REST del otro lado, sin tumbar la foto.</summary>
+    [Fact]
+    public async Task Una_falla_leyendo_la_utilizacion_degrada_a_nd_sin_tumbar_la_foto()
+    {
+        var svc = new FakeReservationService([Cred()], [Reserva(id: "r1")], []);
+        var client = new FakeClientQueFallaLaUtilizacion();
+
+        var foto = await ReservasRecolector.CapturarAsync(svc, client, ClientId);
+
+        Assert.True(foto.Medido);
+        var fila = Assert.Single(foto.Reservas);
+        Assert.Equal("n/d", fila.UtilizationLast);
+        Assert.Equal("n/d", fila.Utilization7d);
+    }
+
+    private sealed class FakeClientQueFallaLaUtilizacion : IAzureReservationsClient
+    {
+        public Task<IReadOnlyList<ReservationDto>> FetchForCredentialAsync(int credentialId, int alertDays, DateOnly today, bool includeUtilization, CancellationToken ct = default) =>
+            throw new NotSupportedException("Lo resuelve IReservationService en este recolector.");
+
+        public Task<(string Last, string Avg7d)> GetUtilizationAsync(int credentialId, string reservationId, CancellationToken ct = default) =>
+            throw new InvalidOperationException("403 Consumption");
+
+        public Task<IReadOnlyList<ReservationConsumer>> GetConsumersAsync(int credentialId, string reservationId, int days, CancellationToken ct = default) =>
+            Task.FromResult((IReadOnlyList<ReservationConsumer>)[]);
     }
 
     /// <summary>
