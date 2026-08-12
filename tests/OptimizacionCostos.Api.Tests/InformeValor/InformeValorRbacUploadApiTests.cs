@@ -142,10 +142,10 @@ public sealed class InformeValorRbacUploadApiTests : IClassFixture<InformeValorR
                 services.AddSingleton<IInformeValorStore>(Store);
                 services.RemoveAll<IInsumosBdRecolector>();
                 services.AddSingleton<IInsumosBdRecolector>(Recolector);
-                // Entrega 2d, cierre de la Tarea 1: el controller ahora también pide
-                // IReservationService/IAzureReservationsClient (la foto de reservas de /preview).
-                // Ningún test de esta clase pega a /preview (todos van a /insumos/rbac), pero sin
-                // este reemplazo el controller se construiria con las implementaciones reales.
+                // Entrega 2d: el controller también pide IReservationService/IAzureReservationsClient
+                // (la foto de reservas de /preview/variacion-consumo). Ningún test de esta clase pega
+                // a esa ruta (todos van a /insumos/rbac), pero sin este reemplazo el controller se
+                // construiria con las implementaciones reales.
                 services.RemoveAll<IReservationService>();
                 services.AddSingleton<IReservationService>(new FakeReservationServiceNoUsado());
                 services.RemoveAll<IAzureReservationsClient>();
@@ -238,8 +238,9 @@ public sealed class InformeValorRbacUploadApiTests : IClassFixture<InformeValorR
             => throw new NotSupportedException();
     }
 
-    /// <summary>Ningún test de esta clase pega a /preview: revienta a propósito si algo llega a
-    /// llamarlo, mismo criterio que FakeInsumosBdRecolectorConEstado.LeerEstadoRbacConOrigenAsync.</summary>
+    /// <summary>Ningún test de esta clase pega a /preview/variacion-consumo: revienta a propósito si
+    /// algo llega a llamarlo, mismo criterio que
+    /// FakeInsumosBdRecolectorConEstado.LeerEstadoRbacConOrigenAsync.</summary>
     public sealed class FakeReservationServiceNoUsado : IReservationService
     {
         public Task<IReadOnlyList<CredentialRef>> ActiveCredentialsAsync(int clientId, CancellationToken ct = default)

@@ -42,16 +42,22 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// suma de los tres baldes YA redondeados (E1): balde 1 + <c>PorRecomendacion.Total</c> +
 /// <c>SinAtribuir.Total</c>.</item>
 /// </list>
-/// Solo se intenta cuando hay bloque de consumo (<paramref name="facturacion"/> con filas en rango):
-/// los tres baldes miden variación de facturación, y sin eso no hay nada que descomponer — mismo
-/// filtro D0 que ya usa <see cref="ConsumoCalculador.Calcular"/>.</para>
+/// Dentro del modelo el bloque cuelga de <c>fact</c>, así que solo se arma cuando hay bloque de
+/// consumo (<paramref name="facturacion"/> con filas en rango): sin él no hay dónde ponerlo — mismo
+/// filtro D0 que ya usa <see cref="ConsumoCalculador.Calcular"/>. <see cref="EnsamblarVariacionConsumo"/>,
+/// que lo devuelve suelto, sí lo arma igual: el panel de reservas de E5 no depende de la
+/// facturación.</para>
 ///
-/// <para><see cref="FotoReservas"/> es IO (Tarea 1) capturada por quien llama, fuera de este método
-/// puro: <paramref name="fotoReservas"/> es <c>null</c> por defecto porque, hasta que un llamador
-/// conecte esa lectura en vivo contra Azure (pendiente, ver el informe de la Tarea 5), se trata como
-/// "eje no medido" — el mismo estado que <c>ReservasRecolector.CapturarAsync</c> devuelve sin
-/// credenciales activas — en vez de bloquear la compilación de <c>InformeValorController.Preview</c>
-/// con un parámetro que hoy nadie puede llenar sin tocar Azure real.</para>
+/// <para><b><see cref="FotoReservas"/> es IO (Tarea 1), y llega en una segunda llamada.</b> Leer las
+/// reservas cuesta una llamada a Consumption POR reserva activa, en secuencia, así que
+/// <c>InformeValorController.Preview</c> no la captura: devuelve el informe con el eje de reservas
+/// declarado "no medido" (<see cref="FotoReservasPedidaAparte"/>) y el bloque completo de la
+/// variación se vuelve a pedir aparte, contra <c>/preview/variacion-consumo</c>, que sí paga esa
+/// lectura y llama a <see cref="EnsamblarVariacionConsumo"/>. Es la misma carga en dos fases que ya
+/// usa la pantalla de reservas del producto (primero la lista, después la utilización). Por eso
+/// <paramref name="fotoReservas"/> sigue siendo opcional: sin ella el eje sale no medido con su
+/// motivo, que es un estado que este módulo ya tenía (un cliente sin credenciales de Azure activas
+/// cae exactamente ahí), no uno nuevo.</para>
 /// </summary>
 public static class InformeValorEnsamblador
 {
@@ -71,7 +77,8 @@ public static class InformeValorEnsamblador
         if (consumo is not null)
             consumo = consumo with
             {
-                VariacionConsumo = CalcularVariacionConsumo(facturacion, insumosBd, contexto, fotoReservas, consumo),
+                VariacionConsumo = CalcularVariacionConsumo(
+                    facturacion, insumosBd, contexto, fotoReservas, consumo.MesesParciales),
             };
 
         // D0: la misma definición de "en rango" que usa ConsumoCalculador (promovida a internal
@@ -94,6 +101,44 @@ public static class InformeValorEnsamblador
     }
 
     /// <summary>
+    /// La segunda fase de <see cref="Ensamblar"/>: el MISMO bloque <c>fact.variacionConsumo</c>, pero
+    /// con la <see cref="FotoReservas"/> ya capturada contra Azure. Lo llama
+    /// <c>InformeValorController</c> desde <c>/preview/variacion-consumo</c> (ver el comentario de
+    /// clase sobre las dos fases) y devuelve exactamente lo que <see cref="Ensamblar"/> habría puesto
+    /// en <c>fact.variacionConsumo</c> si se le hubiera pasado esa misma foto: es el mismo camino de
+    /// código, no una segunda implementación que pueda divergir.
+    ///
+    /// <para><b>Devuelve los tres baldes, no solo el de reservas</b>, aunque lo único que la fase 2
+    /// agrega sea la foto. El balde 1 le SACA recursos a los baldes 2 y 3 (E3/E9: "gana la reserva"),
+    /// así que publicar el balde de reservas sin recalcular los otros dos dejaría el mismo recurso
+    /// contado dos veces y una variación total inflada — la invariante de E1 vale para la respuesta
+    /// completa o no vale para nada. Quien consume reemplaza <c>fact.variacionConsumo</c> entero.</para>
+    ///
+    /// <para><paramref name="facturacion"/>/<paramref name="insumosBd"/>/<paramref name="contexto"/>
+    /// tienen que ser los mismos que se le pasaron a <see cref="Ensamblar"/> para el informe que se
+    /// está completando: si el consultor cambió el período entre las dos llamadas, el bloque que
+    /// vuelve mide otra ventana.</para>
+    /// </summary>
+    public static VariacionConsumoModelo EnsamblarVariacionConsumo(
+        IReadOnlyList<FacturacionRow> facturacion, InsumosBd insumosBd,
+        ContextoInformeValor contexto, FotoReservas fotoReservas)
+    {
+        // De todo el bloque de consumo solo se necesitan los meses parciales ya resueltos, y salen de
+        // la MISMA función que los resolvió en la fase 1 (nunca de una segunda detección acá, que es
+        // justo lo que ningún bloque de la ventana fija puede hacer sin arriesgarse a discrepar).
+        // filasAntesDeFusionar es D14: alimenta ConsumoModelo.Filas, un conteo que este bloque no
+        // publica, así que no vale pagar la lectura de la bitácora de ingesta para pasarlo.
+        var consumo = ConsumoCalculador.Calcular(facturacion, filasAntesDeFusionar: 0, contexto);
+
+        // Sin bloque de consumo (ninguna fila de facturación en rango) igual se ensambla: el panel de
+        // cobertura de reservas de E5 no depende de que haya historia de facturación, solo de que
+        // haya reservas que leer. Sin meses en rango no hay ventana fija, así que la atribución sale
+        // null y con ella la variación total, exactamente como en la fase 1.
+        return CalcularVariacionConsumo(
+            facturacion, insumosBd, contexto, fotoReservas, consumo?.MesesParciales ?? []);
+    }
+
+    /// <summary>
     /// Tarea 5 (E0, E9): balde 1 (reservas, sobre la ventana del informe) + baldes 2 y 3
     /// (<see cref="AtribucionCalculador"/>), con la exclusión de E3/E9 aplicada correctamente.
     /// <see cref="AhorroReservasCalculador.Calcular"/> nunca devuelve null (siempre hay algo que
@@ -103,15 +148,18 @@ public static class InformeValorEnsamblador
     /// <see cref="VariacionConsumoModelo.VariacionTotal"/> quedan null a la vez — ver el comentario
     /// de clase de <see cref="VariacionConsumoModelo"/>.
     /// </summary>
+    /// <param name="mesesParciales">Los de <see cref="ConsumoModelo.MesesParciales"/> del mismo
+    /// informe, ya resueltos: los dos bloques de la ventana fija los reciben, nunca los vuelven a
+    /// detectar por su cuenta.</param>
     private static VariacionConsumoModelo CalcularVariacionConsumo(
         IReadOnlyList<FacturacionRow> facturacion, InsumosBd insumosBd, ContextoInformeValor contexto,
-        FotoReservas? fotoReservas, ConsumoModelo consumo)
+        FotoReservas? fotoReservas, IReadOnlyList<string> mesesParciales)
     {
-        var foto = fotoReservas ?? FotoReservasNoConectada(contexto);
-        var reservas = AhorroReservasCalculador.Calcular(foto, facturacion, consumo.MesesParciales, contexto);
+        var foto = fotoReservas ?? FotoReservasPedidaAparte(contexto);
+        var reservas = AhorroReservasCalculador.Calcular(foto, facturacion, mesesParciales, contexto);
 
         var atribucion = AtribucionCalculador.Calcular(
-            facturacion, insumosBd.HallazgosResueltos ?? [], consumo.MesesParciales,
+            facturacion, insumosBd.HallazgosResueltos ?? [], mesesParciales,
             reservas.RecursosQueExplicanElPeriodo.ToHashSet(), contexto);
 
         var variacionTotal = atribucion is null
@@ -122,18 +170,25 @@ public static class InformeValorEnsamblador
     }
 
     /// <summary>
-    /// Placeholder de "eje no medido" para cuando <see cref="Ensamblar"/> se llama sin
-    /// <see cref="FotoReservas"/> (ver el comentario de clase): mismo <see cref="FotoReservas.Medido"/>
-    /// en <c>false</c> que <c>ReservasRecolector.CapturarAsync</c> devuelve sin credenciales activas,
-    /// así que <see cref="AhorroReservasCalculador.Calcular"/> lo trata exactamente igual, sin un
-    /// camino especial para "no conectado" además de "no medido". Sin reloj (vive en <c>Calculo</c>):
-    /// <see cref="FotoReservas.CapturadaEn"/> no lo lee ningún cálculo de este módulo (es un dato para
-    /// la foto que persistirá la entrega 3), así que un valor fijo derivado del propio
-    /// <paramref name="contexto"/> alcanza.
+    /// El eje de reservas cuando <see cref="Ensamblar"/> se llama sin <see cref="FotoReservas"/>, o
+    /// sea en la fase 1 (ver el comentario de clase): mismo <see cref="FotoReservas.Medido"/> en
+    /// <c>false</c> que <c>ReservasRecolector.CapturarAsync</c> devuelve sin credenciales activas, así
+    /// que <see cref="AhorroReservasCalculador.Calcular"/> lo trata exactamente igual, sin un estado
+    /// nuevo además de "no medido".
+    ///
+    /// <para><b>El motivo dice que el dato se pide aparte</b>, y es lo único que distingue este caso
+    /// del cliente que no tiene ninguna reserva. Los dos publican el balde en cero, y esa cifra
+    /// ambigua es exactamente lo que este módulo corrige en todos sus bloques: quien lea la respuesta
+    /// de la fase 1 tiene que poder saber que falta una llamada, no concluir que no hay reservas.</para>
+    ///
+    /// <para>Sin reloj (vive en <c>Calculo</c>): <see cref="FotoReservas.CapturadaEn"/> no lo lee
+    /// ningún cálculo de este módulo (es un dato para la foto que persistirá la entrega 3), así que un
+    /// valor fijo derivado del propio <paramref name="contexto"/> alcanza.</para>
     /// </summary>
-    private static FotoReservas FotoReservasNoConectada(ContextoInformeValor contexto) => new(
+    private static FotoReservas FotoReservasPedidaAparte(ContextoInformeValor contexto) => new(
         Medido: false,
-        Motivo: "Este informe todavía no conecta la lectura en vivo de reservas de Azure.",
+        Motivo: "Las reservas de Azure se leen en una llamada aparte y todavía no se pidió: este eje " +
+                "no se midió acá. No significa que el cliente no tenga reservas.",
         Errores: [], AlertDays: ReservasRecolector.AlertDaysPorDefecto,
         CapturadaEn: contexto.Corte.ToDateTime(TimeOnly.MinValue), Reservas: []);
 

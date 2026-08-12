@@ -19,9 +19,10 @@ using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 namespace OptimizacionCostos.Api.Tests.InformeValor;
 
 /// <summary>
-/// POST /informe-valor/clients/{clientId}/preview (Tarea 8 de la entrega 2b). Mismo patrón que
-/// InformeValorUploadApiTests/InsumosBdRecolectorTests: pipeline MVC real (auth, roles,
-/// RequireModule, IAnalysisAccess), solo BD fake.
+/// Las dos fases de la vista previa: POST /informe-valor/clients/{clientId}/preview (Tarea 8 de la
+/// entrega 2b) y POST .../preview/variacion-consumo (entrega 2d), que es la que lee las reservas del
+/// cliente en vivo contra Azure. Mismo patrón que InformeValorUploadApiTests/InsumosBdRecolectorTests:
+/// pipeline MVC real (auth, roles, RequireModule, IAnalysisAccess), solo BD fake.
 /// </summary>
 public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPreviewApiTests.Factory>
 {
@@ -129,70 +130,141 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
     }
 
     /// <summary>
-    /// Cierre de la Tarea 1 de la entrega 2d (cableado de la foto de reservas en el controller):
-    /// una falla leyendo credenciales -- el hueco que <c>ReservasRecolector.CapturarAsync</c> no
-    /// atrapa (<c>IReservationService.ActiveCredentialsAsync</c> es una consulta SQL sin try/catch
-    /// alrededor, ver el comentario de clase de <c>InformeValorController.CapturarFotoReservasAsync</c>)
-    /// -- no puede tumbar el resto del informe. El eje de reservas sale "no medido", pero el resto
-    /// del informe (que no depende de reservas) llega intacto.
+    /// Por esto existe /preview/variacion-consumo: <c>/preview</c> NO lee reservas, ni siquiera
+    /// cuando el cliente tiene credencial y reservas de verdad para leer. Esa lectura cuesta una
+    /// llamada a Consumption por reserva activa, en secuencia, y es lo que hacía lento el primer
+    /// render de la pantalla. El eje viaja "no medido" y el consumidor lo completa con la segunda
+    /// llamada.
+    ///
+    /// <para>La aserción que importa es el contador: sin él, un /preview que volviera a capturar la
+    /// foto seguiría pasando el resto de este archivo sin que nadie lo note.</para>
     /// </summary>
     [Fact]
-    public async Task Si_la_lectura_de_reservas_revienta_el_preview_sale_igual_con_el_eje_no_medido()
+    public async Task El_preview_no_lee_reservas_aunque_el_cliente_tenga()
+    {
+        const int clientId = 68;
+        _factory.Access.Allow(clientId);
+        SembrarUnaReservaConConsumidor(clientId, credentialId: 2, reservationId: "resv-68");
+        var client = ClientFor("p8@bit.ec", Roles.Consultor, canEdit: false);
+
+        var res = await client.PostAsJsonAsync($"/informe-valor/clients/{clientId}/preview", CuerpoValido());
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        Assert.Equal(0, _factory.Reservations.LlamadasACredenciales(clientId));
+
+        var reservas = (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("fact").GetProperty("variacionConsumo").GetProperty("reservas");
+        Assert.False(reservas.GetProperty("medido").GetBoolean());
+        // El motivo tiene que decir que el dato se pide aparte: este cero y el de un cliente sin
+        // ninguna reserva se ven idénticos, y son dos cosas distintas.
+        Assert.Contains("aparte", reservas.GetProperty("motivo").GetString()!, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Sin_acceso_al_cliente_la_variacion_de_consumo_devuelve_403()
+    {
+        _factory.Access.Deny(clientId: 98);
+        var client = ClientFor("p9@bit.ec", Roles.Consultor, canEdit: false);
+
+        var res = await client.PostAsJsonAsync(
+            "/informe-valor/clients/98/preview/variacion-consumo", CuerpoValido());
+
+        Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+        // El guard va antes de tocar Azure: un cliente ajeno no dispara ninguna lectura de reservas.
+        Assert.Equal(0, _factory.Reservations.LlamadasACredenciales(98));
+    }
+
+    /// <summary>Las dos fases rechazan el mismo cuerpo: si una aceptara un rango invertido que la
+    /// otra rechaza, el bloque que vuelve mediría una ventana que el informe no reconoce.</summary>
+    [Fact]
+    public async Task Con_periodo_invertido_la_variacion_de_consumo_devuelve_400()
+    {
+        _factory.Access.Allow(clientId: 7);
+        var client = ClientFor("p10@bit.ec", Roles.Consultor, canEdit: false);
+
+        var cuerpo = new
+        {
+            period_start = "2026-02-28", period_end = "2026-01-01",
+            corte = "2026-03-01T00:00:00Z", meses_parciales_forzados = Array.Empty<string>(),
+        };
+        var res = await client.PostAsJsonAsync("/informe-valor/clients/7/preview/variacion-consumo", cuerpo);
+
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+    }
+
+    /// <summary>
+    /// Una falla leyendo credenciales -- el hueco que <c>ReservasRecolector.CapturarAsync</c> no
+    /// atrapa (<c>IReservationService.ActiveCredentialsAsync</c> es una consulta SQL sin try/catch
+    /// alrededor, ver el comentario de clase de <c>InformeValorController.CapturarFotoReservasAsync</c>)
+    /// -- no puede tumbar la respuesta. El eje de reservas sale "no medido" y los otros dos baldes,
+    /// que no dependen de reservas, se calculan igual.
+    /// </summary>
+    [Fact]
+    public async Task Si_la_lectura_de_reservas_revienta_la_variacion_sale_igual_con_el_eje_no_medido()
     {
         _factory.Access.Allow(clientId: 66);
         _factory.Reservations.FallarLecturaDeCredenciales(66);
         var client = ClientFor("p6@bit.ec", Roles.Consultor, canEdit: false);
 
-        var res = await client.PostAsJsonAsync("/informe-valor/clients/66/preview", CuerpoValido());
+        var res = await client.PostAsJsonAsync(
+            "/informe-valor/clients/66/preview/variacion-consumo", CuerpoValido());
 
         Assert.Equal(HttpStatusCode.OK, res.StatusCode);
         var json = await res.Content.ReadFromJsonAsync<JsonElement>();
-        var reservas = json.GetProperty("fact").GetProperty("variacionConsumo").GetProperty("reservas");
+        var reservas = json.GetProperty("reservas");
         Assert.False(reservas.GetProperty("medido").GetBoolean());
         Assert.NotEmpty(reservas.GetProperty("motivo").GetString()!);
-        // El resto del informe no depende de reservas: la cifra de facturación llega intacta.
-        Assert.Equal(1500m, json.GetProperty("fact").GetProperty("total").GetDecimal());
+        // El bloque completo sigue viajando: con dos meses de facturación no alcanza para la ventana
+        // fija, así que la atribución es null -- pero es el mismo null que devolvería /preview, no un
+        // error.
+        Assert.Equal(JsonValueKind.Null, json.GetProperty("atribucion").ValueKind);
     }
 
     /// <summary>
-    /// Cierre de la Tarea 1: con una credencial activa y una reserva con un consumidor confirmado,
-    /// la foto llega MEDIDA hasta el JSON de /preview. Antes de este cambio, /preview nunca llamaba
-    /// a <c>ReservasRecolector.CapturarAsync</c> y el eje salia "no medido" para todos los clientes,
-    /// siempre (<c>InformeValorEnsamblador.FotoReservasNoConectada</c>, el placeholder que se usaba
-    /// en ausencia de una foto real) -- este test prueba que el cable ya conecta datos de verdad, no
-    /// solo que el placeholder sigue funcionando.
+    /// El camino feliz de la fase 2: con una credencial activa y una reserva con un consumidor
+    /// confirmado, la foto llega MEDIDA hasta el JSON. Es lo que <c>/preview</c> no hace y por lo que
+    /// esta segunda llamada existe.
     /// </summary>
     [Fact]
     public async Task Con_una_reserva_activa_y_un_consumidor_confirmado_el_eje_llega_medido()
     {
         const int clientId = 67;
         _factory.Access.Allow(clientId);
-        _factory.Reservations.ConCredencialYReservas(clientId, new CredentialRef(1, "cred-prueba"),
+        SembrarUnaReservaConConsumidor(clientId, credentialId: 1, reservationId: "resv-1");
+        var client = ClientFor("p7@bit.ec", Roles.Consultor, canEdit: false);
+
+        var res = await client.PostAsJsonAsync(
+            $"/informe-valor/clients/{clientId}/preview/variacion-consumo", CuerpoValido());
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var reservas = (await res.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("reservas");
+        Assert.True(reservas.GetProperty("medido").GetBoolean());
+        var confirmados = reservas.GetProperty("confirmados");
+        Assert.Equal(1, confirmados.GetArrayLength());
+        Assert.Equal("vm-1", confirmados[0].GetProperty("resource_name").GetString());
+    }
+
+    /// <summary>Una credencial activa, una reserva viva y un consumidor confirmado sobre vm-1, que es
+    /// el recurso que factura en <see cref="FakeInformeValorStoreConDatos"/>. Datos sintéticos:
+    /// ningún nombre de cliente ni de recurso real (regla dura del repo).</summary>
+    private void SembrarUnaReservaConConsumidor(int clientId, int credentialId, string reservationId)
+    {
+        _factory.Reservations.ConCredencialYReservas(clientId, new CredentialRef(credentialId, "cred-prueba"),
         [
             new ReservationDto(
-                ReservationId: "resv-1", CredentialId: 1, Name: "Reserva de prueba", Product: "Standard_D2s_v5",
-                Region: "eastus", Quantity: 2, Term: "P1Y", TermLabel: "1 ano", State: "Succeeded",
-                AppliedScopeType: null, AppliedScopes: [], ExpiresOn: "2027-06-01", DaysRemaining: 300,
-                Expired: false, Expiring: false, UtilizationLast: "80%", Utilization7d: "75%"),
+                ReservationId: reservationId, CredentialId: credentialId, Name: "Reserva de prueba",
+                Product: "Standard_D2s_v5", Region: "eastus", Quantity: 2, Term: "P1Y", TermLabel: "1 ano",
+                State: "Succeeded", AppliedScopeType: null, AppliedScopes: [], ExpiresOn: "2027-06-01",
+                DaysRemaining: 300, Expired: false, Expiring: false, UtilizationLast: "80%",
+                Utilization7d: "75%"),
         ]);
-        _factory.ReservationsClient.ConConsumidores("resv-1",
+        _factory.ReservationsClient.ConConsumidores(reservationId,
         [
             new ReservationConsumer(
                 InstanceId: "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Compute/virtualMachines/vm-1",
                 ResourceName: "vm-1", ResourceGroup: "rg-1", SubscriptionId: "sub-1", SubscriptionName: null,
                 SkuName: "Standard_D2s_v5", UsedHours: 700, LastSeen: "2026-02-20", DaysSeen: 28),
         ]);
-        var client = ClientFor("p7@bit.ec", Roles.Consultor, canEdit: false);
-
-        var res = await client.PostAsJsonAsync($"/informe-valor/clients/{clientId}/preview", CuerpoValido());
-
-        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
-        var json = await res.Content.ReadFromJsonAsync<JsonElement>();
-        var reservas = json.GetProperty("fact").GetProperty("variacionConsumo").GetProperty("reservas");
-        Assert.True(reservas.GetProperty("medido").GetBoolean());
-        var confirmados = reservas.GetProperty("confirmados");
-        Assert.Equal(1, confirmados.GetArrayLength());
-        Assert.Equal("vm-1", confirmados[0].GetProperty("resource_name").GetString());
     }
 
     // ---- Fixture: API real en memoria, solo se fake-an auth/acceso/permisos y las cuatro fuentes ----
@@ -226,11 +298,11 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
                 services.AddSingleton<IInsumosBdRecolector>(Recolector);
                 services.RemoveAll<IClientStore>();
                 services.AddSingleton<IClientStore>(ClientStore);
-                // Entrega 2d, cierre de la Tarea 1: la foto de reservas de /preview. Por defecto
-                // (ningún test la configura) responde "sin credenciales activas" para cualquier
-                // client_id, el mismo estado seguro que ReservasRecolector.CapturarAsync da sin
-                // filas en client_azure_credentials -- así los cuatro tests existentes de este
-                // archivo no pagan ninguna llamada real a Azure ni a SQL.
+                // Entrega 2d: la foto de reservas de /preview/variacion-consumo. Por defecto (ningún
+                // test la configura) responde "sin credenciales activas" para cualquier client_id, el
+                // mismo estado seguro que ReservasRecolector.CapturarAsync da sin filas en
+                // client_azure_credentials -- así los tests que solo pegan a /preview no pagan
+                // ninguna llamada real a Azure ni a SQL.
                 services.RemoveAll<IReservationService>();
                 services.AddSingleton<IReservationService>(Reservations);
                 services.RemoveAll<IAzureReservationsClient>();
@@ -327,8 +399,8 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
             Task.FromResult(new EstadoRbacResultado(
                 DisponibilidadRbac.NoDisponible, new EjesRbac(false, false), null, "Sin datos de prueba."));
 
-        // Ningún test de este archivo pega a /estado (todos van a /preview): revienta a propósito
-        // si algo llega a llamarlo, mismo criterio que el resto de esta clase.
+        // Ningún test de este archivo pega a /estado (todos van a /preview o a su fase 2): revienta
+        // a propósito si algo llega a llamarlo, mismo criterio que el resto de esta clase.
         public Task<(EstadoRbacResultado Estado, string? Origen)> LeerEstadoRbacConOrigenAsync(
             int clientId, CancellationToken ct = default) => throw new NotSupportedException();
     }
@@ -367,14 +439,21 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
     /// cubrir (<c>ActiveCredentialsAsync</c> revienta) o el camino feliz (una credencial con
     /// reservas de verdad) sin afectar a los demás client_id de esta misma fixture compartida
     /// (<see cref="IClassFixture{TFixture}"/> es una sola instancia para toda la clase).
+    ///
+    /// <para><see cref="LlamadasACredenciales"/> cuenta las lecturas por client_id: es como se prueba
+    /// que <c>/preview</c> ya NO entra a este camino. Un contador global no serviría, porque la
+    /// fixture es compartida y otros tests sí lo recorren.</para>
     /// </summary>
     public sealed class FakeReservationServiceControlable : IReservationService
     {
         private readonly HashSet<int> _fallaCredenciales = [];
         private readonly Dictionary<int, IReadOnlyList<CredentialRef>> _credencialesPorCliente = new();
         private readonly Dictionary<int, IReadOnlyList<ReservationDto>> _reservasPorCredencial = new();
+        private readonly Dictionary<int, int> _llamadasPorCliente = new();
 
         public void FallarLecturaDeCredenciales(int clientId) => _fallaCredenciales.Add(clientId);
+
+        public int LlamadasACredenciales(int clientId) => _llamadasPorCliente.GetValueOrDefault(clientId);
 
         public void ConCredencialYReservas(int clientId, CredentialRef credencial, IReadOnlyList<ReservationDto> reservas)
         {
@@ -382,10 +461,13 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
             _reservasPorCredencial[credencial.CredentialId] = reservas;
         }
 
-        public Task<IReadOnlyList<CredentialRef>> ActiveCredentialsAsync(int clientId, CancellationToken ct = default) =>
-            _fallaCredenciales.Contains(clientId)
+        public Task<IReadOnlyList<CredentialRef>> ActiveCredentialsAsync(int clientId, CancellationToken ct = default)
+        {
+            _llamadasPorCliente[clientId] = _llamadasPorCliente.GetValueOrDefault(clientId) + 1;
+            return _fallaCredenciales.Contains(clientId)
                 ? throw new InvalidOperationException("Fallo simulado leyendo credenciales de Azure.")
                 : Task.FromResult(_credencialesPorCliente.GetValueOrDefault(clientId, (IReadOnlyList<CredentialRef>)[]));
+        }
 
         public Task<(IReadOnlyList<ReservationDto> Reservations, IReadOnlyList<object> Errors)> FetchAllAsync(
             IReadOnlyList<CredentialRef> credentials, int alertDays, bool includeUtilization, CancellationToken ct = default)

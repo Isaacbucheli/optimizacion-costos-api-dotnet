@@ -160,12 +160,11 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
                 // de que SqlInsumosBdRecolector no abra conexión al construirse.
                 services.RemoveAll<IInsumosBdRecolector>();
                 services.AddSingleton<IInsumosBdRecolector>(new FakeInsumosBdRecolectorVacio());
-                // Entrega 2d, cierre de la Tarea 1: el controller ahora también pide
-                // IReservationService/IAzureReservationsClient (la foto de reservas de /preview).
-                // Ningún test de esta clase pega a /preview (todos van a /insumos/{kind}), pero sin
-                // este reemplazo el controller se construiria con las implementaciones reales
-                // (SQL/Azure de verdad) -- rompe "solo BD fake" en silencio, mismo motivo que el
-                // recolector de arriba.
+                // Entrega 2d: el controller también pide IReservationService/IAzureReservationsClient
+                // (la foto de reservas de /preview/variacion-consumo). Ningún test de esta clase pega
+                // a esa ruta (todos van a /insumos/{kind}), pero sin este reemplazo el controller se
+                // construiria con las implementaciones reales (SQL/Azure de verdad) -- rompe "solo BD
+                // fake" en silencio, mismo motivo que el recolector de arriba.
                 services.RemoveAll<IReservationService>();
                 services.AddSingleton<IReservationService>(new FakeReservationServiceNoUsado());
                 services.RemoveAll<IAzureReservationsClient>();
@@ -251,8 +250,8 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
             int clientId, CancellationToken ct = default) => throw new NotSupportedException();
     }
 
-    /// <summary>Ningún test de esta clase pega a /preview: revienta a propósito si algo llega a
-    /// llamarlo, mismo criterio que FakeInsumosBdRecolectorVacio.</summary>
+    /// <summary>Ningún test de esta clase pega a /preview/variacion-consumo: revienta a propósito si
+    /// algo llega a llamarlo, mismo criterio que FakeInsumosBdRecolectorVacio.</summary>
     public sealed class FakeReservationServiceNoUsado : IReservationService
     {
         public Task<IReadOnlyList<CredentialRef>> ActiveCredentialsAsync(int clientId, CancellationToken ct = default)

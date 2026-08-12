@@ -1,3 +1,4 @@
+using System.Text.Json;
 using OptimizacionCostos.Api.Features.InformeValor;
 using OptimizacionCostos.Api.Features.InformeValor.Calculo;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
@@ -190,5 +191,71 @@ public sealed class VariacionConsumoEnsambladoTests
             nombreCliente: "Cliente de prueba", Contexto(), fotoReservas: foto);
 
         Assert.Equal(540m, modelo.Consumo!.VariacionConsumo!.VariacionTotal); // 550 - 10
+    }
+
+    /// <summary>
+    /// La carga en dos fases (<c>/preview</c> primero, <c>/preview/variacion-consumo</c> después, con
+    /// la foto de reservas que la primera no paga) no puede cambiar ninguna cifra: lo que devuelve
+    /// <see cref="InformeValorEnsamblador.EnsamblarVariacionConsumo"/> tiene que ser exactamente lo
+    /// que <see cref="InformeValorEnsamblador.Ensamblar"/> habría puesto en <c>fact.variacionConsumo</c>
+    /// si se le hubiera pasado esa misma foto de una sola vez. Sobre el fixture completo, con los tres
+    /// baldes poblados, la invariante de E1 y la exclusión de E9 en juego.
+    /// </summary>
+    [Fact]
+    public void La_fase_2_devuelve_el_mismo_bloque_que_habria_devuelto_el_ensamblado_de_una_sola_vez()
+    {
+        var facturacion = new List<FacturacionRow>();
+        facturacion.AddRange(Filas("vm-dropped", [100m, 100m, 100m, null, null, null]));
+        facturacion.AddRange(Filas("vm-cheaper", [200m, 200m, 200m, 80m, 80m, 80m]));
+        facturacion.AddRange(Filas("vm-fixed", [300m, 300m, 300m, 120m, 120m, 120m]));
+        facturacion.AddRange(Filas("vm-reservado-elegible", [400m, 400m, 400m, 150m, 150m, 150m]));
+
+        var insumos = Insumos([Hallazgo("vm-fixed", new DateOnly(2026, 4, 15))]);
+        var foto = new FotoReservas(
+            Medido: true, Motivo: "ok", Errores: [], AlertDays: 30,
+            CapturadaEn: new DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc),
+            Reservas: [Reserva("r-elegible", "vm-reservado-elegible", expiresOn: "2027-04-10")]);
+
+        var deUnaSolaVez = InformeValorEnsamblador.Ensamblar(
+            facturacion, filasAntesDeFusionar: facturacion.Count, casos: [], insumos,
+            nombreCliente: "Cliente de prueba", Contexto(), fotoReservas: foto).Consumo!.VariacionConsumo;
+
+        var deLaFase2 = InformeValorEnsamblador.EnsamblarVariacionConsumo(
+            facturacion, insumos, Contexto(), foto);
+
+        // Se comparan serializados y no con la igualdad de record: los baldes son listas, y la
+        // igualdad sintetizada de un record compara sus miembros de referencia por referencia, así
+        // que dos bloques idénticos campo por campo darían distinto. Serializar compara el contenido
+        // completo -- cada recurso de cada balde, no solo los totales -- que es lo que este test
+        // necesita afirmar.
+        Assert.Equal(JsonSerializer.Serialize(deUnaSolaVez), JsonSerializer.Serialize(deLaFase2));
+        Assert.Equal(250m, deLaFase2.Reservas.AporteAlPeriodo);
+        Assert.NotNull(deLaFase2.VariacionTotal);
+    }
+
+    /// <summary>
+    /// La fase 1 (<c>/preview</c>, sin foto) publica el eje "no medido" y su motivo dice que el dato
+    /// se pide aparte. Es lo único que distingue esta respuesta de la de un cliente sin ninguna
+    /// reserva: las dos publican el balde en cero, y un cero que puede significar dos cosas es
+    /// exactamente lo que este módulo corrige en todos sus bloques.
+    /// </summary>
+    [Fact]
+    public void Sin_foto_el_eje_sale_no_medido_y_el_motivo_dice_que_se_pide_aparte()
+    {
+        var facturacion = Filas("vm-cheaper", [200m, 200m, 200m, 80m, 80m, 80m]).ToList();
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, filasAntesDeFusionar: facturacion.Count, casos: [], Insumos([]),
+            nombreCliente: "Cliente de prueba", Contexto());
+
+        var reservas = modelo.Consumo!.VariacionConsumo!.Reservas;
+        Assert.False(reservas.Medido);
+        Assert.Contains("aparte", reservas.Motivo, StringComparison.OrdinalIgnoreCase);
+        Assert.Empty(reservas.Confirmados);
+        Assert.Empty(reservas.RecursosQueExplicanElPeriodo);
+        // El total sigue siendo el del portafolio completo: el balde de reservas mueve recursos entre
+        // baldes, no cambia la variación total. La caída de vm-cheaper (200 -> 80) cae entera en el
+        // balde sin atribuir.
+        Assert.Equal(120m, modelo.Consumo!.VariacionConsumo!.VariacionTotal);
     }
 }

@@ -333,11 +333,11 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
                 services.AddSingleton<IInformeValorStore>(new FakeInformeValorStoreVacio());
                 services.RemoveAll<IInsumosBdRecolector>();
                 services.AddSingleton<IInsumosBdRecolector>(Recolector);
-                // Entrega 2d, cierre de la Tarea 1: el controller ahora también pide
-                // IReservationService/IAzureReservationsClient (la foto de reservas de /preview).
-                // Ningún test de esta clase pega a /preview (todos van a /estado o /insumos-bd),
-                // pero sin este reemplazo el controller se construiria con las implementaciones
-                // reales, mismo motivo que FakeInformeValorStoreVacio de abajo.
+                // Entrega 2d: el controller también pide IReservationService/IAzureReservationsClient
+                // (la foto de reservas de /preview/variacion-consumo). Ningún test de esta clase pega
+                // a esa ruta (todos van a /estado o /insumos-bd), pero sin este reemplazo el
+                // controller se construiria con las implementaciones reales, mismo motivo que
+                // FakeInformeValorStoreVacio de abajo.
                 services.RemoveAll<IReservationService>();
                 services.AddSingleton<IReservationService>(new FakeReservationServiceNoUsado());
                 services.RemoveAll<IAzureReservationsClient>();
@@ -518,8 +518,8 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
             Task.FromResult((_insumos.EstadoRbac, _insumos.RbacOrigen));
     }
 
-    /// <summary>Ningún test de esta clase pega a /preview: revienta a propósito si algo llega a
-    /// llamarlo, mismo criterio que FakeInformeValorStoreVacio.</summary>
+    /// <summary>Ningún test de esta clase pega a /preview/variacion-consumo: revienta a propósito si
+    /// algo llega a llamarlo, mismo criterio que FakeInformeValorStoreVacio.</summary>
     public sealed class FakeReservationServiceNoUsado : IReservationService
     {
         public Task<IReadOnlyList<CredentialRef>> ActiveCredentialsAsync(int clientId, CancellationToken ct = default)

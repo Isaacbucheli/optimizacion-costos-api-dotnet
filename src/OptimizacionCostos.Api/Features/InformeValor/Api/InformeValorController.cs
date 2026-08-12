@@ -16,6 +16,11 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Api;
 /// <see cref="Preview"/> (Tarea 8 de la entrega 2b), que calcula el modelo completo sin persistir
 /// nada. La generación del artefacto HTML y el archivo de entregas son de la entrega 3.
 ///
+/// La vista previa se sirve en DOS fases: <see cref="Preview"/> devuelve el informe con lo que sale
+/// de la base propia y del insumo BITCOST, y <see cref="VariacionConsumo"/> devuelve aparte el
+/// bloque que necesita leer las reservas del cliente en vivo contra Azure, que es la parte cara.
+/// Ver el comentario de cada uno.
+///
 /// Subir() a propósito NO recibe IFormFile en la firma, y además lleva
 /// [DisableFormValueModelBinding]. Un IFormFile como parámetro no alcanzaría solo con quitarlo:
 /// el composite value provider de la acción se construye una única vez para TODOS los
@@ -174,33 +179,26 @@ public sealed class InformeValorController(
     /// Constraints): dos llamadas con el mismo <see cref="PreviewRequest"/> tienen que devolver
     /// exactamente el mismo modelo.</para>
     ///
-    /// <para><b>Entrega 2d, cierre de la Tarea 1:</b> además de los cuatro insumos de base, este
-    /// endpoint captura la <see cref="FotoReservas"/> en vivo contra Azure
-    /// (<see cref="CapturarFotoReservasAsync"/>) y se la pasa a
-    /// <see cref="InformeValorEnsamblador.Ensamblar"/>. Es la única lectura de <c>/preview</c> que
-    /// no sale de la base propia ni del insumo BITCOST: por eso vive detrás de su propio guard de
-    /// fallos, ver el comentario de <see cref="CapturarFotoReservasAsync"/>.</para>
+    /// <para><b>Este endpoint NO lee reservas de Azure.</b> Todo lo que pide sale de la base propia
+    /// o del insumo BITCOST, y esa es la razón por la que responde rápido. La foto de reservas de la
+    /// entrega 2d cuesta una llamada a Consumption por cada reserva activa, en secuencia (ver el
+    /// comentario de clase de <see cref="ReservasRecolector"/>), así que vive en su propia llamada:
+    /// <see cref="VariacionConsumo"/>. Acá el eje sale declarado "no medido, se pide aparte" y el
+    /// consumidor completa el bloque con esa segunda llamada — la misma carga en dos fases que ya
+    /// usa la pantalla de reservas del producto.</para>
     /// </summary>
     [HttpPost("clients/{clientId:int}/preview")]
     public async Task<IActionResult> Preview(int clientId, [FromBody] PreviewRequest request, CancellationToken ct)
     {
         var chk = await access.AssertClientAccessAsync(User, clientId, ct);
         if (!chk.Ok) return Translate(chk);
-
-        if (request.PeriodEnd < request.PeriodStart)
-            return BadRequest(new { detail = "El rango del periodo es invalido: el fin es anterior al inicio." });
-
-        var contexto = new ContextoInformeValor(
-            request.PeriodStart, request.PeriodEnd,
-            Fechas.ResolverFechaEnGuayaquil(request.Corte),
-            request.MesesParcialesForzados);
+        if (ContextoDe(request) is not { } contexto) return BadRequest(new { detail = RangoInvalido });
 
         var insumosBd = await recolector.LeerAsync(clientId, ct);
         var facturacion = await store.GetFacturacionAsync(clientId, ct);
         var casos = await store.GetCasosAsync(clientId, ct);
         var estados = await store.GetEstadoAsync(clientId, ct);
         var nombreCliente = await clientStore.GetNameAsync(clientId, ct) ?? $"Cliente {clientId}";
-        var fotoReservas = await CapturarFotoReservasAsync(clientId, ct);
 
         // D14: rows_processed + rows_merged de la ULTIMA carga de facturación (GetEstadoAsync ya
         // filtra a la más reciente por kind). 0 si nunca se cargó nada, igual que un insumo
@@ -211,19 +209,76 @@ public sealed class InformeValorController(
             .FirstOrDefault();
 
         var modelo = InformeValorEnsamblador.Ensamblar(
-            facturacion, filasAntesDeFusionar, casos, insumosBd, nombreCliente, contexto, fotoReservas);
+            facturacion, filasAntesDeFusionar, casos, insumosBd, nombreCliente, contexto);
 
         return Ok(modelo);
     }
 
     /// <summary>
-    /// Captura la <see cref="FotoReservas"/> (Tarea 1 de la entrega 2d) para <see cref="Preview"/>.
-    /// La lectura es en vivo contra Azure -- por credencial activa del cliente, más una llamada a
-    /// Consumption por cada reserva activa (ver el comentario de clase de
-    /// <see cref="ReservasRecolector"/>) -- así que puede fallar o tardar por motivos ajenos al
-    /// informe (SQL al listar credenciales, Azure caído, throttling). El resto de
-    /// <see cref="Preview"/> no depende de este eje, así que una falla acá NUNCA puede tumbar el
-    /// informe completo.
+    /// Fase 2 de <see cref="Preview"/>: el bloque <c>fact.variacionConsumo</c> con las reservas del
+    /// cliente leídas en vivo contra Azure (<see cref="FotoReservas"/>, Tarea 1 de la entrega 2d).
+    /// Mismo cuerpo que <see cref="Preview"/> —el mismo período y el mismo corte, o el bloque mediría
+    /// otra ventana— y solo lectura, así que hereda <c>[RequireModule(Modules.InformeValor)]</c>
+    /// (<c>ModuleAccess.View</c>) de la clase y hace la misma verificación de acceso por cliente que
+    /// el resto, igual que <see cref="Preview"/>.
+    ///
+    /// <para><b>Por qué existe.</b> Leer reservas cuesta una llamada a Consumption por cada reserva
+    /// activa, en secuencia, y es la consulta más pesada de ese servicio (detalle diario de 30 días).
+    /// Con eso adentro, <see cref="Preview"/> —que es lo primero que ve el consultor— pasaba a tardar
+    /// decenas de segundos en un cliente con varias reservas, sobre un App Service B1 de 1 core. La
+    /// pantalla de reservas del producto ya resuelve este mismo problema partiendo la carga en dos
+    /// fases (primero la lista, después la utilización), y acá se hace lo mismo.</para>
+    ///
+    /// <para><b>Devuelve el bloque completo</b> (<see cref="VariacionConsumoModelo"/>: los tres
+    /// baldes más la variación total), no solo el eje de reservas, porque el balde de reservas le
+    /// saca recursos a los otros dos (E3/E9) — ver <see cref="InformeValorEnsamblador.EnsamblarVariacionConsumo"/>.
+    /// El consumidor reemplaza <c>fact.variacionConsumo</c> entero con lo que vuelve de acá.</para>
+    ///
+    /// <para><b>La foto que se ARCHIVA no es esta.</b> E7 pide que la foto que vale sea la del
+    /// momento de generar el informe, para que un informe reemitido no cambie de cifras; eso es de la
+    /// entrega 3 (<c>/generar</c>, que la persiste junto a la entrega). Esta es una vista previa en
+    /// vivo: dos llamadas seguidas pueden diferir si Azure cambió en el medio.</para>
+    /// </summary>
+    [HttpPost("clients/{clientId:int}/preview/variacion-consumo")]
+    public async Task<IActionResult> VariacionConsumo(
+        int clientId, [FromBody] PreviewRequest request, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+        if (ContextoDe(request) is not { } contexto) return BadRequest(new { detail = RangoInvalido });
+
+        var fotoReservas = await CapturarFotoReservasAsync(clientId, ct);
+        var insumosBd = await recolector.LeerAsync(clientId, ct);
+        var facturacion = await store.GetFacturacionAsync(clientId, ct);
+
+        var variacion = InformeValorEnsamblador.EnsamblarVariacionConsumo(
+            facturacion, insumosBd, contexto, fotoReservas);
+
+        return Ok(variacion);
+    }
+
+    private const string RangoInvalido = "El rango del periodo es invalido: el fin es anterior al inicio.";
+
+    /// <summary>El contexto de cálculo del cuerpo, o <c>null</c> si el rango está invertido. Lo
+    /// comparten <see cref="Preview"/> y <see cref="VariacionConsumo"/>: las dos fases tienen que
+    /// resolver el corte igual (<see cref="Fechas.ResolverFechaEnGuayaquil"/>, el único punto de
+    /// conversión de zona horaria del módulo) y rechazar el mismo cuerpo, o devolverían bloques
+    /// medidos sobre ventanas distintas.</summary>
+    private static ContextoInformeValor? ContextoDe(PreviewRequest request) =>
+        request.PeriodEnd < request.PeriodStart
+            ? null
+            : new ContextoInformeValor(
+                request.PeriodStart, request.PeriodEnd,
+                Fechas.ResolverFechaEnGuayaquil(request.Corte),
+                request.MesesParcialesForzados);
+
+    /// <summary>
+    /// Captura la <see cref="FotoReservas"/> (Tarea 1 de la entrega 2d) para
+    /// <see cref="VariacionConsumo"/>. La lectura es en vivo contra Azure -- por credencial activa
+    /// del cliente, más una llamada a Consumption por cada reserva activa (ver el comentario de clase
+    /// de <see cref="ReservasRecolector"/>) -- así que puede fallar por motivos ajenos al informe
+    /// (SQL al listar credenciales, Azure caído, throttling). Los otros dos baldes del bloque no
+    /// dependen de este eje, así que una falla acá NUNCA puede tumbar la respuesta completa.
     ///
     /// <para><see cref="ReservasRecolector.CapturarAsync"/> ya atrapa los fallos de Azure que puede
     /// anticipar (sin credenciales activas, <c>FetchAllAsync</c> completo, <c>GetConsumersAsync</c>
@@ -242,7 +297,7 @@ public sealed class InformeValorController(
         catch (Exception ex)
         {
             logger.LogWarning(ex,
-                "informe-valor preview: la lectura de reservas fallo, el eje se publica no medido. client_id={Cid}",
+                "informe-valor variacion-consumo: la lectura de reservas fallo, el eje se publica no medido. client_id={Cid}",
                 clientId);
             return new FotoReservas(
                 Medido: false,
