@@ -132,6 +132,19 @@ builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinNoved
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Boletin.IBoletinMigracionSugeridor,
     OptimizacionCostos.Api.Features.Boletin.BoletinMigracionSugeridor>();
 
+// Informe de valor del servicio administrado (Entrega 1): ingesta de los insumos que no vienen
+// de la credencial del cliente (BITCOST y mesa de servicio). Reusa ISqlConnectionFactory (ya
+// registrado arriba). El cálculo y la generación son de las entregas 2 y 3.
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.InformeValor.IInformeValorStore,
+    OptimizacionCostos.Api.Features.InformeValor.SqlInformeValorStore>();
+// Entrega 2a/2b: ensamblador de los cuatro recolectores (Advisor, Matriz, RBAC, Retiros) + estado
+// de RBAC, detrás del endpoint de diagnóstico GET .../insumos-bd y de /preview. Reusa
+// ISqlConnectionFactory, el IAccessReviewStore de Revisión de accesos y el IInformeValorStore de
+// arriba (el cable de la condicional de RBAC: cuando la base no alcanza, lee el Excel de respaldo
+// que ese store ya persiste), todos ya registrados.
+builder.Services.AddScoped<OptimizacionCostos.Api.Features.InformeValor.Recolector.IInsumosBdRecolector,
+    OptimizacionCostos.Api.Features.InformeValor.Recolector.SqlInsumosBdRecolector>();
+
 // Módulo WAF (B7). Schema lazy en cada store. Reusa IChatCompletionClient, IAzureCredentialFactory,
 // IAnalysisAccess, ICostResultsQuery, ISqlConnectionFactory ya registrados.
 builder.Services.AddScoped<OptimizacionCostos.Api.Features.Waf.IWafCatalogStore, OptimizacionCostos.Api.Features.Waf.SqlWafCatalogStore>();

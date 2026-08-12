@@ -69,6 +69,8 @@ public sealed class FakeStore : IAccessReviewStore
     public Task<AccessReviewSnapshot?> GetSnapshotAsync(int runId, CancellationToken ct = default) => Task.FromResult<AccessReviewSnapshot?>(null);
     public Task<AccessRunRef?> GetPreviousFinishedRunAsync(int clientId, int beforeRunId, CancellationToken ct = default)
         => Task.FromResult<AccessRunRef?>(null);
+    public Task<AccessRunRef?> GetLatestFinishedRunAsync(int clientId, CancellationToken ct = default)
+        => Task.FromResult<AccessRunRef?>(null);
 }
 
 /// <summary>Subclase que fija las credenciales sin tocar SQL (seam de test).</summary>

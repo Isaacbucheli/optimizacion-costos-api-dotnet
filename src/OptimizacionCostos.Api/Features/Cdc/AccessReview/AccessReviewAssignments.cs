@@ -44,19 +44,29 @@ public static class AccessReviewAssignments
                 porClave[clave] = acc;
                 orden.Add(clave);   // el orden de llegada es el ORDER BY de la consulta: se respeta
             }
-            acc.Subscripciones.Add(r.SubscriptionId);
-            if (r.SubscriptionName is not null) acc.Nombres.Add(r.SubscriptionName);
+            // Id y nombre llegan juntos en la MISMA fila cruda: un solo diccionario id->nombre
+            // reemplaza a los dos HashSet independientes que tenía esta clase antes (Subscripciones/
+            // Nombres), que podían tener tamaños distintos si alguna repetición llegaba sin nombre.
+            // Se conserva el primer nombre no nulo visto para cada id (ver el comentario de
+            // NombrePorId): las repeticiones posteriores nunca pisan un nombre ya resuelto.
+            if (!acc.NombrePorId.TryGetValue(r.SubscriptionId, out var nombreActual) ||
+                (nombreActual is null && r.SubscriptionName is not null))
+                acc.NombrePorId[r.SubscriptionId] = r.SubscriptionName;
         }
 
         // El alcance no se pierde al colapsar: "este acceso llega a N suscripciones" es justamente lo
         // que hace grave a una asignación heredada, y las cuentas lo usan para su columna Suscripciones.
         return [.. orden.Select(k => porClave[k]).Select(a => a.Primera with
         {
-            SeenInSubscriptions = [.. a.Subscripciones],
+            SeenInSubscriptions = [.. a.NombrePorId.Keys],
+            // Mismo orden que SeenInSubscriptions (las dos vienen de recorrer el MISMO diccionario
+            // sin mutarlo entre una lectura y la otra): la posición i de una corresponde a la
+            // posición i de la otra.
+            SeenInSubscriptionNames = [.. a.NombrePorId.Values],
             // Por encima de la suscripción el ambiente sale de TODO lo que el acceso alcanza; de la
             // suscripción para abajo, del nombre de esa suscripción, que es el dato correcto.
             Environment = a.Primera.ScopeLevel is "root" or "management_group"
-                ? AccessReviewEnvironment.ForReachedSubscriptions(a.Nombres)
+                ? AccessReviewEnvironment.ForReachedSubscriptions(a.NombrePorId.Values)
                 : AccessReviewEnvironment.Classify(a.Primera.SubscriptionName),
         })];
     }
@@ -64,7 +74,13 @@ public static class AccessReviewAssignments
     private sealed class Acumulado(AccessAssignmentRow primera)
     {
         public AccessAssignmentRow Primera { get; } = primera;
-        public HashSet<string> Subscripciones { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public HashSet<string> Nombres { get; } = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>Id de cada suscripción alcanzada -> mejor nombre visto para ese id (o
+        /// <c>null</c> si ninguna repetición cruda trajo nombre). Reemplaza a los dos HashSet
+        /// independientes (ids por un lado, nombres por otro) que exponía esta clase antes de la
+        /// Tarea 8 del informe de valor: con dos colecciones separadas, un id sin nombre en ALGUNA
+        /// repetición quedaba sin forma de asociarse a su nombre en las demás sin volver a buscarlo
+        /// fila por fila. Con un solo diccionario, id y nombre llegan y se guardan juntos.</summary>
+        public Dictionary<string, string?> NombrePorId { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 }

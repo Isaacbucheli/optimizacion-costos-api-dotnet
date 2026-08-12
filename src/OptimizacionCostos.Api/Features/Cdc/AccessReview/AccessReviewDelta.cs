@@ -49,7 +49,7 @@ public static class AccessReviewDeltaBuilder
 
         // Un eje solo se compara si su insumo estuvo completo en LAS DOS corridas. Si en una de ellas
         // fallo, su ausencia no significa que algo se removio ni que algo aparecio.
-        var armOk = ArmCompleto(current) && ArmCompleto(previous);
+        var armOk = AccessReviewAccountBuilder.ArmComplete(current) && AccessReviewAccountBuilder.ArmComplete(previous);
         var dirOk = AccessReviewAccountBuilder.GraphComplete(current)
                     && AccessReviewAccountBuilder.GraphComplete(previous);
 
@@ -77,12 +77,6 @@ public static class AccessReviewDeltaBuilder
             NuevosGuests: dirOk ? current.Guests.Count(g => previous.Guests.All(p => !string.Equals(p.ObjectId, g.ObjectId, StringComparison.OrdinalIgnoreCase))) : null,
             GuestsRemovidos: dirOk ? previous.Guests.Count(g => current.Guests.All(p => !string.Equals(p.ObjectId, g.ObjectId, StringComparison.OrdinalIgnoreCase))) : null);
     }
-
-    /// <summary>El inventario de asignaciones (ARM) se leyo completo en todas las credenciales. Una
-    /// suscripcion que fallo deja sus asignaciones ausentes, y la corrida siguiente las veria como
-    /// nuevas o removidas sin que nadie haya tocado nada.</summary>
-    private static bool ArmCompleto(AccessReviewSnapshot s) =>
-        s.Run.Status != "error" && s.Credentials.All(c => c.ArmStatus == "ok");
 
     /// <summary>Lo elevado primero: es lo que hay que mirar de lo que cambió.</summary>
     private static int Weight(string? roleClass) => roleClass switch

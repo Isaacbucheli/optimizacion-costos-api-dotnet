@@ -19,8 +19,13 @@ public sealed class SqlWafRecommendationStore(ISqlConnectionFactory factory) : I
         FROM dbo.waf_recommendation
         """;
 
-    /// <summary>Etiquetas de sección por pilar (port de PILLAR_SECTION_NAMES de waf.py).</summary>
-    private static readonly IReadOnlyDictionary<int, string> PillarSectionNames = new Dictionary<int, string>
+    /// <summary>
+    /// Etiquetas de sección por pilar (port de PILLAR_SECTION_NAMES de waf.py). Internal (no
+    /// private): es la fuente única que también usa el recolector de Advisor del informe de valor
+    /// (<c>AdvisorRecolector.EtiquetaPilar</c>) para que el bloque de Advisor y el de la matriz no
+    /// se contradigan en la misma página con dos juegos de nombres distintos.
+    /// </summary>
+    internal static readonly IReadOnlyDictionary<int, string> PillarSectionNames = new Dictionary<int, string>
     {
         [1] = "Eficiencia del rendimiento",
         [2] = "Excelencia operacional",

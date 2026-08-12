@@ -4,19 +4,18 @@ using System.Text.RegularExpressions;
 namespace OptimizacionCostos.Api.Tests.Clients;
 
 /// <summary>
-/// Este guardia existe porque el mismo defecto ya apareció dos veces: alguien agrega una tabla con
+/// Este guardia existe porque el mismo defecto ya apareció tres veces: alguien agrega una tabla con
 /// FK a <c>dbo.clients</c>, nadie se acuerda de sumarla a <c>DeleteClientCascadeAsync</c>, y borrar
 /// un cliente empieza a fallar por clave foránea. La primera vez fue
 /// <c>FK_waf_canonical_consolidates</c>, y la limpieza fallida de un cliente de prueba dejó una fila
-/// colgada en la base de producción. La segunda fueron cuatro tablas a la vez: el barrido de
-/// optimización (<c>optimization_scan</c>, <c>optimization_finding_state</c>) y el histórico y los
-/// trabajos de sincronización de Advisor score.
+/// colgada en la base de producción. La tercera vez fueron OCHO tablas a la vez: las cuatro de
+/// Informe de valor más el barrido de optimización y el histórico/sync de Advisor score.
 ///
 /// Agregar las tablas que faltan arregla el pasado y no el futuro. Esto último es lo que hace este
 /// test: escanea las declaraciones de FK contra <c>clients</c> en el código de esquema (mismo patrón
-/// que <c>ColumnLimitsSchemaSyncTests</c>: lee el archivo, no la reflexión) y exige que el cascade
-/// nombre cada tabla. Así la próxima falla acá, en el CI, y no en producción cuando alguien intenta
-/// borrar un cliente.
+/// que <c>SinRelojDelSistemaTests</c> y <c>ColumnLimitsSchemaSyncTests</c>: lee el archivo, no la
+/// reflexión) y exige que el cascade nombre cada tabla. Así la novena falla acá, en el CI, y no en
+/// producción cuando alguien intenta borrar un cliente.
 ///
 /// Se exceptúan las FK declaradas con <c>ON DELETE CASCADE</c>: esas las limpia el motor.
 /// </summary>

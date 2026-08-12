@@ -30,6 +30,10 @@ public static class Modules
     public const string PendientesCdc = "pendientes-cdc";
     public const string PendientesInfra = "pendientes-infra";
 
+    // Informe de valor del servicio administrado. Combina insumos subidos (BITCOST y
+    // requerimientos) con Advisor, la matriz WAF y la revisión de accesos.
+    public const string InformeValor = "informe-valor";
+
     public static readonly IReadOnlyList<ModuleInfo> All =
     [
         new(Costos, "Optimización de costos", "Matriz costos Azure"),
@@ -40,6 +44,7 @@ public static class Modules
         new(WafCost, "Costo referencial Azure", "Matriz mejoras Azure"),
         new(Report, "Informe de gestión mensual", "Informes"),
         new(Boletin, "Boletín Azure", "Informes"),
+        new(InformeValor, "Informe de valor del servicio", "Informes"),
         new(Reservations, "Reservas por vencer", "Gestión CDC"),
         new(Alerts, "Catálogo de alertas", "Gestión CDC"),
         new(Policies, "Catálogo de políticas", "Gestión CDC"),

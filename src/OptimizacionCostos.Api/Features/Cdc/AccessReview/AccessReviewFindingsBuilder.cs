@@ -50,7 +50,7 @@ public static class AccessReviewFindingsBuilder
         var graphOk = AccessReviewAccountBuilder.GraphComplete(snapshot);
         // El último login necesita además signInActivity: sin P1, un null es ambiguo y no permite
         // afirmar ni "nunca entró" ni "hace N días que no entra".
-        var signInOk = graphOk && snapshot.Credentials.All(c => c.GraphStatus != "sin_licencia_p1");
+        var signInOk = AccessReviewAccountBuilder.SignInComplete(snapshot);
 
         var assignments = snapshot.Assignments;
 

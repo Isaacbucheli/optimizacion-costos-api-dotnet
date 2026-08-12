@@ -30,6 +30,13 @@ jobs:
 
       - name: Test (suite sin BD; las pruebas de integración se auto-saltean)
         run: dotnet test --no-restore --configuration Release --verbosity minimal
+        env:
+          # El test de contrato entre los dos renderizadores del informe de valor compara este repo
+          # contra la vista React de innovacion-CDC, que este workflow no clona. La declaración es
+          # explícita a propósito: sin ella el test FALLA con instrucciones, en vez de apagarse solo.
+          # La mitad que no necesita el otro repo (que la plantilla no lea los campos declarados
+          # fuera de ella) corre igual acá.
+          INFORME_VALOR_FRONT: ninguno
 
       - name: Publish
         run: dotnet publish ${{ env.PROJECT }} --configuration Release -p:UseAppHost=false --output ${{ github.workspace }}/publish

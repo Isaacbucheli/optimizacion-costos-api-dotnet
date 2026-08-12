@@ -456,7 +456,14 @@ public sealed class BoletinService(
 
     // -------------------- SQL --------------------
 
-    private static async Task EnsureSchemaAsync(SqlConnection conn, CancellationToken ct)
+    /// <summary>
+    /// Internal (no private): RetirosRecolector lee dbo.boletin_retirement con una SqlConnection ya
+    /// abierta y, a propósito, no asegura su propio schema (ver el comentario de clase de ese
+    /// recolector) — es responsabilidad de quien lo llama junto a los demás recolectores del
+    /// informe de valor. SqlInsumosBdRecolector (el ensamblador) llama a este método antes de
+    /// invocarlo, igual que ArmComplete se promovió de private a public para AccessReview.
+    /// </summary>
+    internal static async Task EnsureSchemaAsync(SqlConnection conn, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """

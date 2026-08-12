@@ -23,6 +23,13 @@ public interface IAccessReviewStore
     /// <summary>Corrida anterior FINALIZADA (ok o partial) para comparar. Una corrida en error no es
     /// una foto valida del tenant: compararse contra ella inventaria cambios que no ocurrieron.</summary>
     Task<AccessRunRef?> GetPreviousFinishedRunAsync(int clientId, int beforeRunId, CancellationToken ct = default);
+
+    /// <summary>
+    /// Última corrida que sirve como foto del tenant. GetLatestRunAsync no filtra estado, así
+    /// que una corrida en 'error' de hace cinco minutos taparía una buena de ayer y el informe
+    /// saldría con el inventario a medias sin declararlo.
+    /// </summary>
+    Task<AccessRunRef?> GetLatestFinishedRunAsync(int clientId, CancellationToken ct = default);
 }
 
 /// <summary>Persistencia de corridas de revisión de accesos. Tablas schema-lazy (patrón power_history_job).</summary>
@@ -334,6 +341,28 @@ public sealed class SqlAccessReviewStore(ISqlConnectionFactory factory) : IAcces
             + " ORDER BY run_id DESC";
         cmd.Parameters.Add(new SqlParameter("@cid", clientId));
         cmd.Parameters.Add(new SqlParameter("@before", beforeRunId));
+        await using var r = await cmd.ExecuteReaderAsync(ct);
+        return await r.ReadAsync(ct) ? ReadRun(r) : null;
+    }
+
+    /// <summary>
+    /// Expuesto para <see cref="OptimizacionCostos.Api.Tests.Cdc.AccessReview.AccessReviewCompletitudTests"/>
+    /// (InternalsVisibleTo): la unica clausula que justifica <see cref="GetLatestFinishedRunAsync"/> es el
+    /// filtro de estado, y no hay forma de trancarla sin base de datos salvo mirando el texto. Si alguien
+    /// la borra o pega de vuelta el <c>run_id &lt;</c> de <see cref="GetPreviousFinishedRunAsync"/>, el
+    /// test de esa clase lo rompe.
+    /// </summary>
+    internal const string LatestFinishedRunSql = "SELECT TOP 1 " + RunCols + " FROM dbo.cdc_access_review_run"
+        + " WHERE client_id=@cid AND status IN ('ok','partial')"
+        + " ORDER BY run_id DESC";
+
+    public async Task<AccessRunRef?> GetLatestFinishedRunAsync(int clientId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = LatestFinishedRunSql;
+        cmd.Parameters.Add(new SqlParameter("@cid", clientId));
         await using var r = await cmd.ExecuteReaderAsync(ct);
         return await r.ReadAsync(ct) ? ReadRun(r) : null;
     }
