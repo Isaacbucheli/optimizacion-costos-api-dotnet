@@ -209,7 +209,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT i.kind, i.source_file_name, i.completed_at, i.rows_processed, i.rows_merged,
-                i.status, i.warnings_json
+                i.status, i.warnings_json, i.ingesta_id
             FROM dbo.informe_valor_ingesta i
             INNER JOIN (
                 SELECT kind, MAX(ingesta_id) AS ingesta_id
@@ -232,7 +232,8 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
                 rd.GetInt32(3),
                 rd.GetInt32(4),
                 rd.IsDBNull(5) ? null : rd.GetString(5),
-                warnings));
+                warnings,
+                rd.GetInt32(7)));
         }
         return result;
     }
@@ -361,12 +362,18 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
     /// o al revés. Si acá falta un campo que entra al cálculo, la entrega reemitida cambia de
     /// cifras sin que nada lo explique.
     /// </summary>
+    /// <remarks>
+    /// Una columna nueva va SIEMPRE al final de esta lista, aunque en el CREATE TABLE quede en otro
+    /// lugar por legibilidad: los dos lectores de abajo van por índice posicional, así que meterla
+    /// en el medio corre todos los índices que siguen y ninguna prueba lo cataría (se leería la
+    /// columna de al lado, del mismo tipo, sin fallar).
+    /// </remarks>
     private const string ColumnasEntregaCompleta = """
         entrega_id, period_start, period_end, corte, meses_parciales, variante,
         bloques_publicados, rbac_origen, rbac_corrida_fecha, seguridad_gestionada_externamente,
         facturacion_ingesta_id, casos_ingesta_id, rbac_ingesta_id, foto_reservas_json,
         plantilla_version, blob_name, blob_size_bytes, file_name, summary_json,
-        generated_by, generated_at
+        generated_by, generated_at, blob_container
         """;
 
     public async Task<int> RegistrarEntregaAsync(EntregaNueva entrega, CancellationToken ct)
@@ -380,11 +387,11 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
                 (client_id, period_start, period_end, corte, meses_parciales, variante,
                  bloques_publicados, rbac_origen, rbac_corrida_fecha,
                  seguridad_gestionada_externamente, facturacion_ingesta_id, casos_ingesta_id,
-                 rbac_ingesta_id, foto_reservas_json, plantilla_version, blob_name,
+                 rbac_ingesta_id, foto_reservas_json, plantilla_version, blob_container, blob_name,
                  blob_size_bytes, file_name, summary_json, generated_by, generated_at)
             OUTPUT INSERTED.entrega_id
             VALUES (@cid, @ini, @fin, @corte, @parc, @var, @bloques, @rbacOrigen, @rbacCorrida,
-                    @segExt, @ingFact, @ingCasos, @ingRbac, @foto, @plantilla, @blob,
+                    @segExt, @ingFact, @ingCasos, @ingRbac, @foto, @plantilla, @cont, @blob,
                     @size, @file, @summary, @by, @now)
             """;
         cmd.Parameters.Add(new SqlParameter("@cid", SqlDbType.Int) { Value = entrega.ClientId });
@@ -410,6 +417,10 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         { Value = (object?)FotoReservasJson.Serializar(entrega.FotoReservas) ?? DBNull.Value });
         cmd.Parameters.Add(new SqlParameter("@plantilla", SqlDbType.NVarChar, 64)
         { Value = TruncDb(entrega.PlantillaVersion, 64) });
+        cmd.Parameters.Add(new SqlParameter("@cont", SqlDbType.NVarChar, 200) { Value = TruncDb(entrega.BlobContainer, 200) });
+        // OJO: TruncDb corta a 400. El nombre del blob que se guarda tiene que ser IDÉNTICO al que
+        // se subió, o la descarga busca un blob que no existe: por eso InformeValorController lo
+        // arma con largo fijo y sin el nombre del archivo de descarga, que sí puede ser largo.
         cmd.Parameters.Add(new SqlParameter("@blob", SqlDbType.NVarChar, 400) { Value = TruncDb(entrega.BlobName, 400) });
         cmd.Parameters.Add(new SqlParameter("@size", SqlDbType.Int) { Value = entrega.BlobSizeBytes });
         cmd.Parameters.Add(new SqlParameter("@file", SqlDbType.NVarChar, 400) { Value = TruncDb(entrega.FileName, 400) });
@@ -460,6 +471,8 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
 
         return new EntregaArchivada(
             Resumen: LeerResumen(rd),
+            // Índice 21: última columna de ColumnasEntregaCompleta (ver su remarks).
+            BlobContainer: rd.IsDBNull(21) ? null : rd.GetString(21),
             BlobName: rd.GetString(15),
             MesesParcialesForzados: MesesParcialesJson.Deserializar(rd.IsDBNull(4) ? null : rd.GetString(4)),
             RbacCorridaFecha: rd.IsDBNull(8) ? null : rd.GetDateTime(8),

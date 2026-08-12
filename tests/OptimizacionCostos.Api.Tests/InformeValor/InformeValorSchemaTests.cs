@@ -136,6 +136,7 @@ public sealed class InformeValorSchemaTests
     [InlineData("rbac_ingesta_id")]
     [InlineData("foto_reservas_json")]
     [InlineData("plantilla_version")]
+    [InlineData("blob_container")]
     [InlineData("blob_name")]
     [InlineData("blob_size_bytes")]
     [InlineData("file_name")]
@@ -163,6 +164,7 @@ public sealed class InformeValorSchemaTests
     [InlineData("casos_ingesta_id")]
     [InlineData("rbac_ingesta_id")]
     [InlineData("plantilla_version")]
+    [InlineData("blob_container")]
     public void Las_columnas_de_reproducibilidad_tienen_soft_migration(string columna)
     {
         var todo = string.Join("\n", InformeValorSchema.Statements);

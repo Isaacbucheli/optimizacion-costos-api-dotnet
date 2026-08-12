@@ -10,9 +10,15 @@ namespace OptimizacionCostos.Api.Features.InformeValor;
 /// registros" con el N de antes de fusionar, tal como lo hace la plantilla, sin tener que volver a
 /// leer la tabla de facturación completa solo para contarlas.
 /// </summary>
+/// <param name="IngestaId">La corrida que dejó vigente este insumo. La necesita
+/// <c>InformeValorController.Generar</c> para archivarla con la entrega (F4): los insumos son vivos
+/// —cada carga borra la anterior— así que las filas no se pueden restaurar, pero con este id se
+/// puede DETECTAR que el insumo ya no es el mismo y decirlo, en vez de reemitir en silencio contra
+/// otro archivo.</param>
 public sealed record InsumoEstado(
     string Kind, bool Cargado, string? SourceFileName, DateTime? CargadoEn,
-    int Filas, int RowsMerged, string? Status, IReadOnlyList<string> Warnings);
+    int Filas, int RowsMerged, string? Status, IReadOnlyList<string> Warnings,
+    int IngestaId);
 
 public interface IInformeValorStore
 {

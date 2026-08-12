@@ -163,6 +163,12 @@ public static class InformeValorSchema
                 -- el repo, no con los datos: dos emisiones idénticas que se ven distintas se
                 -- explican mirando esta columna en vez de investigando las cifras.
                 plantilla_version NVARCHAR(64) NULL,
+                -- El contenedor de Blob Storage, junto al nombre del blob: es lo que ya hacen
+                -- client_monthly_report.storage_container y analysis_files.storage_container. El
+                -- contenedor sale de una variable de entorno (STORAGE_CONTAINER_OUTPUTS): deducirlo
+                -- al descargar significa que cambiarla deja sin artefacto a todas las entregas
+                -- archivadas, y el 404 no se puede explicar mirando la fila.
+                blob_container NVARCHAR(200) NULL,
                 blob_name NVARCHAR(400) NOT NULL,
                 blob_size_bytes INT NOT NULL,
                 file_name NVARCHAR(400) NOT NULL,
@@ -207,6 +213,10 @@ public static class InformeValorSchema
         """
         IF COL_LENGTH('dbo.informe_valor_entrega', 'plantilla_version') IS NULL
             ALTER TABLE dbo.informe_valor_entrega ADD plantilla_version NVARCHAR(64) NULL;
+        """,
+        """
+        IF COL_LENGTH('dbo.informe_valor_entrega', 'blob_container') IS NULL
+            ALTER TABLE dbo.informe_valor_entrega ADD blob_container NVARCHAR(200) NULL;
         """,
         // soft-migration ingesta (tablas preexistentes de la entrega 1, ya en PR): la calculadora
         // publica "revisado línea por línea sobre N registros" y en la plantilla ese N son las

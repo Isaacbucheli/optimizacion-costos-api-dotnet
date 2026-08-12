@@ -44,6 +44,12 @@ public sealed record EntregaNueva(
     /// y no se pudo", con su motivo adentro).</summary>
     FotoReservas? FotoReservas,
     string? PlantillaVersion,
+    /// <summary>El contenedor de Blob Storage donde quedó el artefacto. Se guarda junto al nombre
+    /// —igual que hace el informe de gestión mensual con <c>client_monthly_report.storage_container</c>
+    /// y el Excel de costos con <c>analysis_files</c>— y no se deduce de la configuración al
+    /// descargar: el contenedor sale de un valor de entorno y puede cambiar, y con eso todas las
+    /// entregas archivadas dejarían de encontrarse sin que nada lo explique.</summary>
+    string BlobContainer,
     string BlobName,
     int BlobSizeBytes,
     string FileName,
@@ -72,6 +78,12 @@ public sealed record EntregaResumen(
 /// </summary>
 public sealed record EntregaArchivada(
     EntregaResumen Resumen,
+    /// <summary>El contenedor con el que se subió el artefacto (ver
+    /// <see cref="EntregaNueva.BlobContainer"/>). <c>null</c> solo en una fila escrita por una
+    /// versión de este módulo anterior a la columna: la descarga cae ahí al contenedor configurado
+    /// hoy, que es la única suposición razonable, y lo registra en el log en vez de hacerlo en
+    /// silencio.</summary>
+    string? BlobContainer,
     string BlobName,
     IReadOnlyList<string>? MesesParcialesForzados,
     DateTime? RbacCorridaFecha,
