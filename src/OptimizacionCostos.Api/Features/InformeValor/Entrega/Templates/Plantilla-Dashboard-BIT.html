@@ -964,6 +964,30 @@ function gastoUltCompleto(f){
   var r=f.meses.filter(function(m){return m[0]===f.ultCompleto;});
   return r.length?r[0][1]:null;
 }
+/* D9: una tarjeta cuyo conteo depende de un eje que puede no haberse medido. Con el eje sin medir el
+   modelo manda null y num(null) imprime "0": el informe le afirmaria al cliente que ninguna
+   identidad quedo sin login o que no hay cuentas deshabilitadas con permisos, cuando lo que paso es
+   que nadie lo pudo leer. Es el mismo hallazgo fabricado que D9 saca del calculo, y hasta aca seguia
+   entrando por la capa de dibujo. "Sin medir" no es un cero y se dice distinto. */
+function eje(v,medido,unidad,titulo,prosaMedida,prosaSinMedir){
+  return medido&&v!==null&&v!==undefined
+    ? [num(v),unidad,v?'am':'',titulo,prosaMedida]
+    : ['Sin medir','','na',titulo,prosaSinMedir];
+}
+/* D10: los casos sin subcategoria NO cuentan como proactivos. Antes caian de ese lado por omision
+   -no matchean la expresion de "reactivo", asi que sobrevivian a la resta-, y el informe le
+   atribuia al servicio trabajo que nadie clasifico. El modelo publica casosSinSubcategoria justo
+   para poder sacarlos del numerador sin esconderlos. */
+function casosProactivos(t){ return Math.max(0, t.n - t.casosR - t.casosSinSubcategoria); }
+/* D14: dos cifras de "registros", cada una con su nombre. La de la carga completa exagera cuanto se
+   reviso PARA ESTE PERIODO -es la unica que publicaba la plantilla vieja, que nunca filtraba- y la
+   del rango lo subestima, porque esas filas ya vienen fusionadas por clave natural. Las dos son
+   ciertas y ninguna sola es honesta, asi que van juntas en todas las secciones que las citan: una
+   sola frase para las cuatro, para que no puedan discrepar. */
+function registros(f){
+  return num(f.filasEnRango)+' registros de facturación del período ('+num(f.filas)+
+    ' en la carga completa, antes de fusionar por recurso)';
+}
 /* D3: la cifra anualizada solo existe si la caída se sostuvo tres meses cerrados. Multiplicar la
    tasa por 12 sin esa condición es lo que la calculadora dejó de hacer, así que el dibujo tampoco
    lo hace. Y "no se anualiza" (regla de negocio) se dice distinto de "no publicado" (decisión de
@@ -1026,13 +1050,13 @@ function render(){
   if(t){
     R.push([t.pct.toFixed(2),'%','','Cumplimiento de SLA',num(t.n)+' casos entre '+t.desde+' y '+t.hasta+', de los cuales '+num(t.denominadorPct)+' tienen SLA evaluado. '+num(t.noCumple)+' quedaron fuera del acuerdo'+(t.sinEvaluar?' y '+num(t.sinEvaluar)+' no traen resultado registrado, así que no cuentan ni a favor ni en contra':'')+'.'+(t.racha?' La racha vigente sin incumplimientos es de '+t.racha+' meses y '+num(t.rachaCasos)+' casos.':'')]);
     R.push([pct(t.nFrentes-t.nFrentesR,t.nFrentes).toFixed(1),'%','','Frentes de trabajo proactivos',
-      (t.nFrentes-t.nFrentesR)+' de '+t.nFrentes+' frentes nacieron de la vigilancia del servicio, no de un incidente. En volumen de casos la proporción es del '+pct(t.n-t.casosR,t.n).toFixed(1)+'%.']);
+      (t.nFrentes-t.nFrentesR)+' de '+t.nFrentes+' frentes nacieron de la vigilancia del servicio, no de un incidente. En volumen de casos la proporción es del '+pct(casosProactivos(t),t.n).toFixed(1)+'%.']);
   }
   if(rb) R.push([num(rb.n),'','','Asignaciones de acceso auditadas',rb.ids+' identidades sobre '+rb.subs.length+' suscripciones, revisadas una por una. '+rb.find.length+' hallazgos abiertos, '+rb.crit+' de severidad crítica.']);
   if(f){
-    R.push([fmt(f.total),'','','Gasto gobernado en el período','Consumo revisado línea por línea sobre '+num(f.filas)+' registros de facturación'+(f.parciales.length?'. '+f.parciales.map(ymAb).join(' y ')+' son meses parciales.':'.')]);
+    R.push([fmt(f.total),'','','Gasto gobernado en el período','Consumo revisado línea por línea sobre '+registros(f)+(f.parciales.length?'. '+f.parciales.map(ymAb).join(' y ')+' son meses parciales.':'.')]);
     if(f.ahorro) R.push([fmt(f.ahorro.dif),'/mes','','Ahorro activo y sostenido',
-      'Racionalización del gasto de '+f.ahorro.cat+': de '+fmt(f.ahorro.pico)+' en '+ymAb(f.ahorro.picoMes)+' a '+fmt(f.ahorro.fin)+' de promedio en los últimos meses cerrados. '+anualizado(f.ahorro)+'.']);
+      'Racionalización del gasto de '+f.ahorro.cat+': de '+fmt(f.ahorro.pico)+' en '+ymAb(f.ahorro.picoMes)+' a '+fmt(f.ahorro.fin)+' de promedio hasta '+ymAb(f.ahorro.finMes)+'. '+anualizado(f.ahorro)+'.']);
     R.push([num(f.bajasDef),'','','Recursos dados de baja','Ciclo de vida gestionado sobre '+num(f.nIds)+' recursos inventariados en el período.']);
   }
   if(ad){
@@ -1052,7 +1076,7 @@ function render(){
   var C=[];
   if(f){
     C.push([f.subs.length,'suscripciones','Bajo gestión financiera',f.subs.slice(0,4).map(function(s){return s[0];}).join(', ')+(f.subs.length>4?' y otras.':'.')]);
-    C.push([fmt(f.total),'','Gasto gobernado','Consumo total revisado en el período sobre '+num(f.filas)+' registros de facturación.']);
+    C.push([fmt(f.total),'','Gasto gobernado','Consumo total revisado en el período sobre '+registros(f)+'.']);
     C.push([num(f.nIds),'recursos','Inventario bajo control','Recursos únicos con consumo, repartidos en '+num(f.nRg)+' grupos de recursos. El pico de recursos activos simultáneos fue de '+num(f.picoAct)+' en '+ymAb(f.picoMes)+'.']);
     C.push([num(f.nCats),'servicios','Plataforma monitoreada','Categorías de servicio Azure con consumo activo en el período.']);
   }
@@ -1130,16 +1154,20 @@ function render(){
     }
     else if(ad&&ad.descarte>0){
       crit='<div class="panel" style="margin-top:16px"><h3>Criterio técnico: el dinero se protege antes de comprometerse</h3>'+
-       '<div class="tbl"><table><thead><tr><th>Línea de ahorro que publica Advisor</th><th>Suscripción</th><th class="num">USD/año</th><th>Resolución de la revisión</th></tr></thead><tbody>'+
+       '<div class="tbl"><table><thead><tr><th>Línea de ahorro que publica Advisor</th><th>Suscripción</th><th style="width:1%">Tipo</th><th class="num">USD/año</th><th>Resolución de la revisión</th></tr></thead><tbody>'+
        /* D7: el veredicto por fila lo trae el modelo (l.contada), calculado por el MISMO paso que
           produce el total. Recalcularlo acá comparando cada línea contra la suma de su suscripción
           era lo que marcaba como descartadas tres reservas que el total sí sumaba completas. */
        ad.savLineas.map(function(l){
+         /* El tipo (reserva / savings plan) es lo que explica la columna de al lado: la resolucion
+            dice "excluyente con una opcion que rinde mas" y sin el tipo no se ve cuales son las dos
+            opciones que compiten sobre el mismo computo. */
          return '<tr'+(l.contada?'':' class="warn"')+'><td style="font-size:13.5px">'+esc(corta(l.rec,80))+'</td>'+
-          '<td style="font-size:13px">'+esc(corta(l.sub,26))+'</td><td class="num">'+fmt(l.monto,0)+'</td>'+
+          '<td style="font-size:13px">'+esc(corta(l.sub,26))+'</td>'+
+          '<td style="font-size:13px;white-space:nowrap">'+esc(l.tipo)+'</td><td class="num">'+fmt(l.monto,0)+'</td>'+
           '<td style="font-size:13px;color:#8b8b8b">'+(l.contada?'Se cuenta completa.':'Duplicada, o excluyente con una opción que rinde más sobre el mismo cómputo. No entra en el realizable.')+'</td></tr>';
        }).join('')+
-       '<tr class="tot"><td>Total publicado por Advisor</td><td></td><td class="num">'+fmt(ad.bruto,0)+'</td><td>Realizable tras la revisión: '+fmt(ad.real,0)+'</td></tr>'+
+       '<tr class="tot"><td>Total publicado por Advisor</td><td></td><td></td><td class="num">'+fmt(ad.bruto,0)+'</td><td>Realizable tras la revisión: '+fmt(ad.real,0)+'</td></tr>'+
        '</tbody></table></div>'+
        '<div class="bad-box"><b>Advisor publica '+fmt(ad.bruto,0)+' al año de ahorro potencial. La cifra realizable es '+fmt(ad.real,0)+'.</b> '+
        'La diferencia de '+fmt(ad.descarte,0)+' no es un error del cliente ni del portal: Advisor emite la misma recomendación de compromiso en varios ámbitos, y además propone reserva y savings plan sobre el mismo cómputo cuando solo puede comprarse uno. Llevar la cifra bruta a un comité de inversión habría comprometido capital contra un ahorro que no existe.</div>'+
@@ -1149,12 +1177,12 @@ function render(){
     $('#body-proactiva').innerHTML=
       '<div class="grid2">'+
         '<div class="panel"><h3>Frentes de trabajo del período</h3><div id="c-pro"></div>'+
-        '<div class="note">'+pro+' de los '+t.nFrentes+' frentes fueron proactivos: <b>'+pctPro.toFixed(1)+'%</b>. Medido en volumen de casos la proporción es del <b>'+pct(t.n-t.casosR,t.n).toFixed(1)+'%</b>, porque los frentes reactivos suman '+num(t.casosR)+' casos.</div></div>'+
+        '<div class="note">'+pro+' de los '+t.nFrentes+' frentes fueron proactivos: <b>'+pctPro.toFixed(1)+'%</b>. Medido en volumen de casos la proporción es del <b>'+pct(casosProactivos(t),t.n).toFixed(1)+'%</b>, porque los frentes reactivos suman '+num(t.casosR)+' casos'+(t.casosSinSubcategoria?' y '+num(t.casosSinSubcategoria)+' casos no traen subcategoría, así que no se cuentan como proactivos por omisión':'')+'.</div></div>'+
         '<div class="panel"><h3>Los frentes de mayor volumen</h3><div id="c-frentes"></div>'+
         '<div class="note">Regla de clasificación: un frente es reactivo si su subcategoría menciona fallo, error, caída, indisponibilidad, degradación, interrupción o lentitud. El resto responde a mantenimiento, gobierno o mejora planificada.</div></div>'+
       '</div>'+crit;
     barras($('#c-pro'),[
-      {k:'Frentes proactivos',v:pro,lbl:pro+' frentes ('+pctPro.toFixed(1)+'%)',c:GREEN,tip:pro+' de '+t.nFrentes+' frentes · '+num(t.n-t.casosR)+' casos'},
+      {k:'Frentes proactivos',v:pro,lbl:pro+' frentes ('+pctPro.toFixed(1)+'%)',c:GREEN,tip:pro+' de '+t.nFrentes+' frentes · '+num(casosProactivos(t))+' casos'},
       {k:'Frentes reactivos',v:t.nFrentesR||0.0001,lbl:t.nFrentesR+' frentes ('+pct(t.nFrentesR,t.nFrentes).toFixed(1)+'%)',c:AMBER,tip:t.nFrentesR+' de '+t.nFrentes+' frentes · '+num(t.casosR)+' casos'}
     ],{W:560,rowH:56,padL:150,padR:180,fs:13});
     barras($('#c-frentes'),t.frentes.slice(0,13).map(function(fr,i){
@@ -1172,9 +1200,16 @@ function render(){
       tarjetas([
         [num(rb.n),'','','Asignaciones RBAC directas',num(rb.nu)+' de usuarios y '+num(rb.ns)+' de service principals.'],
         [rb.ids,'identidades','','Identidades únicas',rb.idsU+' usuarios y '+rb.idsS+' service principals. Un promedio de '+(rb.n/rb.ids).toFixed(1)+' asignaciones por identidad.'],
-        [num(rb.priv),'',rb.priv?'rd':'','Asignaciones con privilegio elevado','Owner, Contributor y User Access Administrator sumados: el '+pct(rb.priv,rb.n).toFixed(1)+'% de las asignaciones.'],
-        [num(rb.sinLogin),'/ '+num(rb.nu),rb.sinLogin?'am':'','Asignaciones sin actividad de sesión','El '+pct(rb.sinLogin,rb.nu).toFixed(1)+'% de los accesos humanos no muestra inicio de sesión registrado.'],
-        [num(rb.sinNombre),'/ '+num(rb.n),rb.sinNombre?'am':'','Identidades sin nombre resuelto',rb.sinNombre?'No resolvieron nombre en Microsoft Entra. La cuenta de auditoría no tiene permisos suficientes de Microsoft Graph.':'Todas las identidades resolvieron nombre correctamente.'],
+        [num(rb.priv),'',rb.priv?'rd':'','Asignaciones con privilegio elevado','Owner ('+num(rb.owner)+'), Contributor ('+num(rb.contrib)+') y User Access Administrator ('+num(rb.uaa)+') sumados: el '+pct(rb.priv,rb.n).toFixed(1)+'% de las asignaciones.'],
+        eje(rb.sinLogin,rb.ultimoLoginMedido,'/ '+num(rb.nu),'Asignaciones sin actividad de sesión',
+          'El '+pct(rb.sinLogin,rb.nu).toFixed(1)+'% de los accesos humanos no muestra inicio de sesión registrado.',
+          'El último inicio de sesión no se pudo leer para este cliente (requiere licencia Microsoft Entra ID P1). Un cero acá afirmaría que todas las identidades inician sesión, y eso no se midió.'),
+        eje(rb.sinNombre,rb.estadoCuentaMedido,'/ '+num(rb.n),'Identidades sin nombre resuelto',
+          rb.sinNombre?'No resolvieron nombre en Microsoft Entra. La cuenta de auditoría no tiene permisos suficientes de Microsoft Graph.':'Todas las identidades resolvieron nombre correctamente.',
+          'El nombre en Microsoft Entra no se pudo leer para este cliente. Un cero acá afirmaría que todas las identidades resolvieron nombre, y eso no se midió.'),
+        eje(rb.disab,rb.estadoCuentaMedido,'/ '+num(rb.n),'Cuentas deshabilitadas con asignación vigente',
+          rb.disab?'Cuentas deshabilitadas en Microsoft Entra que conservan permisos sobre Azure.':'Ninguna cuenta deshabilitada conserva asignaciones.',
+          'El estado de cuenta no se pudo leer desde Microsoft Graph. Un cero acá afirmaría que no hay cuentas deshabilitadas con permisos, y eso no se midió.'),
         [rb.find.length,'hallazgos','','Hallazgos abiertos',rb.crit+' críticos y '+(rb.find.length-rb.crit)+' de severidad alta o media. Todos con acción definida.']
       ])+
       '<div class="grid2" style="margin-top:16px">'+
@@ -1188,6 +1223,13 @@ function render(){
         '<div id="c-rol"></div>'+
         '<div class="note">'+num(sum(rb.roles.filter(function(r){return r[2];}).map(function(r){return r[1];})))+' de las '+num(rb.nu)+' asignaciones de usuario conceden capacidad de cambio o de otorgamiento.</div></div>'+
       '</div>'+
+      /* La automatizacion es la otra mitad de la superficie de acceso y hasta aca no se publicaba:
+         el panel de roles solo mostraba los de usuario. Un service principal con Contributor
+         permanente es el mismo riesgo que una persona con Contributor permanente. */
+      (rb.rolesSp.length?'<div class="panel" style="margin-top:16px"><h3>Distribución por rol de service principal</h3>'+
+        '<div class="leg"><span><i style="background:'+RED+'"></i>Rol con capacidad de cambio o de reasignar permisos</span><span><i style="background:'+GREEN+'"></i>Rol de lectura o alcance acotado</span></div>'+
+        '<div id="c-rol-sp"></div>'+
+        '<div class="note">'+num(sum(rb.rolesSp.filter(function(r){return r[2];}).map(function(r){return r[1];})))+' de las '+num(rb.ns)+' asignaciones de service principal conceden capacidad de cambio o de otorgamiento.</div></div>':'')+
       '<div class="panel" style="margin-top:16px"><h3>Hallazgos y estado de remediación</h3>'+
         '<div class="tbl"><table><thead><tr><th style="width:1%">Sev.</th><th>Hallazgo</th><th class="num">Alcance</th><th>Remediación</th><th style="width:1%">Estado</th></tr></thead><tbody>'+
         rb.find.map(function(h){
@@ -1206,6 +1248,10 @@ function render(){
       return {k:corta(r[0],24),v:r[1],lbl:r[1]+'  ('+pct(r[1],rb.nu).toFixed(1)+'%)',c:r[2]?RED:GREEN,
         tip:esc(r[0])+'<br>'+r[1]+' asignaciones · '+pct(r[1],rb.nu).toFixed(1)+'% de los accesos humanos'};
     }),{W:560,rowH:32,padL:200,padR:140,fs:11.5});
+    if(rb.rolesSp.length) barras($('#c-rol-sp'),rb.rolesSp.slice(0,10).map(function(r){
+      return {k:corta(r[0],24),v:r[1],lbl:r[1]+'  ('+pct(r[1],rb.ns).toFixed(1)+'%)',c:r[2]?RED:GREEN,
+        tip:esc(r[0])+'<br>'+r[1]+' asignaciones · '+pct(r[1],rb.ns).toFixed(1)+'% de la automatización'};
+    }),{W:560,rowH:32,padL:200,padR:140,fs:11.5});
   }
 
   /* ---- advisor ---- */
@@ -1216,15 +1262,31 @@ function render(){
     $('#body-advisor').innerHTML=
       tarjetas([
         [num(ad.n),'','','Recomendaciones activas','Sobre '+ad.tipos_rec+' tipos distintos de recomendación, contadas una por cada recurso afectado.'],
-        [num(ad.high),'','rd','De impacto alto','El '+pct(ad.high,ad.n).toFixed(1)+'% del backlog. '+esc(catAlta.n)+' concentra '+num(catAlta.h)+' de ellas, el '+pct(catAlta.h,ad.high).toFixed(1)+'% de todo lo urgente.'],
-        [num(ad.nRes),'recursos','','Recursos evaluados','Cada recurso acumula '+(ad.n/ad.nRes).toFixed(1)+' recomendaciones en promedio.'],
+        [num(ad.high),'','rd','De impacto alto','El '+pct(ad.high,ad.n).toFixed(1)+'% del backlog, contra '+num(ad.medium)+' de impacto medio y '+num(ad.low)+' de impacto bajo. '+esc(catAlta.n)+' concentra '+num(catAlta.h)+' de las altas, el '+pct(catAlta.h,ad.high).toFixed(1)+'% de todo lo urgente.'],
+        /* D11: el promedio se calcula sobre las recomendaciones QUE TRAEN RECURSO, no sobre todas.
+           Con ad.n en el numerador, las filas de alcance de suscripcion -que no tienen recurso-
+           inflan el promedio por recurso: 6/2 en vez de 5/2. El modelo publica el numerador
+           correcto en recomendacionesConRecurso justamente para que el dibujo no lo elija mal. */
+        [num(ad.nRes),'recursos','','Recursos evaluados',ad.nRes
+          ?'Cada recurso acumula '+(ad.recomendacionesConRecurso/ad.nRes).toFixed(1)+' recomendaciones en promedio, sobre las '+num(ad.recomendacionesConRecurso)+' que traen recurso identificado.'
+          :'Ninguna recomendación trae recurso identificado: todas son de alcance de suscripción.'],
         ad.real==null?[NOPUB,'','na','Ahorro realizable identificado','La revisión depuró '+num(ad.savLineas.length)+' líneas de ahorro publicadas por Advisor. Las cifras no se publican en esta versión del informe.']
         :(ad.real>0?[fmt(ad.real,0),'/año','','Ahorro realizable identificado','Cifra depurada. Advisor publica '+fmt(ad.bruto,0)+', pero '+fmt(ad.descarte,0)+' corresponden a doble conteo y a opciones mutuamente excluyentes.']
-                   :['—','','gy','Ahorro identificado','Advisor no reporta recomendaciones con ahorro potencial cuantificado sobre este parque.']),
+                   /* nSav es el conteo de recomendaciones con ahorro cuantificado. Con nSav en cero,
+                      el realizable vale cero por falta de DATO y no por falta de ahorro, y decirlo
+                      con un cero seco afirma lo segundo. */
+                   :['Sin medir','','na','Ahorro identificado','Ninguna de las '+num(ad.n)+' recomendaciones trae el ahorro anual cuantificado ('+num(ad.nSav)+' con cifra): Azure no siempre lo devuelve. No es un ahorro de cero, es una cifra que no se pudo medir.']),
         ad.rets.length?[ad.rets.length,'retiros',ad.vencidos?'rd':'am','Retiros de Azure sobre el parque','Características que Azure deja de soportar.'+(ad.vencidos?' '+ad.vencidos+' con fecha ya vencida.':'')+(ad.proximos?' '+ad.proximos+' vence en menos de tres meses.':'')]
                       :['0','retiros','','Retiros de Azure sobre el parque','El export no reporta características en proceso de retiro sobre este parque.'],
         [pct(ad.topSum,ad.n).toFixed(1),'%','','Concentración del backlog','Las quince recomendaciones más repetidas suman '+num(ad.topSum)+' de las '+num(ad.n)+'. Son quince decisiones de estándar, no '+num(ad.topSum)+' tareas sueltas.']
       ])+
+      /* Un pilar de Seguridad ausente se ve EXACTAMENTE igual cuando el cliente no tiene hallazgos y
+         cuando los gestiona por fuera y la consulta ya los excluyo. Sin esta nota, el informe
+         publicaba un conteo de recomendaciones al que le falta un pilar entero y no lo decia. */
+      (ad.seguridadGestionadaExternamente
+        ?'<div class="ok-box"><b>El pilar de Seguridad se gestiona por fuera de este informe.</b> '+
+          esc(ad.seguridadGestionadaNota||'Este cliente gestiona su seguridad con un servicio aparte.')+
+          ' Sus recomendaciones quedaron excluidas a propósito: el conteo de esta sección no las incluye, así que no se lea como que no hay nada abierto en ese pilar.</div>':'')+
       '<div class="panel" style="margin-top:16px"><h3>Peso de cada pilar y severidad de lo que queda abierto</h3>'+
         '<div class="leg"><span><i style="background:'+RED+'"></i>Impacto alto</span><span><i style="background:'+AMBER+'"></i>Impacto medio</span><span><i style="background:'+PALE+'"></i>Impacto bajo</span></div>'+
         '<div id="c-adv-cat"></div>'+
@@ -1249,7 +1311,11 @@ function render(){
       '<div class="panel" style="margin-top:16px"><h3>Retiros de Azure anunciados sobre el parque</h3>'+
         '<div class="tbl"><table><thead><tr><th>Característica que Azure retira</th><th>Fecha de retiro</th><th class="num">Recursos</th><th>Situación</th></tr></thead><tbody>'+
         ad.rets.map(function(r){
-          var v=/VENCIDO/.test(r.est),c=/tres meses/.test(r.est);
+          /* El veredicto lo trae el modelo (r.vencido / r.proximoATresMeses), calculado contra la
+             fecha de corte del informe. Antes se recuperaba con una expresion regular sobre r.est,
+             la oracion en espanol que el propio calculo habia generado: un roundtrip
+             texto->booleano que se rompe en silencio en cuanto alguien reescribe la frase. */
+          var v=r.vencido,c=r.proximoATresMeses;
           return '<tr'+(v?' class="bad"':(c?' class="warn"':''))+'><td>'+esc(r.f)+'</td>'+
            '<td'+(v?' style="color:'+RED+';font-weight:900"':'')+'>'+esc(r.d||'sin fecha')+'</td>'+
            '<td class="num"><b>'+num(r.c)+'</b></td><td style="font-size:13.5px;color:#8b8b8b">'+esc(r.est)+'</td></tr>';
@@ -1286,7 +1352,7 @@ function render(){
   else {
     var creció = f.prom.length>1 && f.prom[f.prom.length-1][2]>f.prom[0][2];
     $('#h2-eficiencia').textContent = creció ? 'El gasto creció por adopción, no por descontrol' : 'El gobierno del gasto dio resultado';
-    $('#sub-eficiencia').textContent='Consumo total gobernado de '+fmt(f.total)+' en el período, revisado línea por línea sobre '+num(f.filas)+' registros de facturación.';
+    $('#sub-eficiencia').textContent='Consumo total gobernado de '+fmt(f.total)+' en el período, revisado línea por línea sobre '+registros(f)+'.';
     var ef=[];
     ef.push([fmt(f.total),'','','Gasto gobernado del período',f.parciales.length?f.parciales.map(ymAb).join(' y ')+' son meses parciales en el insumo.':'Todos los meses del insumo tienen el ciclo cerrado.']);
     if(f.prom.length>1){
@@ -1303,7 +1369,7 @@ function render(){
     }
     if(f.ahorro){
       var gastoUlt=gastoUltCompleto(f);
-      ef.push([fmt(f.ahorro.dif),'/mes','','Ahorro activo y sostenido','Racionalización de '+f.ahorro.cat+': de '+fmt(f.ahorro.pico)+' en '+ymAb(f.ahorro.picoMes)+' a '+fmt(f.ahorro.fin)+' de promedio. '+anualizado(f.ahorro)+'.']);
+      ef.push([fmt(f.ahorro.dif),'/mes','','Ahorro activo y sostenido','Racionalización de '+f.ahorro.cat+': de '+fmt(f.ahorro.pico)+' en '+ymAb(f.ahorro.picoMes)+' a '+fmt(f.ahorro.fin)+' de promedio hasta '+ymAb(f.ahorro.finMes)+'. '+anualizado(f.ahorro)+'.']);
       ef.push([pctTxt(f.ahorro.dif,gastoUlt,2),'','','Ahorro como porcentaje del gasto','Sobre el gasto de '+ymAb(f.ultCompleto)+', que fue de '+fmt(gastoUlt)+'. Es la referencia correcta porque es el último mes completo del insumo.']);
     }
     /* D4: la plantilla publicaba dos cifras de "carga retirada" en tarjetas contiguas, con el
@@ -1317,9 +1383,14 @@ function render(){
         '<div class="leg"><span><i style="background:'+GREEN+'"></i>Mes cerrado</span><span><i style="background:'+AMBER+'"></i>Mes parcial en el insumo</span></div>'+
         '<div id="c-gasto"></div>'+
         '<div class="note">'+(f.prom.length>1&&f.prom[0][2]!=null?'El promedio mensual pasa de <b>'+fmt(f.prom[0][2])+'</b> en '+f.prom[0][0]+' a <b>'+fmt(f.prom[f.prom.length-1][2])+'</b> en '+f.prom[f.prom.length-1][0]+'. ':'')+
-        (f.parciales.length?'Los meses marcados no tienen el ciclo cerrado y no deben leerse como caída del consumo.':'')+'</div></div>'+
+        (f.parciales.length?'Los meses marcados no tienen el ciclo cerrado y no deben leerse como caída del consumo. ':'')+
+        /* Quien decidio que un mes es parcial importa: la heuristica del sistema o el consultor. Y un
+           mes declarado parcial que no existe en el insumo se ignoraba en silencio, que es justo el
+           silencio que este modulo viene a eliminar. */
+        (f.autoParciales.length?'El sistema detectó '+f.autoParciales.map(ymAb).join(' y ')+' como parcial'+(f.autoParciales.length>1?'es':'')+' por su caída de facturación; el resto lo declaró el consultor. ':'')+
+        (f.parcialesInexistentes.length?'Se declararon como parciales '+f.parcialesInexistentes.map(ymAb).join(' y ')+', que no existen en el insumo de este período: no se aplicó nada para '+(f.parcialesInexistentes.length>1?'ellos':'él')+'.':'')+'</div></div>'+
       (f.ahorro?'<div class="panel" style="margin-top:16px"><h3>Ahorro activo: la línea de '+esc(f.ahorro.cat)+'</h3><div id="c-ahorro"></div>'+
-        '<div class="note">'+esc(f.ahorro.cat)+' facturaba <b>'+fmt(f.ahorro.pico)+'</b> en '+ymAb(f.ahorro.picoMes)+'. Tras la racionalización baja a <b>'+fmt(f.ahorro.fin)+'</b> de promedio y se mantiene. La tasa de ahorro es de <b>'+fmt(f.ahorro.dif)+' mensuales</b>. '+anualizado(f.ahorro)+'.</div></div>':'')+
+        '<div class="note">'+esc(f.ahorro.cat)+' facturaba <b>'+fmt(f.ahorro.pico)+'</b> en '+ymAb(f.ahorro.picoMes)+'. Tras la racionalización baja a <b>'+fmt(f.ahorro.fin)+'</b> de promedio hasta '+ymAb(f.ahorro.finMes)+' y se mantiene. La tasa de ahorro es de <b>'+fmt(f.ahorro.dif)+' mensuales</b>. '+anualizado(f.ahorro)+'.</div></div>':'')+
       '<div class="panel" style="margin-top:16px"><h3>Altas y bajas de recursos</h3>'+
         '<div class="leg"><span><i style="background:'+GREEN+'"></i>Altas</span><span><i style="background:'+RED+'"></i>Bajas</span></div>'+
         '<div id="c-ab"></div>'+
@@ -1383,12 +1454,15 @@ function render(){
     ])+
     '<div class="panel" style="margin-top:16px"><h3>Avance por ámbito</h3><div id="c-amb-mz"></div></div>'+
     '<div class="panel" style="margin-top:16px"><h3>Matriz priorizada</h3>'+
-      '<div class="tbl scroll"><table><thead><tr><th>Ámbito</th><th>Hallazgo</th><th class="num">Impacto</th><th class="num">Esfuerzo</th><th class="num">Avance</th></tr></thead><tbody>'+
+      /* Impacto y prioridad son dos columnas distintas de la matriz y hasta aca se publicaba una
+         sola: el cliente veia "impacto 1" sin saber en que prioridad quedo ese hallazgo. */
+      '<div class="tbl scroll"><table><thead><tr><th>Ámbito</th><th>Hallazgo</th><th class="num">Impacto</th><th class="num">Prioridad</th><th class="num">Esfuerzo</th><th class="num">Avance</th></tr></thead><tbody>'+
       mz.items.slice().sort(function(a,b){return (a.v-b.v)||(a.i-b.i);}).map(function(x){
         return '<tr'+(x.v<=0&&x.i===1?' class="bad"':(x.v<=0?' class="warn"':''))+'>'+
          '<td style="font-size:13px">'+esc(corta(x.a,28))+'</td><td style="font-size:13.5px">'+esc(corta(x.t,150))+
          (x.f?'<br><span style="color:#8b8b8b;font-size:12.5px">detectado '+esc(x.f)+'</span>':'')+'</td>'+
          '<td class="num"'+(x.i===1?' style="color:'+RED+';font-weight:900"':'')+'>'+(x.i||'—')+'</td>'+
+         '<td class="num">'+esc(x.p||'—')+'</td>'+
          '<td class="num">'+(x.e||'—')+'</td>'+
          '<td class="num"><b style="color:'+(x.v>=100?GREEND:(x.v>0?AMBER:'#8b8b8b'))+'">'+x.v+'%</b></td></tr>';
       }).join('')+'</tbody></table></div>'+
@@ -1402,7 +1476,10 @@ function render(){
   if(rb&&rb.owner) PS.push(['Reducir las asignaciones Owner a activación temporal aprobada',rb.owner+' asignaciones con control total permanente sobre el tenant.','Nada. Ejecutable ya.']);
   if(ad&&ad.vencidos) PS.push(['Remediar los retiros de Azure con fecha vencida',ad.vencidos+' característica'+(ad.vencidos>1?'s':'')+' sin soporte del fabricante y con recursos todavía afectados. La fecha la impuso Azure.','Ventana de cambio']);
   if(ad&&ad.proximos) PS.push(['Cerrar los retiros con menos de tres meses de margen',ad.proximos+' retiro'+(ad.proximos>1?'s':'')+' vence'+(ad.proximos>1?'n':'')+' en menos de un trimestre. Después no hay plan B.','Ventana de cambio']);
-  if(rb&&rb.sinNombre) PS.push(['Devolver visibilidad a la auditoría de identidad','Sin permisos de Microsoft Graph, cada revisión futura seguirá entregando identificadores en lugar de nombres y correos.','Permiso de Graph']);
+  /* El eje sin medir es el caso MAS fuerte para este paso, no el mas debil: con estadoCuentaMedido
+     en false no se pudo leer ni un nombre, y antes ese caso no proponia nada porque sinNombre venia
+     null y la guarda lo leia como cero. */
+  if(rb&&(rb.sinNombre||!rb.estadoCuentaMedido)) PS.push(['Devolver visibilidad a la auditoría de identidad','Sin permisos de Microsoft Graph, cada revisión futura seguirá entregando identificadores en lugar de nombres y correos.','Permiso de Graph']);
   if(ad&&ad.real==null) PS.push(['Decidir el compromiso de cómputo','La revisión ya depuró el ahorro publicado por Advisor de duplicados y de opciones excluyentes. La cifra realizable se entrega por la vía interna, no en este documento.','Decisión del cliente']);
   else if(ad&&ad.real>0) PS.push(['Decidir el compromiso de cómputo',fmt(ad.real,0)+' anuales realizables, ya depurados de duplicados y de opciones excluyentes.','Decisión del cliente']);
   if(ad) PS.push(['Atacar el pilar de mayor impacto por bloques de estándar',
@@ -1422,7 +1499,7 @@ function render(){
   if(t) TR.push(['Operación y gestión proactiva','Export de la mesa de servicio',num(t.n)+' casos entre '+t.desde+' y '+t.hasta+'.']);
   if(rb) TR.push(['Seguridad bajo gobierno','Reporte de RBAC',num(rb.n)+' asignaciones sobre '+rb.ids+' identidades y '+rb.subs.length+' suscripciones.']);
   if(ad) TR.push(['Postura Well-Architected','Export de Azure Advisor',num(ad.n)+' recomendaciones sobre '+num(ad.nRes)+' recursos. Corte único: no incluye la puntuación por pilar.']);
-  if(f) TR.push(['Eficiencia financiera','Bitcost: facturación e inventario',num(f.filas)+' registros entre '+ymAb(f.meses[0][0])+' y '+ymAb(f.meses[f.meses.length-1][0])+(f.parciales.length?'. Meses parciales: '+f.parciales.map(ymAb).join(', ')+'.':'.')]);
+  if(f) TR.push(['Eficiencia financiera','Bitcost: facturación e inventario',registros(f)+', entre '+ymAb(f.meses[0][0])+' y '+ymAb(f.meses[f.meses.length-1][0])+(f.parciales.length?'. Meses parciales: '+f.parciales.map(ymAb).join(', ')+'.':'.')]);
   if(mz) TR.push(['Roadmap','Matriz de optimización y mejoras',mz.n+' hallazgos en '+mz.amb.length+' ámbitos.']);
   if(TR.length) RM+='<div class="panel" style="margin-top:16px"><h3>Trazabilidad de las cifras</h3>'+
     '<div class="tbl"><table><thead><tr><th>Sección</th><th>Insumo</th><th>Alcance y corte</th></tr></thead><tbody>'+
@@ -1430,9 +1507,14 @@ function render(){
      '<td style="font-size:13.5px;color:#8b8b8b">'+esc(r[2])+'</td></tr>';}).join('')+'</tbody></table></div></div>';
   $('#sub-roadmap').textContent='El roadmap no es una lista de pendientes. Es la matriz priorizada por impacto, construida sobre los hallazgos verificados de este período.';
   $('#body-roadmap').innerHTML=RM;
+  /* El largo de la barra tiene que medir lo que dice su rotulo. Media a.rec (recomendaciones de
+     Advisor asociadas al ambito) mientras el rotulo decia "N hallazgos": dos cifras distintas en el
+     mismo dibujo, el rotulo de una describiendo la otra, que es el defecto de D4 en forma de
+     grafico. Ahora la barra mide hallazgos y las recomendaciones asociadas van al tooltip. */
   if(mz) barras($('#c-amb-mz'),mz.amb.map(function(a,i){
-    return {k:corta(a.n,30),v:a.rec,lbl:a.c+' hallazgos · '+a.av+'% de avance',
-      c:a.av>=100?GREEN:(a.av>0?GREEND:PALE),tip:esc(a.n)+'<br>'+a.c+' hallazgos · avance promedio '+a.av+'%'};
+    return {k:corta(a.n,30),v:a.c,lbl:a.c+' hallazgos · '+a.av+'% de avance',
+      c:a.av>=100?GREEN:(a.av>0?GREEND:PALE),
+      tip:esc(a.n)+'<br>'+a.c+' hallazgos · avance promedio '+a.av+'%<br>'+a.rec+' recomendaciones de Advisor asociadas'};
   }),{rowH:40,padL:290,padR:230,fs:12.5});
 
   animarTodo();
