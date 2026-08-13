@@ -64,6 +64,26 @@ public static class InformeValorSchema
         END
         """,
         """
+        IF OBJECT_ID('dbo.informe_valor_evolucion', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.informe_valor_evolucion (
+                row_id BIGINT IDENTITY(1,1) PRIMARY KEY,
+                client_id INT NOT NULL CONSTRAINT FK_iv_evo_client REFERENCES dbo.clients(client_id),
+                ingesta_id INT NOT NULL,
+                natural_key_hash CHAR(64) NOT NULL,
+                category NVARCHAR(200) NULL,
+                subcategory NVARCHAR(200) NULL,
+                resource_name NVARCHAR(512) NOT NULL,
+                is_reservation BIT NOT NULL CONSTRAINT DF_iv_evo_res DEFAULT 0,
+                pvp DECIMAL(28,10) NOT NULL,
+                period_year SMALLINT NOT NULL,
+                period_month TINYINT NOT NULL
+            );
+            CREATE UNIQUE INDEX UX_iv_evo_key ON dbo.informe_valor_evolucion (client_id, natural_key_hash);
+            CREATE INDEX IX_iv_evo_periodo ON dbo.informe_valor_evolucion (client_id, period_year, period_month);
+        END
+        """,
+        """
         IF OBJECT_ID('dbo.informe_valor_caso', 'U') IS NULL
         BEGIN
             CREATE TABLE dbo.informe_valor_caso (

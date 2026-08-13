@@ -10,6 +10,7 @@ public sealed class InformeValorSchemaTests
     [InlineData("dbo.informe_valor_caso")]
     [InlineData("dbo.informe_valor_rbac")]
     [InlineData("dbo.informe_valor_entrega")]
+    [InlineData("dbo.informe_valor_evolucion")]
     public void Cada_tabla_se_crea_con_guarda_de_existencia(string tabla)
     {
         var crea = InformeValorSchema.Statements
