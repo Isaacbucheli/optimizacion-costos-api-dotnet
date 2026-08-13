@@ -1,6 +1,8 @@
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -123,6 +125,57 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
         Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
     }
 
+    // ---- kind=evolucion (Tarea 4 de la entrega 5): mismo despacho que facturación, con parser y
+    // replace propios. Layout del pivot copiado de EvolucionParserTests (FilaAnios/FilaMeses/
+    // FilaCabecera + una fila de datos con dos meses con valor). ----
+
+    private static readonly string[] EvolucionFilaAnios =
+        ["Jerarquía de Fechas - Año", "", "", "2025", "2025", "2025", "2026", "2026", "2026", "Total"];
+    private static readonly string[] EvolucionFilaMeses =
+        ["Jerarquía de Fechas - Mes", "", "", " Noviembre", " Diciembre", "Total", " Enero", " Febrero", "Total", ""];
+    private static readonly string[] EvolucionFilaCabecera =
+        ["Categoría", "Subcategoría", "Recurso", "PvP", "PvP", "PvP", "PvP", "PvP", "PvP", "PvP"];
+    private static readonly string[] EvolucionFilaDatos =
+        ["Storage", "Disks", "disco-1", "10.5", "", "99", "20.25", "", "99", "99"];
+
+    private static byte[] ArchivoEvolucionValido()
+    {
+        using var ms = XlsxRowReaderTests.BuildXlsx(
+            [EvolucionFilaAnios, EvolucionFilaMeses, EvolucionFilaCabecera, EvolucionFilaDatos]);
+        return ms.ToArray();
+    }
+
+    /// <summary>El kind nuevo entra por la misma puerta: parser propio, replace propio.</summary>
+    [Fact]
+    public async Task Subir_evolucion_persiste_las_filas_del_pivot()
+    {
+        _factory.Access.Allow(clientId: 7);
+        var client = ClientFor("evo1@bit.ec", Roles.Consultor, canEdit: true);
+
+        using var body = Multipart("evolucion.xlsx", ArchivoEvolucionValido());
+        var res = await client.PostAsync("/informe-valor/clients/7/insumos/evolucion", body);
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var json = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.True(json.GetProperty("rows_processed").GetInt32() > 0);
+        Assert.NotEmpty(_factory.Store.EvolucionGuardada);
+    }
+
+    /// <summary>La tarjeta del front se dibuja desde acá: obligatoria y con su estado.</summary>
+    [Fact]
+    public async Task El_estado_lista_evolucion_como_obligatoria()
+    {
+        _factory.Access.Allow(clientId: 7);
+        var client = ClientFor("evo2@bit.ec", Roles.Consultor, canEdit: false);
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/informe-valor/clients/7/estado");
+
+        var evolucion = Assert.Single(
+            body.GetProperty("insumos").EnumerateArray(),
+            i => i.GetProperty("kind").GetString() == "evolucion");
+        Assert.True(evolucion.GetProperty("obligatorio").GetBoolean());
+    }
+
     private static MultipartFormDataContent Multipart(string fileName, byte[] bytes)
     {
         var content = new MultipartFormDataContent();
@@ -210,6 +263,11 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
     /// guard de acceso, el tope de tamaño, el content-type o la extensión, antes de tocar el store).</summary>
     public sealed class FakeInformeValorStore : IInformeValorStore
     {
+        /// <summary>Lo que llegó a ReplaceEvolucionAsync: la comprobación de
+        /// Subir_evolucion_persiste_las_filas_del_pivot de que el kind nuevo llegó hasta el store,
+        /// no solo que el parser corrió.</summary>
+        public List<EvolucionRow> EvolucionGuardada { get; } = [];
+
         public Task<int> ReplaceFacturacionAsync(
             int clientId, string fileName, string? user, ParseResult<FacturacionRow> parsed, CancellationToken ct)
             => Task.FromResult(1);
@@ -224,7 +282,10 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
 
         public Task<int> ReplaceEvolucionAsync(
             int clientId, string fileName, string? user, ParseResult<EvolucionRow> parsed, CancellationToken ct)
-            => Task.FromResult(1);
+        {
+            EvolucionGuardada.AddRange(parsed.Rows);
+            return Task.FromResult(1);
+        }
 
         public Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct) => Task.CompletedTask;
 
@@ -257,8 +318,11 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
 
     }
 
-    /// <summary>Ensamblador falso que revienta si se lo llega a usar: ver el comentario de
-    /// ConfigureWebHost sobre por qué está acá aunque nada de esta clase lo necesite.</summary>
+    /// <summary>Ensamblador falso que revienta si se lo llega a usar, salvo
+    /// LeerEstadoRbacConOrigenAsync: El_estado_lista_evolucion_como_obligatoria pega a /estado, y
+    /// InformeValorController.Estado() llama a ese método para el bloque estado_rbac. El resto
+    /// sigue reventando -- ver el comentario de ConfigureWebHost sobre por qué está acá aunque
+    /// nada de esta clase lo necesite.</summary>
     public sealed class FakeInsumosBdRecolectorVacio : IInsumosBdRecolector
     {
         public Task<InsumosBd> LeerAsync(int clientId, CancellationToken ct = default)
@@ -268,7 +332,8 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
             => throw new NotSupportedException();
 
         public Task<(EstadoRbacResultado Estado, string? Origen)> LeerEstadoRbacConOrigenAsync(
-            int clientId, CancellationToken ct = default) => throw new NotSupportedException();
+            int clientId, CancellationToken ct = default) => Task.FromResult<(EstadoRbacResultado, string?)>(
+                (new EstadoRbacResultado(DisponibilidadRbac.NoDisponible, new EjesRbac(false, false), null, "prueba"), null));
 
         public Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
             int clientId, CancellationToken ct = default) => throw new NotSupportedException();

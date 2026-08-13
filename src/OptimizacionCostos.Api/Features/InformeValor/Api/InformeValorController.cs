@@ -66,7 +66,10 @@ public sealed class InformeValorController(
 
     private static readonly HashSet<string> Kinds =
         new(StringComparer.OrdinalIgnoreCase)
-        { SqlInformeValorStore.KindFacturacion, SqlInformeValorStore.KindCasos, SqlInformeValorStore.KindRbac };
+        {
+            SqlInformeValorStore.KindFacturacion, SqlInformeValorStore.KindEvolucion,
+            SqlInformeValorStore.KindCasos, SqlInformeValorStore.KindRbac,
+        };
 
     /// <summary>
     /// Qué insumos hay cargados y de cuándo, el estado de la condicional de RBAC con su motivo, y
@@ -96,6 +99,7 @@ public sealed class InformeValorController(
             insumos = new[]
             {
                 Describe(SqlInformeValorStore.KindFacturacion, true, porKind),
+                Describe(SqlInformeValorStore.KindEvolucion, true, porKind),
                 Describe(SqlInformeValorStore.KindCasos, true, porKind),
                 Describe(SqlInformeValorStore.KindRbac, false, porKind),
             },
@@ -745,6 +749,13 @@ public sealed class InformeValorController(
             {
                 var parsed = BitcostParser.Parse(ms);
                 var id = await store.ReplaceFacturacionAsync(clientId, name, user, parsed, ct);
+                return Ok(Resumen(id, parsed.RowsTotal, parsed.Rows.Count, parsed.RowsSkipped, parsed.RowsMerged, parsed.Warnings));
+            }
+
+            if (string.Equals(kind, SqlInformeValorStore.KindEvolucion, StringComparison.OrdinalIgnoreCase))
+            {
+                var parsed = EvolucionParser.Parse(ms);
+                var id = await store.ReplaceEvolucionAsync(clientId, name, user, parsed, ct);
                 return Ok(Resumen(id, parsed.RowsTotal, parsed.Rows.Count, parsed.RowsSkipped, parsed.RowsMerged, parsed.Warnings));
             }
 
