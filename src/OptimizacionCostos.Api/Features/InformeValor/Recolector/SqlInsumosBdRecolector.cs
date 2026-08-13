@@ -124,6 +124,9 @@ public sealed class SqlInsumosBdRecolector(
         // schema WAF ya asegurado arriba, mismo filtro de suscripciones administradas).
         var hallazgosResueltos = await HallazgoResueltoRecolector.LeerAsync(
             conn, clientId, administradas, seguridadGestionadaExternamente, ct);
+        // Tarea 6: misma conexión y mismo schema WAF ya asegurado arriba. No depende de
+        // suscripciones administradas (waf_tracking_history no tiene columna de suscripción).
+        var hitos = await CronologiaRecolector.LeerAsync(conn, clientId, seguridadGestionadaExternamente, ct);
 
         var run = await accessReviewStore.GetLatestFinishedRunAsync(clientId, ct);
         var snapshot = run is null ? null : await accessReviewStore.GetSnapshotAsync(run.RunId, ct);
@@ -143,7 +146,7 @@ public sealed class SqlInsumosBdRecolector(
             advisor, matriz, rbac, retiros, estadoBase with { Ejes = ejesRbac },
             seguridadGestionadaExternamente, seguridadGestionadaNota, DateTime.UtcNow,
             RbacOrigen: rbacOrigen, HallazgosResueltos: hallazgosResueltos,
-            CorridaBoletin: corridaBoletin, Opex: opex);
+            CorridaBoletin: corridaBoletin, Opex: opex, Hitos: hitos);
     }
 
     /// <summary>

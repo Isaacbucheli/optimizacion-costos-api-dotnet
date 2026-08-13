@@ -69,7 +69,13 @@ public sealed record InsumosBd(
     /// (<see cref="OpexRecolector"/>), la fuente de la tarjeta "Opex" del resumen (entrega 6/7).
     /// Default <c>null</c> por el mismo motivo que los parámetros de arriba: no romper los tests
     /// que construyen este record a mano.</summary>
-    OpexScore? Opex = null)
+    OpexScore? Opex = null,
+    /// <summary>Hitos de la bitácora del tracking de la matriz WAF (<see cref="CronologiaRecolector"/>),
+    /// la fuente cruda de la cronología del informe (entrega 6/7): la entrega que dibuja la línea de
+    /// tiempo decide qué campos de <see cref="HitoFila.Campo"/> se traducen a un hito legible y con
+    /// qué redacción, este recolector no filtra por campo. Default <c>null</c> por el mismo motivo
+    /// que los parámetros de arriba: no romper los tests que construyen este record a mano.</summary>
+    IReadOnlyList<HitoFila>? Hitos = null)
 {
     /// <summary><see cref="RbacOrigen"/> cuando <see cref="Rbac"/> salió de Revisión de accesos.</summary>
     public const string OrigenBase = "base";
