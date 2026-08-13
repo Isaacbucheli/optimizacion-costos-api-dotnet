@@ -64,7 +64,12 @@ public sealed record InsumosBd(
     /// significa a la vez "el Boletín nunca corrió" y "nadie preguntó", así que
     /// <c>PosturaCalculador</c> resuelve el empate por el otro lado — con retiros presentes, alguien
     /// los buscó, y eso ya alcanza para declararlo medido.</para></summary>
-    CorridaBoletin? CorridaBoletin = null)
+    CorridaBoletin? CorridaBoletin = null,
+    /// <summary>Score del pilar de costos de Advisor hoy más su serie mensual
+    /// (<see cref="OpexRecolector"/>), la fuente de la tarjeta "Opex" del resumen (entrega 6/7).
+    /// Default <c>null</c> por el mismo motivo que los parámetros de arriba: no romper los tests
+    /// que construyen este record a mano.</summary>
+    OpexScore? Opex = null)
 {
     /// <summary><see cref="RbacOrigen"/> cuando <see cref="Rbac"/> salió de Revisión de accesos.</summary>
     public const string OrigenBase = "base";

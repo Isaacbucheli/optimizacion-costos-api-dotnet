@@ -10,7 +10,9 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
 /// Implementación de <see cref="IInsumosBdRecolector"/>. Abre UNA sola conexión y la reusa para
 /// Advisor, Matriz y Retiros (los tres reciben una <see cref="SqlConnection"/> ya abierta y, a
 /// propósito, no aseguran su propio schema: ver el comentario de clase de cada uno). RBAC no la
-/// usa: pasa por <see cref="IAccessReviewStore"/>, que administra su propia conexión.
+/// usa: pasa por <see cref="IAccessReviewStore"/>, que administra su propia conexión. Opex
+/// (<see cref="OpexRecolector"/>) tampoco: pasa por <see cref="IAdvisorScoreStore"/>, mismo motivo,
+/// y se lee antes de abrir la conexión compartida para no mantenerla abierta de más.
 ///
 /// <para>La corrida de accesos se lee UNA sola vez (<c>GetLatestFinishedRunAsync</c> +
 /// <c>GetSnapshotAsync</c>) y el mismo snapshot alimenta dos cosas: <see cref="EstadoRbac.Resolver"/>
@@ -39,7 +41,8 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
 /// si la base alcanza por sí sola no hace falta ni preguntarle al store.</para>
 /// </summary>
 public sealed class SqlInsumosBdRecolector(
-    ISqlConnectionFactory factory, IAccessReviewStore accessReviewStore, IInformeValorStore informeValorStore)
+    ISqlConnectionFactory factory, IAccessReviewStore accessReviewStore, IInformeValorStore informeValorStore,
+    IAdvisorScoreStore advisorScoreStore)
     : IInsumosBdRecolector
 {
     /// <summary>
@@ -90,6 +93,12 @@ public sealed class SqlInsumosBdRecolector(
 
     public async Task<InsumosBd> LeerAsync(int clientId, CancellationToken ct = default)
     {
+        // Opex no toca la conexión compartida de abajo: IAdvisorScoreStore administra la suya
+        // propia (mismo patrón que accessReviewStore/informeValorStore). Se lee antes de abrir la
+        // conexión de Advisor/Matriz/Retiros para no mantenerla abierta de más mientras se hace
+        // este IO independiente.
+        var opex = await OpexRecolector.LeerAsync(advisorScoreStore, clientId, ct);
+
         await using var conn = await factory.OpenAsync(ct);
 
         // Advisor y Matriz dependen del schema WAF; Retiros, del de Boletín. Ninguno de los tres
@@ -134,7 +143,7 @@ public sealed class SqlInsumosBdRecolector(
             advisor, matriz, rbac, retiros, estadoBase with { Ejes = ejesRbac },
             seguridadGestionadaExternamente, seguridadGestionadaNota, DateTime.UtcNow,
             RbacOrigen: rbacOrigen, HallazgosResueltos: hallazgosResueltos,
-            CorridaBoletin: corridaBoletin);
+            CorridaBoletin: corridaBoletin, Opex: opex);
     }
 
     /// <summary>
