@@ -256,7 +256,7 @@ public sealed class SqlClientStore(ISqlConnectionFactory factory) : IClientStore
             "IF OBJECT_ID('dbo.optimization_scan','U') IS NOT NULL DELETE FROM dbo.optimization_scan WHERE client_id = @id;", clientId, ct);
 
         // -------- Informe de valor --------
-        // Los tres insumos antes de la bitácora, por la convención hijos→padres de este método
+        // Los cuatro insumos antes de la bitácora, por la convención hijos→padres de este método
         // (entre ellas no hay FK: ingesta_id no declara REFERENCES).
         await CountedDeleteAsync(conn, tx, counts, "informe_valor_facturacion",
             "IF OBJECT_ID('dbo.informe_valor_facturacion','U') IS NOT NULL DELETE FROM dbo.informe_valor_facturacion WHERE client_id = @id;", clientId, ct);

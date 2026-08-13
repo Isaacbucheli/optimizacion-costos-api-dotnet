@@ -16,6 +16,17 @@ public class CronologiaRecolectorTests
         Assert.DoesNotContain("pillar_number <>", sql);
     }
 
+    /// <summary>Los hitos siguen la misma vigencia que la matriz (<see cref="MatrizRecolector.Sql"/>):
+    /// una recomendación descartada o inactiva no aporta hitos a la cronología, aunque su bitácora
+    /// de tracking tenga filas.</summary>
+    [Fact]
+    public void El_sql_respeta_la_vigencia_de_la_recomendacion()
+    {
+        var sql = CronologiaRecolector.Sql(seguridadGestionadaExternamente: false);
+        Assert.Contains("r.is_active = 1", sql);
+        Assert.Contains("COALESCE(r.is_dismissed, 0) = 0", sql);
+    }
+
     /// <summary>Seguridad gestionada externamente oculta el pilar 3 en TODO el informe,
     /// la cronología incluida: un hito de una recomendación oculta delataría el hallazgo.</summary>
     [Fact]

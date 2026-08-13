@@ -6,7 +6,14 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
 /// <summary>Una entrada de la bitácora del tracking de la matriz, con el nombre de su
 /// recomendación. Es la fuente de la cronología del informe (decisión 2026-08-13: derivada,
 /// sin tabla nueva). Solo registra hitos de BIT: cuando el relato necesite la respuesta del
-/// cliente, la línea de tiempo lo declara — eso es redacción de la entrega 7.</summary>
+/// cliente, la línea de tiempo lo declara — eso es redacción de la entrega 7.
+///
+/// <para><b>Advertencia para la entrega 7 (presentación): <c>Campo</c> puede traer
+/// <c>internal_notes</c> o <c>execution_log</c>.</b> Esos dos campos son INTERNOS y no
+/// publicables en la variante cliente (texto libre que un consultor escribe para uso interno,
+/// no redactado para el cliente): la capa de presentación debe filtrar por lista blanca de
+/// <c>Campo</c> antes de dibujar, no mostrar cualquier hito que llegue de este recolector.</para>
+/// </summary>
 public sealed record HitoFila(
     DateTime Fecha,
     string Campo,
@@ -36,6 +43,11 @@ public sealed record HitoFila(
 /// no de este recolector. Mismo filtro de seguridad gestionada externamente que
 /// <see cref="HallazgoResueltoRecolector"/>/<see cref="MatrizRecolector"/>: un hito de una
 /// recomendación del pilar de Seguridad delataría el hallazgo que el cliente pidió no ver.</para>
+///
+/// <para>Los hitos siguen la misma vigencia que la matriz, por coherencia del informe: el mismo
+/// filtro <c>r.is_active = 1 AND COALESCE(r.is_dismissed, 0) = 0</c> de
+/// <see cref="MatrizRecolector.Sql"/> aplica acá. Sin él, una recomendación descartada o inactiva
+/// (invisible en la matriz del mismo informe) igual aportaría hitos a la cronología.</para>
 /// </summary>
 public static class CronologiaRecolector
 {
@@ -50,7 +62,9 @@ public static class CronologiaRecolector
             INNER JOIN dbo.waf_recommendation r
                 ON r.client_id = h.client_id AND r.canonical_id = h.canonical_id
             INNER JOIN dbo.waf_recommendation_canonical c ON c.canonical_id = h.canonical_id
-            WHERE h.client_id = @clientId{secFilter}
+            WHERE h.client_id = @clientId
+              AND r.is_active = 1
+              AND COALESCE(r.is_dismissed, 0) = 0{secFilter}
             ORDER BY h.changed_at
             """;
     }
