@@ -260,6 +260,8 @@ public sealed class SqlClientStore(ISqlConnectionFactory factory) : IClientStore
         // (entre ellas no hay FK: ingesta_id no declara REFERENCES).
         await CountedDeleteAsync(conn, tx, counts, "informe_valor_facturacion",
             "IF OBJECT_ID('dbo.informe_valor_facturacion','U') IS NOT NULL DELETE FROM dbo.informe_valor_facturacion WHERE client_id = @id;", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "informe_valor_evolucion",
+            "IF OBJECT_ID('dbo.informe_valor_evolucion','U') IS NOT NULL DELETE FROM dbo.informe_valor_evolucion WHERE client_id = @id;", clientId, ct);
         await CountedDeleteAsync(conn, tx, counts, "informe_valor_caso",
             "IF OBJECT_ID('dbo.informe_valor_caso','U') IS NOT NULL DELETE FROM dbo.informe_valor_caso WHERE client_id = @id;", clientId, ct);
         await CountedDeleteAsync(conn, tx, counts, "informe_valor_rbac",
