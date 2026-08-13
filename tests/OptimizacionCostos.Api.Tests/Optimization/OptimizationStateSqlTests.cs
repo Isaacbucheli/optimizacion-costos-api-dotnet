@@ -5,13 +5,19 @@ using OptimizacionCostos.Api.Features.Optimization;
 public class OptimizationStateSqlTests
 {
     /// <summary>Un consultor que marca 'resuelto' es autoría declarada; reabrir limpia la marca.
-    /// Sin esto, el registro del informe de valor no puede separar lo nuestro de lo del cliente.</summary>
+    /// Sin esto, el registro del informe de valor no puede separar lo nuestro de lo del cliente.
+    /// Las tres ramas del CASE están fijadas: (1) resuelto→'manual', (2) abierto/en_progreso→NULL, (3) else→preservar.</summary>
     [Fact]
     public void El_update_manual_estampa_la_autoria_y_reabrir_la_limpia()
     {
-        Assert.Contains("resolved_by_kind", OptimizationService.UpdateStateSql);
-        Assert.Contains("'manual'", OptimizationService.UpdateStateSql);
-        Assert.Contains("CASE", OptimizationService.UpdateStateSql);
+        // Rama 1: cuando se marca resuelto, la autoría es 'manual' (consultor)
+        Assert.Contains("WHEN @state = 'resuelto' THEN 'manual'", OptimizationService.UpdateStateSql);
+
+        // Rama 2: cuando se reabre (abierto o en_progreso), la autoría se limpia (NULL)
+        Assert.Contains("WHEN @state IN ('abierto', 'en_progreso') THEN NULL", OptimizationService.UpdateStateSql);
+
+        // Rama 3: en cualquier otro estado, se preserva la autoría existente
+        Assert.Contains("ELSE resolved_by_kind END", OptimizationService.UpdateStateSql);
     }
 
     /// <summary>El auto-resuelto del reconcile queda marcado como tal, nunca como declarado.</summary>
