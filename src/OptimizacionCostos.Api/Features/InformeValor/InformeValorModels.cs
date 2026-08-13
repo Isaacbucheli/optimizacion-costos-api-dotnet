@@ -6,6 +6,20 @@ public sealed record FacturacionRow(
     string? Subcategory, string? Service, decimal? Quantity, string? Unit, decimal? Rate,
     decimal Pvp, short Year, byte Month);
 
+/// <summary>Una celda del pivot de evolución de BITCOST, ya expandida a grano
+/// (categoría, subcategoría, recurso, año, mes). <see cref="IsReservation"/> marca las líneas
+/// "Reserved VM Instance, SKU, región, término": el precio facturado de la reserva, que la
+/// tabla de hechos no trae (spec, sección Insumos).</summary>
+public sealed record EvolucionRow(
+    string NaturalKeyHash,
+    string? Category,
+    string? Subcategory,
+    string ResourceName,
+    bool IsReservation,
+    decimal Pvp,
+    short PeriodYear,
+    byte PeriodMonth);
+
 public sealed record CasoRow(
     string Hash, string? Caso, DateOnly? FechaRegistro, string? Estado, decimal? SlaHoras,
     decimal? DuracionCruda, string? Cumple, string? Categoria, string? Subcategoria, string? Horario);
