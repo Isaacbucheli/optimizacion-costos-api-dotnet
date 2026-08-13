@@ -23,6 +23,7 @@ public sealed class InformeValorSchemaTests
     [InlineData("dbo.informe_valor_facturacion")]
     [InlineData("dbo.informe_valor_caso")]
     [InlineData("dbo.informe_valor_rbac")]
+    [InlineData("dbo.informe_valor_evolucion")]
     public void Las_tablas_de_datos_tienen_indice_unico_por_cliente_y_hash(string tabla)
     {
         var todo = string.Join("\n", InformeValorSchema.Statements);
