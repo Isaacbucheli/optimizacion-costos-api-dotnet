@@ -88,6 +88,26 @@ public sealed class InformeValorBulkColumnsTests
         Assert.Equal(typeof(string), col.Type);
     }
 
+    /// <summary>client_id e ingesta_id primeras dos SIEMPRE: ReplaceAsync las sobreescribe por posición.</summary>
+    [Fact]
+    public void Las_columnas_de_evolucion_empiezan_con_client_id_e_ingesta_id()
+    {
+        var nombres = SqlInformeValorStore.EvolucionColumns.Select(c => c.Column).ToList();
+        Assert.Equal(
+            ["client_id", "ingesta_id", "natural_key_hash", "category", "subcategory",
+             "resource_name", "is_reservation", "pvp", "period_year", "period_month"],
+            nombres);
+    }
+
+    /// <summary>Categoría y subcategoría nulas (el balde residual de D1) mapean a DBNull, no a "".</summary>
+    [Fact]
+    public void Los_nulos_de_evolucion_se_mapean_a_DBNull()
+    {
+        var fila = new EvolucionRow("h", null, null, "r", false, 1m, 2026, 1);
+        var cat = SqlInformeValorStore.EvolucionColumns.Single(c => c.Column == "category");
+        Assert.Equal(DBNull.Value, cat.Value(fila));
+    }
+
     /// <summary>
     /// MarkRunFailedAsync es mejor esfuerzo: si ni la bitácora se puede escribir (acá, porque la
     /// conexión nunca se abrió, sin necesidad de una base de datos real) no tiene que lanzar. La

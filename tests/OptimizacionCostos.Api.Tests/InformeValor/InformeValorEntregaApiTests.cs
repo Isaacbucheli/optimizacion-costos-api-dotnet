@@ -860,6 +860,10 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
             int clientId, string fileName, string? user, RbacParseResult parsed, CancellationToken ct)
             => throw new NotSupportedException();
 
+        public Task<int> ReplaceEvolucionAsync(
+            int clientId, string fileName, string? user, ParseResult<EvolucionRow> parsed, CancellationToken ct)
+            => throw new NotSupportedException();
+
         public Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct) => throw new NotSupportedException();
 
         /// <summary>Facturación y casos cargados (con su corrida), RBAC no: el tri-estado de
@@ -895,6 +899,9 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
 
         public Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<RbacFila>>([]);
+
+        public Task<IReadOnlyList<EvolucionRow>> GetEvolucionAsync(int clientId, CancellationToken ct)
+            => Task.FromResult<IReadOnlyList<EvolucionRow>>([]);
 
         public Task<int> RegistrarEntregaAsync(EntregaNueva entrega, CancellationToken ct)
         {

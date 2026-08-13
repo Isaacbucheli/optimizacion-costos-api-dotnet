@@ -19,6 +19,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
     public const string KindFacturacion = "facturacion";
     public const string KindCasos = "casos";
     public const string KindRbac = "rbac";
+    public const string KindEvolucion = "evolucion";
 
     // OJO: client_id e ingesta_id son SIEMPRE las dos primeras columnas de las dos
     // proyecciones. ReplaceAsync las sobreescribe por posición (values[0] y values[1]),
@@ -88,6 +89,24 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         ("is_custom_role", typeof(bool), r => r.IsCustomRole),
     ];
 
+    // Mismo criterio de columnas fijas por posición que las tres proyecciones de arriba (ver el
+    // comentario sobre FacturacionColumns): client_id e ingesta_id primero, sobreescritas por
+    // ReplaceAsync, y category/subcategory nulas (el balde residual de D1 del parser) mapeadas
+    // a DBNull vía Db(), no a "".
+    internal static readonly (string Column, Type Type, Func<EvolucionRow, object> Value)[] EvolucionColumns =
+    [
+        ("client_id", typeof(int), _ => 0),
+        ("ingesta_id", typeof(int), _ => 0),
+        ("natural_key_hash", typeof(string), r => r.NaturalKeyHash),
+        ("category", typeof(string), r => Db(r.Category)),
+        ("subcategory", typeof(string), r => Db(r.Subcategory)),
+        ("resource_name", typeof(string), r => r.ResourceName),
+        ("is_reservation", typeof(bool), r => r.IsReservation),
+        ("pvp", typeof(decimal), r => r.Pvp),
+        ("period_year", typeof(short), r => r.PeriodYear),
+        ("period_month", typeof(byte), r => r.PeriodMonth),
+    ];
+
     public Task<int> ReplaceFacturacionAsync(
         int clientId, string fileName, string? user, ParseResult<FacturacionRow> parsed, CancellationToken ct) =>
         ReplaceAsync(clientId, KindFacturacion, "dbo.informe_valor_facturacion", fileName, user,
@@ -108,6 +127,11 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
             // reflejados en parsed.Warnings.
             new ParseResult<RbacRow>(parsed.Rows, parsed.RowsTotal, parsed.RowsSkipped, 0, parsed.TruncatedValues, parsed.Warnings),
             ct);
+
+    public Task<int> ReplaceEvolucionAsync(
+        int clientId, string fileName, string? user, ParseResult<EvolucionRow> parsed, CancellationToken ct) =>
+        ReplaceAsync(clientId, KindEvolucion, "dbo.informe_valor_evolucion", fileName, user,
+            parsed.Rows, EvolucionColumns, parsed, ct);
 
     private async Task<int> ReplaceAsync<T>(
         int clientId, string kind, string table, string fileName, string? user,
@@ -181,6 +205,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
             KindFacturacion => "dbo.informe_valor_facturacion",
             KindCasos => "dbo.informe_valor_caso",
             KindRbac => "dbo.informe_valor_rbac",
+            KindEvolucion => "dbo.informe_valor_evolucion",
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),
         };
         await using var conn = await factory.OpenAsync(ct);
@@ -347,6 +372,42 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
                 Categoria: rd.IsDBNull(7) ? null : rd.GetString(7),
                 Subcategoria: rd.IsDBNull(8) ? null : rd.GetString(8),
                 Horario: rd.IsDBNull(9) ? null : rd.GetString(9)));
+        }
+        return result;
+    }
+
+    /// <summary>Las filas de evolución de consumo ya persistidas de un cliente. A diferencia de
+    /// <see cref="GetFacturacionAsync"/>/<see cref="GetCasosAsync"/>/<see cref="GetRbacAsync"/>,
+    /// que ordenan por <c>row_id</c> (orden de inserción de la carga vigente), acá el consumo de
+    /// la entrega 6 necesita las filas agrupadas por período, así que se ordena por
+    /// año/mes/recurso directamente.</summary>
+    public async Task<IReadOnlyList<EvolucionRow>> GetEvolucionAsync(int clientId, CancellationToken ct)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await InformeValorSchema.EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT natural_key_hash, category, subcategory, resource_name, is_reservation,
+                pvp, period_year, period_month
+            FROM dbo.informe_valor_evolucion
+            WHERE client_id = @cid
+            ORDER BY period_year, period_month, resource_name
+            """;
+        cmd.Parameters.Add(new SqlParameter("@cid", SqlDbType.Int) { Value = clientId });
+
+        var result = new List<EvolucionRow>();
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct))
+        {
+            result.Add(new EvolucionRow(
+                NaturalKeyHash: rd.GetString(0),
+                Category: rd.IsDBNull(1) ? null : rd.GetString(1),
+                Subcategory: rd.IsDBNull(2) ? null : rd.GetString(2),
+                ResourceName: rd.GetString(3),
+                IsReservation: rd.GetBoolean(4),
+                Pvp: rd.GetDecimal(5),
+                PeriodYear: rd.GetInt16(6),
+                PeriodMonth: rd.GetByte(7)));
         }
         return result;
     }

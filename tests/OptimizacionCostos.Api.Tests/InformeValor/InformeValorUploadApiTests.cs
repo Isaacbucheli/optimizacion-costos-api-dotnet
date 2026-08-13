@@ -222,6 +222,10 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
             int clientId, string fileName, string? user, RbacParseResult parsed, CancellationToken ct)
             => Task.FromResult(1);
 
+        public Task<int> ReplaceEvolucionAsync(
+            int clientId, string fileName, string? user, ParseResult<EvolucionRow> parsed, CancellationToken ct)
+            => Task.FromResult(1);
+
         public Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct) => Task.CompletedTask;
 
         public Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct)
@@ -235,6 +239,9 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
 
         public Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<RbacFila>>([]);
+
+        public Task<IReadOnlyList<EvolucionRow>> GetEvolucionAsync(int clientId, CancellationToken ct)
+            => Task.FromResult<IReadOnlyList<EvolucionRow>>([]);
 
         // Entrega 3, F4: la bitacora de entregas no la ejercita ningun test de esta clase. Revienta
         // en vez de devolver vacio: un archivo de entregas silenciosamente vacio es justo el cero
