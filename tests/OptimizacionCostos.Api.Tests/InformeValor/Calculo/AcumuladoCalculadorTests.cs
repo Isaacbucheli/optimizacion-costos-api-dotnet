@@ -283,4 +283,57 @@ public sealed class AcumuladoCalculadorTests
         Assert.Contains("'otra-cosa'", ex.Message);
         Assert.Contains("Mala fuente", ex.Message);
     }
+
+    // ── I1 del review final: medido y motivo son independientes ──
+
+    [Fact]
+    public void Con_todo_medido_el_motivo_es_null()
+    {
+        var filas = new List<AccionEjecutada> { F("X", "Cat", "2026-01", 100m) };
+        var m = AcumuladoCalculador.Calcular(filas, EjesOk, ReservasVacioMedido, null,
+            Ctx("2026-01-01", "2026-01-31", corte: "2026-01-31"));
+
+        Assert.True(m.Medido);
+        Assert.Null(m.Motivo);
+    }
+
+    /// <summary>El caso del brief: reservas medidas, barrido sin medir. <c>Medido</c> sigue en
+    /// <c>true</c> (las reservas alcanzan para que el conjunto mida algo), pero <c>Motivo</c> ya no
+    /// es <c>null</c> solo porque el conjunto midió: declara el eje que falló.</summary>
+    [Fact]
+    public void Barrido_no_medido_con_reservas_medidas_da_medido_true_y_motivo_declara_lo_que_falto()
+    {
+        var ejes = new RegistroEjes(
+            BarridoMedido: false, BarridoMotivo: "El cliente no tiene ningún barrido de optimización corrido.",
+            ReservasMedidas: true, ReservasMotivo: null, Indeterminadas: 0);
+
+        var m = AcumuladoCalculador.Calcular([], ejes, ReservasVacioMedido, null,
+            Ctx("2026-01-01", "2026-01-31", corte: "2026-01-31"));
+
+        Assert.True(m.Medido);
+        Assert.NotNull(m.Motivo);
+        Assert.Contains("El cliente no tiene ningún barrido de optimización corrido.", m.Motivo);
+    }
+
+    // ── I2 del review final: corte anterior al fin del rango no duplica meses ──
+
+    /// <summary>El rango cubre enero a junio (<c>MesesDelRango</c> depende de <c>PeriodEnd</c>,
+    /// nunca del corte), pero el corte cae en marzo. Sin el fix, la proyección arrancaba en abril y
+    /// contaba abril/mayo/junio dos veces (una en la serie histórica, otra en la proyección).</summary>
+    [Fact]
+    public void Corte_anterior_al_fin_del_periodo_la_proyeccion_arranca_despues_del_rango_no_del_corte()
+    {
+        var filas = new List<AccionEjecutada> { F("Única", "Cat", "2026-01", 50m) };
+        var m = AcumuladoCalculador.Calcular(filas, EjesOk, ReservasVacioMedido, null,
+            Ctx("2026-01-01", "2026-06-30", corte: "2026-03-31"));
+
+        // La serie histórica cubre los 6 meses del RANGO, pese a que el corte cae en marzo.
+        Assert.Equal(6, m.Serie.Count);
+        Assert.Equal(300m, m.AcumuladoTotal); // 50 x 6 meses
+
+        // La proyección arranca en julio (el mes siguiente al FIN DEL RANGO), no en abril.
+        Assert.Equal(6, m.Proyeccion.Count); // julio a diciembre
+        Assert.Equal("2026-07", m.Proyeccion[0][0]);
+        Assert.Equal(300m + 50m * 6, m.ProyeccionFinDeAnio);
+    }
 }

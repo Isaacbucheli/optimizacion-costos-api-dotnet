@@ -12,12 +12,19 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 /// entrega, <see cref="FotoReservas"/>/<see cref="ReservasFacturadasModelo"/>). Pura, sin IO ni
 /// reloj (ver <c>SinRelojDelSistemaTests</c>, que escanea <c>Calculo/</c> completo).
 ///
-/// <para><b>Terna, no nombre (D11).</b> Igual que <c>ConsumoCalculador</c>/<c>AtribucionCalculador</c>,
-/// un recurso se identifica por <c>(subscriptionId ?? nombre-de-suscripción) + "|" + grupo + "|" +
-/// nombre</c>, SIN normalizar mayúsculas: barrido y matriz llegan con identificadores que salen de
-/// Azure (Resource Graph / Advisor) igual que la facturación, así que la comparación cruda ya
-/// coincide por construcción — a diferencia de <c>ReservasFacturadasCalculador</c>, que cruza
-/// contra un archivo de Excel y sí necesita normalizar.</para>
+/// <para><b>Terna, no nombre (D11), normalizada a minúsculas (I3 del review final de la entrega
+/// 6).</b> Igual que <c>ConsumoCalculador</c>/<c>AtribucionCalculador</c>, un recurso se identifica
+/// por <c>(subscriptionId ?? nombre-de-suscripción) + "|" + grupo + "|" + nombre</c> — pero acá SÍ
+/// se normaliza a minúsculas antes de concatenar, mismo criterio que <c>Norm</c> en
+/// <c>ReservasFacturadasCalculador</c> (reimplementado, no reusado: es privado de esa clase, mismo
+/// argumento que ya documentan las constantes/claves reimplementadas de este módulo). La suposición
+/// original era que barrido y matriz llegan con identificadores de Azure (Resource Graph / Advisor)
+/// que ya coinciden en mayúsculas contra la facturación (BITCOST) — pero BITCOST no siempre
+/// respeta esa capitalización (puede venir de un export distinto o de una edición manual), y una VM
+/// con <c>"RG-Prod"</c> del lado de Azure y <c>"rg-prod"</c> del lado de la factura dejaba el delta
+/// sin encontrar y la fila publicada sin monto. Normalizar acá es gratis: la terna nunca se publica
+/// como texto (a diferencia de D11 en <c>ConsumoCalculador</c>), así que perder la capitalización
+/// original no le cuesta nada a quien la lee después.</para>
 ///
 /// <para><b>Regla 4, "meses completos": sparse, no denso.</b> <c>ConsumoCalculador</c>/
 /// <c>AtribucionCalculador</c> arman una ventana COMPARTIDA de todo el portafolio y rellenan con
@@ -449,5 +456,6 @@ public static class RegistroEjecutadoCalculador
     }
 
     private static string Terna(string subscriptionId, string? resourceGroup, string? resourceName) =>
-        subscriptionId + "|" + (resourceGroup ?? "") + "|" + (resourceName ?? "");
+        subscriptionId.ToLowerInvariant() + "|" + (resourceGroup ?? "").ToLowerInvariant() + "|" +
+        (resourceName ?? "").ToLowerInvariant();
 }

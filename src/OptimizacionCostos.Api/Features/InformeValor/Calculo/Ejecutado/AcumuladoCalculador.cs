@@ -31,6 +31,24 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 /// hace falta una segunda fórmula. La proyección arranca en <see cref="EjecutadoModelo.AcumuladoTotal"/>
 /// (el acumulado del último mes del rango) y suma, mes a mes, hasta diciembre del año del corte —
 /// nunca "tasa del cierre × 12": si una reserva vence en el medio, la proyección lo refleja.</para>
+///
+/// <para><b>I2 del review final de la entrega 6: la proyección arranca después del rango, no solo
+/// después del corte.</b> Un corte anterior al fin de <see cref="ContextoInformeValor.PeriodEnd"/>
+/// (poco común, pero posible si el consultor corta antes de cerrar el mes) haría que
+/// <c>MesesDeProyeccion</c> repitiera meses que <see cref="EjecutadoModelo.Serie"/> —que se arma
+/// sobre <see cref="ContextoInformeValor.PeriodEnd"/>, nunca sobre el corte— ya contó: con un rango
+/// de enero a junio y un corte de marzo, la proyección arrancaba en abril y duplicaba abril/mayo/
+/// junio. Por eso arranca en el mes siguiente al MÁXIMO entre el mes del corte y el mes de
+/// <c>PeriodEnd</c>, nunca en el corte a secas.</para>
+///
+/// <para><b>Medido y motivo son independientes (I1 del review final de la entrega 6).</b>
+/// <see cref="EjecutadoModelo.Medido"/> es <c>true</c> en cuanto CUALQUIER eje aporta algo que
+/// mostrar (hay filas, o el barrido midió, o las reservas midieron): un cliente con reservas
+/// medidas y barrido sin medir igual tiene un acumulado que publicar.
+/// <see cref="EjecutadoModelo.Motivo"/> YA NO es "solo cuando no medido" — es lo que no se pudo
+/// medir, SI ALGO: declara cada eje que falló aunque el conjunto sí produzca cifra, para que el
+/// consultor sepa qué falta sin tener que abrir el detalle de <see cref="EjecutadoModelo.Ejes"/>.
+/// </para>
 /// </summary>
 public static class AcumuladoCalculador
 {
@@ -67,7 +85,9 @@ public static class AcumuladoCalculador
             : (decimal?)null;
 
         var medido = filas.Count > 0 || ejes.BarridoMedido || ejes.ReservasMedidas;
-        var motivo = medido ? null : CombinarMotivos(ejes);
+        // I1: motivo ya no depende de medido — declara lo que cualquier eje no pudo medir, aunque
+        // el conjunto sí produzca cifra (ver el docstring de clase).
+        var motivo = CombinarMotivos(ejes);
 
         return new EjecutadoModelo(
             Medido: medido,
@@ -202,12 +222,19 @@ public static class AcumuladoCalculador
         return (proyeccion, acumulado);
     }
 
+    /// <summary>I1 del review final de la entrega 6: declara cada eje que NO midió, con su propio
+    /// motivo rotulado — no un motivo "cuando nada midió" sino "lo que no se pudo medir, si algo".
+    /// Se dispara por <see cref="RegistroEjes.BarridoMedido"/>/<see cref="RegistroEjes.ReservasMedidas"/>,
+    /// nunca por si el texto del motivo viene o no: un eje puede declararse no medido sin motivo
+    /// propio, y esa ausencia también hay que reportarla, no tragársela.</summary>
     private static string? CombinarMotivos(RegistroEjes ejes)
     {
         var motivos = new List<string>();
-        if (!string.IsNullOrWhiteSpace(ejes.BarridoMotivo)) motivos.Add(ejes.BarridoMotivo!);
-        if (!string.IsNullOrWhiteSpace(ejes.ReservasMotivo)) motivos.Add(ejes.ReservasMotivo!);
-        return motivos.Count == 0 ? null : string.Join(" ", motivos);
+        if (!ejes.BarridoMedido)
+            motivos.Add($"El barrido no se midió: {ejes.BarridoMotivo ?? "sin motivo declarado"}");
+        if (!ejes.ReservasMedidas)
+            motivos.Add($"Las reservas no se midieron: {ejes.ReservasMotivo ?? "sin motivo declarado"}");
+        return motivos.Count == 0 ? null : string.Join("; ", motivos);
     }
 
     // ── Meses "aaaa-MM": ordinal year*12+month, único punto de conversión del módulo ──
@@ -221,12 +248,23 @@ public static class AcumuladoCalculador
         return meses;
     }
 
+    /// <summary>Meses desde el siguiente al MÁXIMO entre el mes de
+    /// <see cref="ContextoInformeValor.Corte"/> y el mes de <see cref="ContextoInformeValor.PeriodEnd"/>,
+    /// hasta diciembre del año del corte, y el acumulado proyectado de cada uno (misma recursión que
+    /// la serie histórica, arrancando en <paramref name="acumuladoTotal"/> [ver el llamador] en vez
+    /// de en cero). El máximo es I2 del review final de la entrega 6: sin él, un corte anterior al
+    /// fin del rango repetía en la proyección meses que <see cref="MesesDelRango"/> ya contó en la
+    /// serie histórica (ver el docstring de clase). Corte en diciembre —o corte no anterior al fin
+    /// del rango, el caso normal— da la lista vacía y <c>ProyeccionFinDeAnio = acumuladoTotal</c>,
+    /// sin excepción.</summary>
     private static List<string> MesesDeProyeccion(ContextoInformeValor contexto)
     {
         var corte = contexto.Corte.Year * 12 + contexto.Corte.Month;
+        var finRango = contexto.PeriodEnd.Year * 12 + contexto.PeriodEnd.Month;
+        var desde = Math.Max(corte, finRango);
         var finDeAnio = contexto.Corte.Year * 12 + 12;
         var meses = new List<string>();
-        for (var o = corte + 1; o <= finDeAnio; o++) meses.Add(FromOrdinal(o));
+        for (var o = desde + 1; o <= finDeAnio; o++) meses.Add(FromOrdinal(o));
         return meses;
     }
 

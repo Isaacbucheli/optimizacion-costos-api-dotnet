@@ -249,6 +249,35 @@ public sealed class RegistroEjecutadoCalculadorTests
         Assert.Equal("facturado", fila.FuenteMonto);
     }
 
+    /// <summary>
+    /// I3 del review final de la entrega 6: la terna de cruce se normaliza a minúsculas. El barrido
+    /// llega con "RG-Prod" (como lo devolvería Resource Graph) y la facturación con "rg-prod" (como
+    /// puede venir de un export de BITCOST con otra capitalización) — antes del fix, la comparación
+    /// cruda no encontraba el delta y la fila quedaba sin monto; con la terna normalizada, el delta
+    /// se encuentra y la fila sale facturada.
+    /// </summary>
+    [Fact]
+    public void La_terna_se_normaliza_a_minusculas_y_el_delta_cruza_pese_a_la_capitalizacion_distinta()
+    {
+        var barrido = new RegistroBarrido(true, null,
+            [BarridoFila("orphaned_disks", "s1", "RG-Prod", "vm1", new DateTime(2026, 4, 15))]);
+        var facturacion = new[]
+        {
+            Fila("s1", "rg-prod", "vm1", 100m, 2026, 1),
+            Fila("s1", "rg-prod", "vm1", 100m, 2026, 2),
+            Fila("s1", "rg-prod", "vm1", 100m, 2026, 3),
+            Fila("s1", "rg-prod", "vm1", 40m, 2026, 5),
+            Fila("s1", "rg-prod", "vm1", 40m, 2026, 6),
+        };
+
+        var (filas, _) = Calcular(barrido: barrido, facturacion: facturacion);
+
+        var fila = Assert.Single(filas);
+        Assert.Equal(60.00m, fila.MontoMensual);
+        Assert.Equal("facturado", fila.FuenteMonto);
+        Assert.Null(fila.MotivoSinMonto);
+    }
+
     [Fact]
     public void Meses_forzados_como_parciales_se_excluyen_del_promedio_de_meses_completos()
     {
