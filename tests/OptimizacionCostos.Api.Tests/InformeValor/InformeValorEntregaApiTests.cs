@@ -449,12 +449,62 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
         Assert.True(ejecutado.TryGetProperty("ejes", out var ejes));
         Assert.Equal(JsonValueKind.Object, ejes.ValueKind);
 
+        // Anti-trampa (Tarea 10): con GetEvolucionAsync ya sembrado, la reserva SÍ matchea una línea
+        // de evolución y "reservas.filas" viaja con la VM real, no vacía por falta de match. Si esto
+        // fallara, los DoesNotContain de abajo pasarían por la razón equivocada: nunca hubo nada que
+        // recortar.
+        var filasReservas = ejecutado.GetProperty("reservas").GetProperty("filas");
+        Assert.True(filasReservas.GetArrayLength() > 0, "La reserva sembrada tiene que matchear la línea de evolución y producir al menos una fila.");
+        Assert.Equal("vm-1", filasReservas[0].GetProperty("vm").GetString());
+
         // Y con "ejecutado" de verdad poblado, la variante del cliente sin bloques aprobados sigue
         // sin subir los montos de la facturación (1000 + 500 = 1500 del mismo fixture que la reserva
         // ahora comparte recurso): el recorte de "ejecutado" tiene que nulear sus propios campos de
         // monto igual que lo hacen los demás bloques, no solo el bloque de facturación de siempre.
         Assert.DoesNotContain("1500", datos, StringComparison.Ordinal);
         Assert.DoesNotContain("1000", datos, StringComparison.Ordinal);
+        // Tarea 10: el monto que de verdad sale del archivo de evolución (331.72, la tarifa mensual
+        // de la línea "Reserved VM Instance, Standard_D2s_v5, East US, 1 Year" sembrada en
+        // FakeInformeValorStoreConDatosParaEntrega) y el ahorro que combina esa tarifa con la demanda
+        // de BITCOST (500 - 331.72 = 168.28) tampoco pueden viajar: es exactamente el monto que
+        // Generar_para_variante_interna_publica_el_monto_real_de_evolucion prueba que SÍ sale cuando
+        // nadie lo recorta — el guard positivo de ese test es lo que le da sentido a estos dos.
+        Assert.DoesNotContain("331.72", datos, StringComparison.Ordinal);
+        Assert.DoesNotContain("168.28", datos, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// El guard positivo que le falta al test de arriba (hallazgo de la revisión de la Tarea 9,
+    /// cerrado en la Tarea 10): sin este test, <c>Generar_para_el_cliente_sin_bloques_con_ejecutado_poblado_no_sube_sus_montos</c>
+    /// podría pasar por la razón equivocada — que 331.72/168.28 nunca llegaron a materializarse,
+    /// nunca que el recorte los sacó. Variante interna (publica los ocho bloques sin pasar por
+    /// <c>InformeValorHtmlExporter.Recortar</c>): el mismo fixture de evolución, sin nadie que lo
+    /// recorte, tiene que subir las dos cifras.
+    ///
+    /// <para>331.72 sale íntegro de <c>ReservasFacturadasCalculador.TasaMensualDeLaLinea</c> (un solo
+    /// mes, un solo consumidor, sin prorrateo): es la prueba más directa de que el archivo de
+    /// evolución alimenta el cruce. 168.28 = 500 (demanda de BITCOST, febrero de 2026, el último mes
+    /// completo antes del inicio derivado de la reserva) menos 331.72: prueba que la demanda de
+    /// BITCOST y la tarifa de evolución se combinan en el mismo <c>AhorroMes</c> que después viaja a
+    /// "ejecutado".</para>
+    /// </summary>
+    [Fact]
+    public async Task Generar_para_variante_interna_publica_el_monto_real_de_evolucion()
+    {
+        const int clientId = 943;
+        _factory.Access.Allow(clientId);
+        _factory.SembrarUnaReservaConConsumidor(clientId, credentialId: 43, reservationId: "resv-943");
+        var client = ClientFor("g30@bit.ec", Roles.Consultor, canEdit: true);
+
+        var res = await client.PostAsJsonAsync(
+            $"/informe-valor/clients/{clientId}/generar", Cuerpo(variante: "interna"));
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var subida = Assert.Single(_factory.Blobs.Uploads.Where(u => u.BlobName.Contains($"client-{clientId}/", StringComparison.Ordinal)).ToList());
+        var datos = BloqueDeDatos(Encoding.UTF8.GetString(subida.Data));
+
+        Assert.Contains("331.72", datos, StringComparison.Ordinal);
+        Assert.Contains("168.28", datos, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -997,8 +1047,55 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
         public Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<RbacFila>>([]);
 
+        /// <summary>
+        /// Hallazgo de la revisión de la Tarea 9, cerrado en la Tarea 10: antes esta lista era
+        /// SIEMPRE vacía, así que la reserva sembrada por <see cref="Factory.SembrarUnaReservaConConsumidor"/>
+        /// (SKU <c>Standard_D2s_v5</c>, término <c>P1Y</c>) caía siempre en <c>SinLineaEnEvolucion</c>
+        /// y ningún test del recorte de "ejecutado" ejercitaba un monto real: probaban que la ausencia
+        /// de dinero no subía, no que un monto de verdad se recortara.
+        ///
+        /// <para>La línea con <c>IsReservation=true</c> (enero, <c>331.72</c>) es la que hace matchear
+        /// esa reserva (mismo SKU+término que <see cref="ReservasFacturadasCalculador"/> exige) y la
+        /// cifra distintiva que prueban <see cref="Generar_para_el_cliente_sin_bloques_con_ejecutado_poblado_no_sube_sus_montos"/>
+        /// (que no aparezca) y <see cref="Generar_para_variante_interna_publica_el_monto_real_de_evolucion"/>
+        /// (que sí aparezca). La demanda (<c>PorDemandaMes</c>) no sale de acá: sale de BITCOST
+        /// (<see cref="GetFacturacionAsync"/>), que ya trae a vm-1 facturando en enero y febrero de
+        /// 2026 — ambos meses caen antes del inicio derivado de la reserva (vencimiento 2027-06-01
+        /// menos el término P1Y = 2026-06-01), así que febrero (500) ya resuelve como el último mes
+        /// completo anterior sin tocar este archivo.</para>
+        ///
+        /// <para>Las otras dos líneas (<c>IsReservation=false</c>, una por mes) no aportan ninguna
+        /// cifra a "ejecutado": están para que el TOTAL de evolución de cada mes reconcilie con el de
+        /// BITCOST (1000 en enero, 500 en febrero) dentro del umbral de <c>InformeValorEnsamblador.CalcularConciliacion</c>.
+        /// Esa conciliación vive en <c>meta</c>, que el exportador NUNCA recorta —ni para la variante
+        /// del cliente ni sin bloques aprobados—, así que sin ellas la reserva de 331.72 dejaría un
+        /// desbalance mensual que "meta.conciliacion.difs" publicaría con los mismos 1000/500 que
+        /// estos tests verifican que no viajan: un leak por una puerta que este hallazgo no estaba
+        /// buscando cerrar.</para>
+        ///
+        /// <para>Acotado a los clientes que de verdad siembran esa reserva (941 y 943; 942 ya lo usa
+        /// <see cref="Generar_archiva_la_corrida_de_evolucion_y_la_entrega_archivada_la_devuelve"/> sin
+        /// reserva sembrada): el resto de los tests de esta clase comparte instancia de
+        /// <see cref="Factory"/> (<c>IClassFixture</c>) y llama al mismo <see cref="GetFacturacionAsync"/>
+        /// fijo, así que devolver estas filas para TODOS los clientes activaría la misma conciliación
+        /// (y el mismo cruce de reserva) en tests que no la esperan.</para>
+        /// </summary>
+        private static readonly IReadOnlyList<EvolucionRow> EvolucionParaReservaDePrueba =
+        [
+            new EvolucionRow(
+                NaturalKeyHash: "evo-resv-941-enero-reserva", Category: "Redes y Conectividad", Subcategory: null,
+                ResourceName: "Reserved VM Instance, Standard_D2s_v5, East US, 1 Year",
+                IsReservation: true, Pvp: 331.72m, PeriodYear: 2026, PeriodMonth: 1),
+            new EvolucionRow(
+                NaturalKeyHash: "evo-resv-941-enero-normal", Category: "Redes y Conectividad", Subcategory: null,
+                ResourceName: "vm-1", IsReservation: false, Pvp: 668.28m, PeriodYear: 2026, PeriodMonth: 1),
+            new EvolucionRow(
+                NaturalKeyHash: "evo-resv-941-febrero-normal", Category: "Redes y Conectividad", Subcategory: null,
+                ResourceName: "vm-1", IsReservation: false, Pvp: 500.00m, PeriodYear: 2026, PeriodMonth: 2),
+        ];
+
         public Task<IReadOnlyList<EvolucionRow>> GetEvolucionAsync(int clientId, CancellationToken ct)
-            => Task.FromResult<IReadOnlyList<EvolucionRow>>([]);
+            => Task.FromResult(clientId is 941 or 943 ? EvolucionParaReservaDePrueba : (IReadOnlyList<EvolucionRow>)[]);
 
         public Task<int> RegistrarEntregaAsync(EntregaNueva entrega, CancellationToken ct)
         {

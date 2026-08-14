@@ -68,11 +68,14 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// produjo la Tarea 4. Se computa solo cuando hay con qué: <paramref name="registroBarrido"/> no nulo
 /// (registroBarrido no nulo: la ruta intentó leer el barrido, con cualquier resultado declarado) o <paramref name="fotoReservas"/> ya medida — sin
 /// ninguno de los dos insumos no hay ninguna de las tres fuentes que cruzar, y <c>Ejecutado</c> queda
-/// <c>null</c>, misma semántica que los demás bloques ausentes de este método. Cuando
-/// <paramref name="registroBarrido"/> llega <c>null</c> (el llamador no leyó el barrido en esta ruta,
-/// p. ej. el preview liviano) se usa <see cref="RegistroBarrido.NoAutorizado"/> con un motivo propio de
-/// esta ruta, nunca <see cref="RegistroBarrido.SinBarrido"/>: la ausencia acá es de LECTURA, no un
-/// hecho confirmado de que el cliente nunca corrió el barrido.</para>
+/// <c>null</c>, misma semántica que los demás bloques ausentes de este método. <paramref name="registroBarrido"/>
+/// nulo es la rama de las pruebas unitarias (y de un llamador futuro que decida no leer el barrido):
+/// los dos llamadores de producción, <c>Preview</c> y <c>Generar</c>, siempre pasan uno ya resuelto
+/// (<c>InformeValorController.LeerRegistroBarridoAsync</c> nunca devuelve <c>null</c> — sin permiso
+/// cae a <see cref="RegistroBarrido.NoAutorizado"/>, nunca a la ausencia). Cuando sí llega <c>null</c>
+/// acá se usa ese mismo <see cref="RegistroBarrido.NoAutorizado"/> con un motivo propio de este
+/// método, nunca <see cref="RegistroBarrido.SinBarrido"/>: la ausencia acá es de LECTURA, no un hecho
+/// confirmado de que el cliente nunca corrió el barrido.</para>
 ///
 /// <para><b>Tarea 8 de la entrega 6: resuelve <see cref="InformeValorMeta.Conciliacion"/></b>
 /// cruzando <paramref name="facturacion"/> (ya filtrada al rango) contra <paramref name="evolucion"/>
@@ -132,8 +135,9 @@ public static class InformeValorEnsamblador
                 fotoParaEjecutado, evolucion ?? [], facturacion, contexto);
             var (filasEjecutado, ejesEjecutado) = RegistroEjecutadoCalculador.Calcular(
                 registroBarrido ?? RegistroBarrido.NoAutorizado(
-                    "El barrido no se leyó en esta ruta: no es que el cliente no lo haya corrido, es " +
-                    "que este llamado del ensamblador no lo pidió."),
+                    "El barrido no se leyó en esta llamada al ensamblador: no es que el cliente no lo " +
+                    "haya corrido, es que quien llamó no lo pidió (hoy solo pasa en pruebas unitarias: " +
+                    "los dos endpoints de producción siempre resuelven el barrido antes de llamar)."),
                 // Ojo: aun sin registroBarrido, la rama de matriz corre con HallazgosResueltos reales;
                 // solo el eje del barrido queda suprimido hasta que el controller lo cablee (T10).
                 insumosBd.HallazgosResueltos ?? [], reservasFacturadas, fotoParaEjecutado, facturacion, contexto);
