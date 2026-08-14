@@ -147,6 +147,26 @@ public sealed class RegistroEjecutadoCalculadorTests
         Assert.Empty(filas);
     }
 
+    [Fact]
+    public void Matriz_resuelta_antes_del_inicio_del_periodo_igual_produce_fila_el_rango_no_la_descarta()
+    {
+        // A diferencia del barrido/reserva, la matriz NO se filtra por PeriodStart/PeriodEnd: una
+        // acción anterior al rango del informe igual aporta su tasa al acumulado (Tarea 5).
+        var contexto = new ContextoInformeValor(new DateOnly(2026, 6, 1), new DateOnly(2026, 8, 31), new DateOnly(2026, 6, 1), null);
+        var hallazgos = new[] { MatrizFila("s1", "rg1", "vm1", new DateOnly(2026, 3, 15)) };
+        // Sin facturación dentro del rango (jun-ago) anterior a marzo: sin "antes" que promediar,
+        // la fila existe igual pero sin monto (regla 4/6 estándar).
+
+        var (filas, _) = Calcular(hallazgosMatriz: hallazgos, contexto: contexto);
+
+        var fila = Assert.Single(filas);
+        Assert.Equal("matriz", fila.Fuente);
+        Assert.Equal("2026-03", fila.MesEjecucion);
+        Assert.Null(fila.MontoMensual);
+        Assert.Null(fila.FuenteMonto);
+        Assert.NotNull(fila.MotivoSinMonto);
+    }
+
     // ── Regla 3: reserva → fila ──
 
     [Fact]
@@ -355,6 +375,87 @@ public sealed class RegistroEjecutadoCalculadorTests
         Assert.Null(filaBarrido.MontoMensual);
         Assert.NotNull(filaBarrido.MotivoSinMonto);
         Assert.Contains("reserva", filaBarrido.MotivoSinMonto, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ── Regla 7b: dedup dentro de la misma fuente (mismo recurso+mes, dos filas) ──
+
+    [Fact]
+    public void Dos_filas_de_barrido_mismo_recurso_y_mes_solo_la_primera_por_checkId_reclama_el_delta_facturado()
+    {
+        var barrido = new RegistroBarrido(true, null,
+        [
+            // "old_snapshots" < "orphaned_disks" < "zzz_check_sin_estimado" en orden ordinal: gana old_snapshots.
+            BarridoFila("orphaned_disks", "s1", "rg1", "vm1", new DateTime(2026, 4, 20), estimatedMonthlySavings: 15m),
+            BarridoFila("old_snapshots", "s1", "rg1", "vm1", new DateTime(2026, 4, 10)),
+            BarridoFila("zzz_check_sin_estimado", "s1", "rg1", "vm1", new DateTime(2026, 4, 5)),
+        ]);
+        var facturacion = new[]
+        {
+            Fila("s1", "rg1", "vm1", 100m, 2026, 1),
+            Fila("s1", "rg1", "vm1", 100m, 2026, 2),
+            Fila("s1", "rg1", "vm1", 100m, 2026, 3),
+            Fila("s1", "rg1", "vm1", 40m, 2026, 5),
+            Fila("s1", "rg1", "vm1", 40m, 2026, 6),
+        };
+
+        var (filas, _) = Calcular(barrido: barrido, facturacion: facturacion);
+
+        Assert.Equal(3, filas.Count); // ninguna se borra en silencio
+
+        var ganadora = Assert.Single(filas, f => f.Oportunidad == "Snapshots antiguos"); // old_snapshots
+        Assert.Equal(60.00m, ganadora.MontoMensual);
+        Assert.Equal("facturado", ganadora.FuenteMonto);
+        Assert.Null(ganadora.MotivoSinMonto);
+
+        var conEstimadoPropio = Assert.Single(filas, f => f.Oportunidad == "Discos administrados no conectados"); // orphaned_disks
+        Assert.Equal(15m, conEstimadoPropio.MontoMensual);
+        Assert.Equal("estimado", conEstimadoPropio.FuenteMonto);
+        Assert.Null(conEstimadoPropio.MotivoSinMonto);
+
+        var sinEstimadoPropio = Assert.Single(filas, f => f.Oportunidad == "zzz_check_sin_estimado"); // checkId crudo, no registrado
+        Assert.Null(sinEstimadoPropio.MontoMensual);
+        Assert.Null(sinEstimadoPropio.FuenteMonto);
+        Assert.NotNull(sinEstimadoPropio.MotivoSinMonto);
+        Assert.Contains("Snapshots antiguos", sinEstimadoPropio.MotivoSinMonto);
+
+        // El delta (60) se reclama UNA sola vez; el 15 es el estimado propio de la fila perdedora.
+        Assert.Equal(75.00m, filas.Sum(f => f.MontoMensual ?? 0m));
+    }
+
+    [Fact]
+    public void Dos_hallazgos_de_matriz_mismo_recurso_y_mes_solo_el_primero_por_matrixCode_reclama_el_delta_facturado()
+    {
+        var hallazgos = new[]
+        {
+            MatrizFila("s1", "rg1", "vm1", new DateOnly(2026, 4, 20), hallazgo: "Habilitar backup", matrixCode: "5.1"),
+            MatrizFila("s1", "rg1", "vm1", new DateOnly(2026, 4, 10), hallazgo: "Cerrar puertos abiertos", matrixCode: "3.2"),
+        };
+        var facturacion = new[]
+        {
+            Fila("s1", "rg1", "vm1", 100m, 2026, 1),
+            Fila("s1", "rg1", "vm1", 100m, 2026, 2),
+            Fila("s1", "rg1", "vm1", 100m, 2026, 3),
+            Fila("s1", "rg1", "vm1", 40m, 2026, 5),
+            Fila("s1", "rg1", "vm1", 40m, 2026, 6),
+        };
+
+        var (filas, _) = Calcular(hallazgosMatriz: hallazgos, facturacion: facturacion);
+
+        Assert.Equal(2, filas.Count); // ninguna se borra en silencio
+
+        var ganadora = Assert.Single(filas, f => f.Oportunidad == "Cerrar puertos abiertos"); // matrixCode "3.2"
+        Assert.Equal(60.00m, ganadora.MontoMensual);
+        Assert.Equal("facturado", ganadora.FuenteMonto);
+        Assert.Null(ganadora.MotivoSinMonto);
+
+        var perdedora = Assert.Single(filas, f => f.Oportunidad == "Habilitar backup"); // matrixCode "5.1"
+        Assert.Null(perdedora.MontoMensual);
+        Assert.Null(perdedora.FuenteMonto);
+        Assert.NotNull(perdedora.MotivoSinMonto);
+        Assert.Contains("Cerrar puertos abiertos", perdedora.MotivoSinMonto);
+
+        // La matriz no tiene estimado propio: el delta se reclama una sola vez y el resto queda en cero.
+        Assert.Equal(60.00m, filas.Sum(f => f.MontoMensual ?? 0m));
     }
 
     // ── Regla 8: ejes ──

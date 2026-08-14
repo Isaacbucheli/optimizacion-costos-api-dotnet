@@ -106,11 +106,26 @@ public static class RegistroEjecutadoCalculador
         var filas = new List<(AccionEjecutada, string)>();
         if (!barrido.Medido) return filas;
 
-        foreach (var b in barrido.Filas)
+        // Regla 7b: dos checks distintos resueltos el mismo mes sobre el MISMO recurso no pueden
+        // reclamar ambos el mismo delta de facturación (sería contarlo dos veces). Se agrupa por
+        // (terna, mes) y solo la primera fila del grupo (CheckId ordinal, con el índice original
+        // como desempate) puede optar al delta; el resto cae a su propio estimado o queda anotada.
+        var enriquecidas = barrido.Filas
+            .Select((b, indice) =>
+            {
+                var rg = ExtraerResourceGroup(b.AzureResourceId);
+                var terna = Terna(b.SubscriptionId, rg, b.ResourceName);
+                var mesEjecucion = ConsumoCalculador.Ym((short)b.ResueltoEn.Year, (byte)b.ResueltoEn.Month);
+                return (Indice: indice, Fila: b, Rg: rg, Terna: terna, Mes: mesEjecucion);
+            })
+            .ToList();
+
+        var ganadorPorGrupo = enriquecidas
+            .GroupBy(x => (x.Terna, x.Mes))
+            .ToDictionary(g => g.Key, g => g.OrderBy(x => x.Fila.CheckId, StringComparer.Ordinal).ThenBy(x => x.Indice).First());
+
+        foreach (var (indice, b, rg, terna, mesEjecucion) in enriquecidas)
         {
-            var rg = ExtraerResourceGroup(b.AzureResourceId);
-            var terna = Terna(b.SubscriptionId, rg, b.ResourceName);
-            var mesEjecucion = ConsumoCalculador.Ym((short)b.ResueltoEn.Year, (byte)b.ResueltoEn.Month);
             var autoria = b.ResolvedByKind switch
             {
                 "manual" => "declarada",
@@ -118,6 +133,8 @@ public static class RegistroEjecutadoCalculador
                 _ => "indeterminada",
             };
             var categoria = CategoriaEjecutado.Resolver("barrido", b.CheckId, categoriaPorTerna.GetValueOrDefault(terna));
+            var ganador = ganadorPorGrupo[(terna, mesEjecucion)];
+            var esGanadorDelGrupo = ganador.Indice == indice;
 
             decimal? montoCrudo = null;
             string? fuenteMonto = null;
@@ -127,6 +144,20 @@ public static class RegistroEjecutadoCalculador
             {
                 motivoSinMonto = "Este recurso está cubierto por una reserva activa: el ahorro se le " +
                     "atribuye a la reserva, no al barrido (mismo criterio de la atribución de consumo, E3).";
+            }
+            else if (!esGanadorDelGrupo)
+            {
+                if (b.EstimatedMonthlySavings is > 0m)
+                {
+                    montoCrudo = b.EstimatedMonthlySavings;
+                    fuenteMonto = "estimado";
+                    motivoSinMonto = null;
+                }
+                else
+                {
+                    motivoSinMonto = "El delta de facturación de este recurso y mes ya lo reclama otra " +
+                        $"fila ({NombreDelCheck(ganador.Fila.CheckId)}).";
+                }
             }
             else
             {
@@ -197,14 +228,31 @@ public static class RegistroEjecutadoCalculador
     {
         var filas = new List<AccionEjecutada>();
 
-        foreach (var h in hallazgosMatriz)
-        {
-            if (h.ResolvedAt is not { } fecha) continue; // regla 2: sin fecha no se puede ubicar
-            if (fecha < contexto.PeriodStart || fecha > contexto.PeriodEnd) continue; // D0
+        // Regla 7b (igual que en el barrido): dos hallazgos distintos resueltos el mismo mes sobre
+        // el MISMO recurso no pueden reclamar ambos el mismo delta de facturación. Sin fecha no hay
+        // dónde ubicar la fila (regla 2); el rango del período NO filtra acá — a diferencia del
+        // barrido/reserva, una acción resuelta antes de PeriodStart igual produce fila: el
+        // acumulado (Tarea 5) cuenta su vigencia dentro del rango.
+        var enriquecidas = hallazgosMatriz
+            .Where(h => h.ResolvedAt is not null)
+            .Select(h =>
+            {
+                var fecha = h.ResolvedAt!.Value;
+                var terna = Terna(h.SubscriptionId, h.ResourceGroup, h.ResourceName);
+                var mesEjecucion = ConsumoCalculador.Ym((short)fecha.Year, (byte)fecha.Month);
+                return (Hallazgo: h, Terna: terna, Mes: mesEjecucion);
+            })
+            .ToList();
 
-            var terna = Terna(h.SubscriptionId, h.ResourceGroup, h.ResourceName);
-            var mesEjecucion = ConsumoCalculador.Ym((short)fecha.Year, (byte)fecha.Month);
+        var ganadorPorGrupo = enriquecidas
+            .GroupBy(x => (x.Terna, x.Mes))
+            .ToDictionary(g => g.Key, g => g.OrderBy(x => x.Hallazgo.MatrixCode ?? x.Hallazgo.Hallazgo, StringComparer.Ordinal).First());
+
+        foreach (var (h, terna, mesEjecucion) in enriquecidas)
+        {
             var categoria = CategoriaEjecutado.Resolver("matriz", null, categoriaPorTerna.GetValueOrDefault(terna));
+            var ganador = ganadorPorGrupo[(terna, mesEjecucion)];
+            var esGanadorDelGrupo = ReferenceEquals(ganador.Hallazgo, h);
 
             decimal? montoCrudo = null;
             string? fuenteMonto = null;
@@ -221,6 +269,11 @@ public static class RegistroEjecutadoCalculador
                 // anotada, fuera de la aritmética — nunca borrada en silencio.
                 motivoSinMonto = "Este recurso ya se registró desde el barrido de optimización en el " +
                     "mismo mes: se evita contar el ahorro dos veces.";
+            }
+            else if (!esGanadorDelGrupo)
+            {
+                motivoSinMonto = "El delta de facturación de este recurso y mes ya lo reclama otra " +
+                    $"fila ({ganador.Hallazgo.Hallazgo}).";
             }
             else
             {
