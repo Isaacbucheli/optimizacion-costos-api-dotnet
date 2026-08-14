@@ -199,7 +199,7 @@ public static class AhorroReservasCalculador
     /// menos la duracion de <see cref="ReservaActiva.Term"/> ("P1Y"/"P3Y"/"P5Y", el formato que ya
     /// devuelve <c>AzureReservationsClient</c>). Null cuando cualquiera de los dos falta o no se
     /// reconoce: sin inicio no hay forma de partir la facturacion en antes/despues.</summary>
-    private static DateOnly? InicioDeReserva(string? expiresOn, string? term)
+    internal static DateOnly? InicioDeReserva(string? expiresOn, string? term)
     {
         if (string.IsNullOrWhiteSpace(expiresOn)) return null;
         if (!DateOnly.TryParseExact(expiresOn, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var vencimiento))
@@ -211,7 +211,7 @@ public static class AhorroReservasCalculador
 
     /// <summary>"P{n}Y" -> n. No se limita a {1,3,5} (los terminos vistos hoy) para no acoplarse a
     /// una lista finita si Azure agrega un termino nuevo.</summary>
-    private static int? AniosDelTermino(string? term)
+    internal static int? AniosDelTermino(string? term)
     {
         if (string.IsNullOrWhiteSpace(term)) return null;
         var t = term.Trim();
