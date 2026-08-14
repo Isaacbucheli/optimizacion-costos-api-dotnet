@@ -19,7 +19,7 @@ public sealed class AcumuladoCalculadorTests
     /// <summary>Arma una <see cref="AccionEjecutada"/> con fuente/autoría fijas ("matriz"/
     /// "declarada": no importan para esta calculadora, que ya recibe las filas resueltas). Con
     /// <paramref name="monto"/> null arma una fila "sin monto", con su propio motivo.</summary>
-    private static AccionEjecutada F(string oportunidad, string categoria, string mes, decimal? monto, string? fin = null) =>
+    private static AccionEjecutada F(string oportunidad, string categoria, string mes, decimal? monto, string? fin = null, string? fuenteMonto = null) =>
         new(
             Fuente: "matriz",
             Oportunidad: oportunidad,
@@ -30,7 +30,7 @@ public sealed class AcumuladoCalculadorTests
             MesEjecucion: mes,
             MesFin: fin,
             MontoMensual: monto,
-            FuenteMonto: monto is null ? null : "facturado",
+            FuenteMonto: monto is null ? null : (fuenteMonto ?? "facturado"),
             MotivoSinMonto: monto is null ? "sin match de facturación para este recurso" : null,
             Autoria: "declarada");
 
@@ -223,5 +223,64 @@ public sealed class AcumuladoCalculadorTests
         var esperadoDePuntaAPunta = 40m * 3 + 10m * 6;
         Assert.Equal(esperadoDePuntaAPunta, m.AcumuladoTotal);
         Assert.Equal(esperadoDePuntaAPunta, acumuladoPrevio); // el último acumulado de la serie es el total
+    }
+
+    // ── Invariante 2: composición facturado/estimado ──
+
+    /// <summary>La composición facturado + estimado es exactamente el acumulado total, porque ambos
+    /// usan la misma función de contribución que <c>PorOportunidad</c>. Verificado con un fixture que
+    /// tiene tanto filas facturadas como estimadas.</summary>
+    [Fact]
+    public void Invariante_2_composicion_facturado_mas_estimado_es_acumulado_total()
+    {
+        var filas = new List<AccionEjecutada>
+        {
+            F("A facturada", "Cat", "2026-01", 100m, fuenteMonto: "facturado"),
+            F("B facturada", "Cat", "2026-02", 50m, fuenteMonto: "facturado"),
+            F("C estimada", "Cat", "2026-01", 75m, fuenteMonto: "estimado"),
+            F("D estimada", "Cat", "2026-03", 25m, fuenteMonto: "estimado"),
+        };
+        var m = AcumuladoCalculador.Calcular(filas, EjesOk, ReservasVacioMedido, null,
+            Ctx("2026-01-01", "2026-03-31", corte: "2026-03-31"));
+
+        // Esperado: A(100×3) + B(50×2) + C(75×3) + D(25×1) = 300+100+225+25 = 650
+        // Facturado: A(300) + B(100) = 400
+        // Estimado: C(225) + D(25) = 250
+        Assert.Equal(650m, m.AcumuladoTotal);
+        Assert.Equal(400m, m.MontoFacturado);
+        Assert.Equal(250m, m.MontoEstimado);
+        Assert.Equal(m.AcumuladoTotal, m.MontoFacturado + m.MontoEstimado);
+    }
+
+    /// <summary>Fila con monto pero FuenteMonto no reconocida ("otra-cosa" en vez de "facturado"
+    /// o "estimado") dispara una excepción con un mensaje descriptivo — no falla silenciosamente
+    /// dejando la fila fuera de ambas composiciones.</summary>
+    [Fact]
+    public void Fila_con_monto_y_fuente_no_reconocida_lanza_excepcion()
+    {
+        var filas = new List<AccionEjecutada>
+        {
+            new AccionEjecutada(
+                Fuente: "matriz",
+                Oportunidad: "Mala fuente",
+                Categoria: "Cat",
+                SubscriptionId: "s1",
+                ResourceGroup: "rg1",
+                ResourceName: "recurso-x",
+                MesEjecucion: "2026-01",
+                MesFin: null,
+                MontoMensual: 100m,
+                FuenteMonto: "otra-cosa", // inválida
+                MotivoSinMonto: null,
+                Autoria: "matriz"),
+        };
+        var contexto = Ctx("2026-01-01", "2026-01-31", corte: "2026-01-31");
+
+        var ex = Assert.Throws<InvalidOperationException>(() =>
+            AcumuladoCalculador.Calcular(filas, EjesOk, ReservasVacioMedido, null, contexto));
+
+        Assert.Contains("Fila con monto sin fuente reconocida", ex.Message);
+        Assert.Contains("'otra-cosa'", ex.Message);
+        Assert.Contains("Mala fuente", ex.Message);
     }
 }

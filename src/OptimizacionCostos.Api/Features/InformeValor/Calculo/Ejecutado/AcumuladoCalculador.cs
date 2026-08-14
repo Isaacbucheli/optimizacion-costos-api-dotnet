@@ -63,7 +63,7 @@ public static class AcumuladoCalculador
         var (proyeccion, proyeccionFin) = ConstruirProyeccion(filas, contexto, acumuladoTotal);
 
         var pctGastoPeriodo = gastoTotalRango is > 0m
-            ? Math.Round(acumuladoTotal / gastoTotalRango.Value * 100m, 1, MidpointRounding.AwayFromZero)
+            ? Redondeo.ComoJs(acumuladoTotal / gastoTotalRango.Value * 100m, 1)
             : (decimal?)null;
 
         var medido = filas.Count > 0 || ejes.BarridoMedido || ejes.ReservasMedidas;
@@ -176,6 +176,7 @@ public static class AcumuladoCalculador
             var contribucion = monto * MesesActivosDentroDelRango(f, mesesDelRango);
             if (f.FuenteMonto == "facturado") facturado += contribucion;
             else if (f.FuenteMonto == "estimado") estimado += contribucion;
+            else throw new InvalidOperationException($"Fila con monto sin fuente reconocida: '{f.FuenteMonto}' ({f.Oportunidad}). Toda fila con monto rotula su fuente.");
         }
         return (facturado, estimado);
     }
