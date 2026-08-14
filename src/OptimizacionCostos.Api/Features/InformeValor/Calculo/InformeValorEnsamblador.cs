@@ -61,12 +61,12 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// cae exactamente ahí), no uno nuevo.</para>
 ///
 /// <para><b>Tarea 6 de la entrega 6: arma <c>D.ejecutado</c>, la octava clave (ver el comentario de
-/// clase de <see cref="ModeloInformeValor"/> para por qué es de nivel superior).</b> Encadena T4→T3→T5:
+/// clase de <see cref="ModeloInformeValor"/> para por qué es de nivel superior).</b> Encadena T3→T4→T5:
 /// <see cref="ReservasFacturadasCalculador"/> (Tarea 3) primero, porque <see cref="RegistroEjecutadoCalculador"/>
 /// (Tarea 4) necesita su salida para atribuirle el ahorro de una VM cubierta a la reserva y no al
 /// barrido/matriz; <see cref="AcumuladoCalculador"/> (Tarea 5) al final, sobre las filas y ejes que
 /// produjo la Tarea 4. Se computa solo cuando hay con qué: <paramref name="registroBarrido"/> no nulo
-/// (alguien corrió el barrido, autorizado o no) o <paramref name="fotoReservas"/> ya medida — sin
+/// (registroBarrido no nulo: la ruta intentó leer el barrido, con cualquier resultado declarado) o <paramref name="fotoReservas"/> ya medida — sin
 /// ninguno de los dos insumos no hay ninguna de las tres fuentes que cruzar, y <c>Ejecutado</c> queda
 /// <c>null</c>, misma semántica que los demás bloques ausentes de este método. Cuando
 /// <paramref name="registroBarrido"/> llega <c>null</c> (el llamador no leyó el barrido en esta ruta,
@@ -127,6 +127,8 @@ public static class InformeValorEnsamblador
                 registroBarrido ?? RegistroBarrido.NoAutorizado(
                     "El barrido no se leyó en esta ruta: no es que el cliente no lo haya corrido, es " +
                     "que este llamado del ensamblador no lo pidió."),
+                // Ojo: aun sin registroBarrido, la rama de matriz corre con HallazgosResueltos reales;
+                // solo el eje del barrido queda suprimido hasta que el controller lo cablee (T10).
                 insumosBd.HallazgosResueltos ?? [], reservasFacturadas, fotoParaEjecutado, facturacion, contexto);
             ejecutado = AcumuladoCalculador.Calcular(
                 filasEjecutado, ejesEjecutado, reservasFacturadas, consumo?.Total, contexto);

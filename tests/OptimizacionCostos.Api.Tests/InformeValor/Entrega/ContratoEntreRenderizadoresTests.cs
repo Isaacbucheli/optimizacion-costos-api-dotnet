@@ -72,7 +72,7 @@ public sealed class ContratoEntreRenderizadoresTests
             "necesita su propio interruptor de aprobación antes de poder viajar. Hasta entonces, el " +
             "consultor la revisa en la vista y el artefacto no la publica."),
         ("ejecutado", Lado.React,
-            "Comparte tokens con fact.variacionConsumo.reservas (medido, motivo, reservas, nota, " +
+            "Comparte tokens con fact.variacionConsumo.reservas (medido, motivo, reservas, " +
             "reservationId, consumidoresNoLeidos): la Tarea 3 de esta entrega reusa esos nombres para " +
             "la tabla de reservas contra la factura, y la vista React ya los lee para el bloque de la " +
             "entrega 2d. El barrido por texto no distingue de qué padre viene cada token repetido " +
