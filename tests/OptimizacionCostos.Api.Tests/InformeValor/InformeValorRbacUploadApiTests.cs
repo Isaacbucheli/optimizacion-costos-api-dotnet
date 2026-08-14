@@ -205,6 +205,10 @@ public sealed class InformeValorRbacUploadApiTests : IClassFixture<InformeValorR
         // Ídem: /preview/variacion-consumo es el único que lo llama, y no se toca acá.
         public Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
             int clientId, CancellationToken ct = default) => throw new NotSupportedException();
+
+        // Ídem: /preview y /generar son los únicos que lo llaman, y no se tocan acá.
+        public Task<RegistroBarrido> LeerBarridoResueltoAsync(int clientId, CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 
     /// <summary>Store fake que registra si ReplaceRbacAsync llegó a llamarse: es la comprobación

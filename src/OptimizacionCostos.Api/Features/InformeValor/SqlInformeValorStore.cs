@@ -434,7 +434,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         bloques_publicados, rbac_origen, rbac_corrida_fecha, seguridad_gestionada_externamente,
         facturacion_ingesta_id, casos_ingesta_id, rbac_ingesta_id, foto_reservas_json,
         plantilla_version, blob_name, blob_size_bytes, file_name, summary_json,
-        generated_by, generated_at, blob_container
+        generated_by, generated_at, blob_container, evolucion_ingesta_id
         """;
 
     public async Task<int> RegistrarEntregaAsync(EntregaNueva entrega, CancellationToken ct)
@@ -448,11 +448,12 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
                 (client_id, period_start, period_end, corte, meses_parciales, variante,
                  bloques_publicados, rbac_origen, rbac_corrida_fecha,
                  seguridad_gestionada_externamente, facturacion_ingesta_id, casos_ingesta_id,
-                 rbac_ingesta_id, foto_reservas_json, plantilla_version, blob_container, blob_name,
-                 blob_size_bytes, file_name, summary_json, generated_by, generated_at)
+                 rbac_ingesta_id, evolucion_ingesta_id, foto_reservas_json, plantilla_version,
+                 blob_container, blob_name, blob_size_bytes, file_name, summary_json, generated_by,
+                 generated_at)
             OUTPUT INSERTED.entrega_id
             VALUES (@cid, @ini, @fin, @corte, @parc, @var, @bloques, @rbacOrigen, @rbacCorrida,
-                    @segExt, @ingFact, @ingCasos, @ingRbac, @foto, @plantilla, @cont, @blob,
+                    @segExt, @ingFact, @ingCasos, @ingRbac, @ingEvo, @foto, @plantilla, @cont, @blob,
                     @size, @file, @summary, @by, @now)
             """;
         cmd.Parameters.Add(new SqlParameter("@cid", SqlDbType.Int) { Value = entrega.ClientId });
@@ -474,6 +475,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         cmd.Parameters.Add(Entero("@ingFact", entrega.FacturacionIngestaId));
         cmd.Parameters.Add(Entero("@ingCasos", entrega.CasosIngestaId));
         cmd.Parameters.Add(Entero("@ingRbac", entrega.RbacIngestaId));
+        cmd.Parameters.Add(Entero("@ingEvo", entrega.EvolucionIngestaId));
         cmd.Parameters.Add(new SqlParameter("@foto", SqlDbType.NVarChar, -1)
         { Value = (object?)FotoReservasJson.Serializar(entrega.FotoReservas) ?? DBNull.Value });
         cmd.Parameters.Add(new SqlParameter("@plantilla", SqlDbType.NVarChar, 64)
@@ -532,7 +534,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
 
         return new EntregaArchivada(
             Resumen: LeerResumen(rd),
-            // Índice 21: última columna de ColumnasEntregaCompleta (ver su remarks).
+            // Índice 21: penúltima columna de ColumnasEntregaCompleta (ver su remarks).
             BlobContainer: rd.IsDBNull(21) ? null : rd.GetString(21),
             BlobName: rd.GetString(15),
             MesesParcialesForzados: MesesParcialesJson.Deserializar(rd.IsDBNull(4) ? null : rd.GetString(4)),
@@ -541,6 +543,8 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
             FacturacionIngestaId: rd.IsDBNull(10) ? null : rd.GetInt32(10),
             CasosIngestaId: rd.IsDBNull(11) ? null : rd.GetInt32(11),
             RbacIngestaId: rd.IsDBNull(12) ? null : rd.GetInt32(12),
+            // Índice 22: última columna de ColumnasEntregaCompleta, agregada al final (T10).
+            EvolucionIngestaId: rd.IsDBNull(22) ? null : rd.GetInt32(22),
             FotoReservas: FotoReservasJson.Deserializar(rd.IsDBNull(13) ? null : rd.GetString(13)),
             PlantillaVersion: rd.IsDBNull(14) ? null : rd.GetString(14),
             SummaryJson: rd.IsDBNull(18) ? null : rd.GetString(18));

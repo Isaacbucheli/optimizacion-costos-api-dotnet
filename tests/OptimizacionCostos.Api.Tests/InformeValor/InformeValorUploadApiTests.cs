@@ -337,6 +337,9 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
 
         public Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
             int clientId, CancellationToken ct = default) => throw new NotSupportedException();
+
+        public Task<RegistroBarrido> LeerBarridoResueltoAsync(int clientId, CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 
     /// <summary>Ningún test de esta clase pega a /preview/variacion-consumo: revienta a propósito si

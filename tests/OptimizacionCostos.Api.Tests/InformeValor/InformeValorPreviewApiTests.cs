@@ -16,6 +16,7 @@ using OptimizacionCostos.Api.Features.Identity;
 using OptimizacionCostos.Api.Features.InformeValor;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 using OptimizacionCostos.Api.Features.InformeValor.Entrega;
+using OptimizacionCostos.Api.Features.Optimization;
 
 namespace OptimizacionCostos.Api.Tests.InformeValor;
 
@@ -128,6 +129,98 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
         var json = await body.Content.ReadFromJsonAsync<JsonElement>();
 
         Assert.Equal("Cliente 55", json.GetProperty("meta").GetProperty("cliente").GetString());
+    }
+
+    // ================================================================================
+    // La doble puerta del barrido (entrega 6, Tarea 10): D.ejecutado.ejes.barridoMedido
+    // ================================================================================
+
+    /// <summary>
+    /// La primera mitad de la doble puerta del spec: sin View del módulo Optimization, el eje del
+    /// barrido declara que no se pudo leer -- nunca sale en cero (D9). El motivo es el texto exacto
+    /// que fija <c>InformeValorController.LeerRegistroBarridoAsync</c>. Ni el recolector ni
+    /// <c>EnsureSchemaAsync</c> se llegan a tocar: la puerta cierra antes de intentar leer nada.
+    /// </summary>
+    [Fact]
+    public async Task Sin_permiso_del_modulo_Optimization_el_barrido_sale_no_medido_con_motivo()
+    {
+        const int clientId = 80;
+        _factory.Access.Allow(clientId);
+        var client = ClientFor("p14@bit.ec", Roles.Lector, canEdit: false);
+        var antesRecolector = _factory.Recolector.LeerBarridoResueltoLlamadas;
+        var antesSchema = _factory.Optimization.EnsureSchemaLlamadas;
+
+        var res = await client.PostAsJsonAsync($"/informe-valor/clients/{clientId}/preview", CuerpoValido());
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var ejes = (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("ejecutado").GetProperty("ejes");
+        Assert.False(ejes.GetProperty("barridoMedido").GetBoolean());
+        Assert.Equal(
+            "El barrido de optimización requiere permisos que este usuario no tiene; la sección no se midió.",
+            ejes.GetProperty("barridoMotivo").GetString());
+        Assert.Equal(antesRecolector, _factory.Recolector.LeerBarridoResueltoLlamadas);
+        Assert.Equal(antesSchema, _factory.Optimization.EnsureSchemaLlamadas);
+    }
+
+    /// <summary>
+    /// La segunda mitad de la doble puerta: con permiso del módulo pero el correo fuera de la lista
+    /// de <c>OptimizationService.AccessAllowed</c>, el resultado es EL MISMO que sin permiso del
+    /// módulo -- las dos condiciones son un Y, no dos caminos que se puedan distinguir desde afuera.
+    /// </summary>
+    [Fact]
+    public async Task Con_permiso_del_modulo_pero_el_correo_fuera_de_la_lista_el_barrido_tambien_sale_no_medido()
+    {
+        const int clientId = 81;
+        const string email = "p15@bit.ec";
+        _factory.Access.Allow(clientId);
+        _factory.Optimization.Denegar(email);
+        var client = ClientFor(email, Roles.Consultor, canEdit: false);
+        var antesSchema = _factory.Optimization.EnsureSchemaLlamadas;
+
+        var res = await client.PostAsJsonAsync($"/informe-valor/clients/{clientId}/preview", CuerpoValido());
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var ejes = (await res.Content.ReadFromJsonAsync<JsonElement>())
+            .GetProperty("ejecutado").GetProperty("ejes");
+        Assert.False(ejes.GetProperty("barridoMedido").GetBoolean());
+        Assert.Equal(
+            "El barrido de optimización requiere permisos que este usuario no tiene; la sección no se midió.",
+            ejes.GetProperty("barridoMotivo").GetString());
+        Assert.Equal(antesSchema, _factory.Optimization.EnsureSchemaLlamadas);
+    }
+
+    /// <summary>
+    /// Con las dos puertas abiertas, el registro se lee de verdad: <c>EnsureSchemaAsync</c> corre
+    /// ANTES del recolector (el llamador asegura el schema del barrido, que
+    /// <c>SqlInsumosBdRecolector</c> no cubre) y las filas resueltas llegan hasta
+    /// <c>D.ejecutado.filas</c>, no solo hasta el eje de "medido".
+    /// </summary>
+    [Fact]
+    public async Task Con_las_dos_puertas_abiertas_y_barrido_resuelto_el_ejecutado_trae_filas()
+    {
+        const int clientId = 82;
+        _factory.Access.Allow(clientId);
+        _factory.Recolector.ConBarrido(clientId, new RegistroBarrido(true, null,
+        [
+            new BarridoResueltoFila(
+                CheckId: "orphan_disk", SubscriptionId: "sub-1",
+                AzureResourceId: "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Compute/disks/disco-1",
+                ResourceName: "disco-1", ResourceType: "Microsoft.Compute/disks",
+                EstimatedMonthlySavings: 25m, Currency: "USD",
+                ResueltoEn: new DateTime(2026, 1, 15), ResueltoPor: "consultor@bit.ec",
+                ResolvedByKind: "manual", Notas: null),
+        ]));
+        var client = ClientFor("p16@bit.ec", Roles.Consultor, canEdit: false);
+
+        var res = await client.PostAsJsonAsync($"/informe-valor/clients/{clientId}/preview", CuerpoValido());
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var ejecutado = (await res.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("ejecutado");
+        Assert.True(ejecutado.GetProperty("ejes").GetProperty("barridoMedido").GetBoolean());
+        Assert.Null(ejecutado.GetProperty("ejes").GetProperty("barridoMotivo").GetString());
+        Assert.NotEmpty(ejecutado.GetProperty("filas").EnumerateArray());
+        Assert.True(_factory.Optimization.EnsureSchemaLlamadas > 0);
     }
 
     /// <summary>
@@ -354,6 +447,7 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
         public FakeAzureReservationsClientControlable ReservationsClient { get; } = new();
         public FakeModulePermissionStore Perms { get; } = new FakeModulePermissionStore().SeedDefaults();
         public IModulePermissionService Service => Services.GetRequiredService<IModulePermissionService>();
+        public FakeOptimizationServiceControlable Optimization { get; } = new();
 
         public Factory() => Environment.SetEnvironmentVariable("JWT_SECRET", Secret);
 
@@ -386,6 +480,12 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
                 // fuera del scope del request.
                 services.RemoveAll<IModulePermissionService>();
                 services.AddSingleton<IModulePermissionService, ModulePermissionService>();
+                // Entrega 6 (T10): la doble puerta del barrido pega a IOptimizationService en CADA
+                // /preview de un rol con acceso al módulo Optimization (que es el default de
+                // Roles.Consultor, ver FakeModulePermissionStore.SeedDefaults). Sin este falso, el
+                // servicio real intentaría EnsureSchemaAsync contra una conexión SQL de verdad.
+                services.RemoveAll<IOptimizationService>();
+                services.AddSingleton<IOptimizationService>(Optimization);
             });
         }
     }
@@ -517,6 +617,60 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
             LeerHallazgosResueltosLlamadas++;
             return Task.FromResult<IReadOnlyList<HallazgoResueltoFila>>([]);
         }
+
+        // Entrega 6 (T10): registro del barrido por cliente, configurable. Sin entrada para un
+        // client_id, responde RegistroBarrido.SinBarrido() -- mismo default que fija el brief para
+        // todos los fakes de este módulo.
+        private readonly Dictionary<int, RegistroBarrido> _barridoPorCliente = new();
+
+        public int LeerBarridoResueltoLlamadas { get; private set; }
+
+        public void ConBarrido(int clientId, RegistroBarrido registro) => _barridoPorCliente[clientId] = registro;
+
+        public Task<RegistroBarrido> LeerBarridoResueltoAsync(int clientId, CancellationToken ct = default)
+        {
+            LeerBarridoResueltoLlamadas++;
+            return Task.FromResult(_barridoPorCliente.GetValueOrDefault(clientId, RegistroBarrido.SinBarrido()));
+        }
+    }
+
+    /// <summary>
+    /// <see cref="IOptimizationService"/> en memoria: por defecto abierto (mismo comportamiento que
+    /// la config real con <c>OPTIMIZATION_ALLOWED_EMAILS</c> vacío) y sin tocar SQL en
+    /// <see cref="EnsureSchemaAsync"/> -- la doble puerta de
+    /// <c>InformeValorController.LeerRegistroBarridoAsync</c> necesita este falso para no intentar
+    /// una conexión real cada vez que un rol con acceso al módulo Optimization pega a /preview o a
+    /// /generar. <see cref="Denegar"/> simula la lista de correos NO vacía que excluye un email
+    /// puntual, para poder probar el lado del "Y" de la doble puerta que el permiso del módulo por
+    /// sí solo no cubre.
+    /// </summary>
+    public sealed class FakeOptimizationServiceControlable : IOptimizationService
+    {
+        private readonly HashSet<string> _denegados = new(StringComparer.OrdinalIgnoreCase);
+
+        public int EnsureSchemaLlamadas { get; private set; }
+
+        public void Denegar(string email) => _denegados.Add(email);
+
+        public bool AccessAllowed(string? email) =>
+            string.IsNullOrWhiteSpace(email) || !_denegados.Contains(email);
+
+        public Task EnsureSchemaAsync(CancellationToken ct = default)
+        {
+            EnsureSchemaLlamadas++;
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyDictionary<string, object?>> RunScanAsync(int clientId, string? actor, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ListScansAsync(int clientId, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<int?> ScanOwnerAsync(int scanId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> ScanFindingsAsync(int scanId, CancellationToken ct = default)
+            => throw new NotSupportedException();
+        public Task<int?> FindingStateOwnerAsync(byte[] fingerprint, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<bool> UpdateStateAsync(byte[] fingerprint, string state, string? notes, string? actor, CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 
     /// <summary>Nombre por cliente en memoria; sin entrada, <c>GetNameAsync</c> devuelve null (mismo

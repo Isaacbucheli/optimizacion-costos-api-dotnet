@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Claims;
 using System.Text.Json;
 using Azure;
 using Microsoft.AspNetCore.Authorization;
@@ -11,6 +12,7 @@ using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.InformeValor.Calculo;
 using OptimizacionCostos.Api.Features.InformeValor.Entrega;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
+using OptimizacionCostos.Api.Features.Optimization;
 using OptimizacionCostos.Api.Features.Storage;
 
 namespace OptimizacionCostos.Api.Features.InformeValor.Api;
@@ -50,7 +52,8 @@ public sealed class InformeValorController(
     IInformeValorStore store, IAnalysisAccess access, ILogger<InformeValorController> logger,
     IInsumosBdRecolector recolector, IClientStore clientStore,
     IReservationService reservations, IAzureReservationsClient reservationsClient,
-    IBlobStorageService blobs, AppConfig config) : ControllerBase
+    IBlobStorageService blobs, AppConfig config,
+    IModulePermissionService permissions, IOptimizationService optimization) : ControllerBase
 {
     // Un export de BITCOST de 24 meses de un cliente grande está entre 8 y 18 MB, así que el
     // tope compartido de UploadValidation (10 MiB) rechazaría un archivo legítimo.
@@ -210,9 +213,12 @@ public sealed class InformeValorController(
         var casos = await store.GetCasosAsync(clientId, ct);
         var estados = await store.GetEstadoAsync(clientId, ct);
         var nombreCliente = await clientStore.GetNameAsync(clientId, ct) ?? $"Cliente {clientId}";
+        var evolucion = await store.GetEvolucionAsync(clientId, ct);
+        var registro = await LeerRegistroBarridoAsync(clientId, ct);
 
         var modelo = InformeValorEnsamblador.Ensamblar(
-            facturacion, FilasAntesDeFusionar(estados), casos, insumosBd, nombreCliente, contexto);
+            facturacion, FilasAntesDeFusionar(estados), casos, insumosBd, nombreCliente, contexto,
+            registroBarrido: registro, evolucion: evolucion);
 
         return Ok(modelo);
     }
@@ -340,6 +346,21 @@ public sealed class InformeValorController(
         }
     }
 
+    /// <summary>La doble puerta del spec (Recolectores): el registro del barrido solo se lee si el
+    /// usuario tiene View del módulo Optimization Y pasa la lista de correos del barrido. Sin las
+    /// dos, la sección declara que no se pudo leer — no sale en cero (D9).</summary>
+    private async Task<RegistroBarrido> LeerRegistroBarridoAsync(int clientId, CancellationToken ct)
+    {
+        var role = User.FindFirst(ClaimTypes.Role)?.Value ?? "";
+        var email = User.FindFirst("sub")?.Value;
+        if (!await permissions.HasAccessAsync(role, Modules.Optimization, requireEdit: false, ct)
+            || !optimization.AccessAllowed(email))
+            return RegistroBarrido.NoAutorizado(
+                "El barrido de optimización requiere permisos que este usuario no tiene; la sección no se midió.");
+        await optimization.EnsureSchemaAsync(ct);
+        return await recolector.LeerBarridoResueltoAsync(clientId, ct);
+    }
+
     // ===================================================================================
     // Entrega (Tarea 4 de la entrega 3): generar, listar y descargar.
     // ===================================================================================
@@ -417,10 +438,13 @@ public sealed class InformeValorController(
         var casos = await store.GetCasosAsync(clientId, ct);
         var estados = await store.GetEstadoAsync(clientId, ct);
         var nombreCliente = await clientStore.GetNameAsync(clientId, ct) ?? $"Cliente {clientId}";
+        var evolucion = await store.GetEvolucionAsync(clientId, ct);
+        var registro = await LeerRegistroBarridoAsync(clientId, ct);
         var foto = await fotoPendiente;
 
         var modelo = InformeValorEnsamblador.Ensamblar(
-            facturacion, FilasAntesDeFusionar(estados), casos, insumosBd, nombreCliente, contexto, foto);
+            facturacion, FilasAntesDeFusionar(estados), casos, insumosBd, nombreCliente, contexto, foto,
+            registroBarrido: registro, evolucion: evolucion);
 
         ArtefactoInforme artefacto;
         try
@@ -471,6 +495,7 @@ public sealed class InformeValorController(
                     FacturacionIngestaId: EstadoDe(estados, SqlInformeValorStore.KindFacturacion)?.IngestaId,
                     CasosIngestaId: EstadoDe(estados, SqlInformeValorStore.KindCasos)?.IngestaId,
                     RbacIngestaId: EstadoDe(estados, SqlInformeValorStore.KindRbac)?.IngestaId,
+                    EvolucionIngestaId: EstadoDe(estados, SqlInformeValorStore.KindEvolucion)?.IngestaId,
                     FotoReservas: foto,
                     PlantillaVersion: artefacto.PlantillaVersion,
                     BlobContainer: container,

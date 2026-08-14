@@ -136,6 +136,7 @@ public sealed class InformeValorSchemaTests
     [InlineData("facturacion_ingesta_id")]
     [InlineData("casos_ingesta_id")]
     [InlineData("rbac_ingesta_id")]
+    [InlineData("evolucion_ingesta_id")]
     [InlineData("foto_reservas_json")]
     [InlineData("plantilla_version")]
     [InlineData("blob_container")]
@@ -165,6 +166,7 @@ public sealed class InformeValorSchemaTests
     [InlineData("facturacion_ingesta_id")]
     [InlineData("casos_ingesta_id")]
     [InlineData("rbac_ingesta_id")]
+    [InlineData("evolucion_ingesta_id")]
     [InlineData("plantilla_version")]
     [InlineData("blob_container")]
     public void Las_columnas_de_reproducibilidad_tienen_soft_migration(string columna)

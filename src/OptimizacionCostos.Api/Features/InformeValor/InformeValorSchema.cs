@@ -174,6 +174,9 @@ public static class InformeValorSchema
                 facturacion_ingesta_id INT NULL,
                 casos_ingesta_id INT NULL,
                 rbac_ingesta_id INT NULL,
+                -- La corrida de evolución (entrega 5) que alimentó esta entrega: mismo criterio que
+                -- sus tres hermanas de arriba (entrega 6, Tarea 10).
+                evolucion_ingesta_id INT NULL,
                 -- La foto de reservas (F4, heredada de la entrega 2d). Sin persistirla, reemitir un
                 -- informe viejo lo recalcularía contra las reservas de HOY. NULL y una foto con
                 -- Medido=false NO son lo mismo: NULL es "esta entrega es anterior a la foto",
@@ -229,6 +232,11 @@ public static class InformeValorSchema
         """
         IF COL_LENGTH('dbo.informe_valor_entrega', 'rbac_ingesta_id') IS NULL
             ALTER TABLE dbo.informe_valor_entrega ADD rbac_ingesta_id INT NULL;
+        """,
+        // soft-migration entrega 6 (Tarea 10): mismo motivo que sus tres hermanas de arriba.
+        """
+        IF COL_LENGTH('dbo.informe_valor_entrega', 'evolucion_ingesta_id') IS NULL
+            ALTER TABLE dbo.informe_valor_entrega ADD evolucion_ingesta_id INT NULL;
         """,
         """
         IF COL_LENGTH('dbo.informe_valor_entrega', 'plantilla_version') IS NULL

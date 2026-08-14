@@ -175,6 +175,18 @@ public sealed class SqlInsumosBdRecolector(
             conn, clientId, administradas, seguridadGestionadaExternamente, ct);
     }
 
+    /// <summary>
+    /// <see cref="IInsumosBdRecolector.LeerBarridoResueltoAsync"/>: abre su propia conexión y
+    /// delega en <see cref="BarridoResueltoRecolector.LeerAsync"/>. Sin schema-ensure propio a
+    /// propósito -- el llamador (el controller) ya corrió <c>OptimizationService.EnsureSchemaAsync</c>
+    /// como parte de la doble puerta, antes de decidir siquiera llamar a este método.
+    /// </summary>
+    public async Task<RegistroBarrido> LeerBarridoResueltoAsync(int clientId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        return await BarridoResueltoRecolector.LeerAsync(conn, clientId, ct);
+    }
+
     /// <summary>Ver <see cref="_schemaEnsured"/>: DDL idempotente de WAF y Boletin, una sola vez por
     /// proceso. Compartido por <see cref="LeerAsync"/> y <see cref="LeerHallazgosResueltosAsync"/>,
     /// los dos caminos que consultan tablas de esos dos modulos.</summary>

@@ -146,4 +146,19 @@ public interface IInsumosBdRecolector
     /// </summary>
     Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
         int clientId, CancellationToken ct = default);
+
+    /// <summary>
+    /// El registro del barrido de optimización resuelto (<see cref="BarridoResueltoRecolector"/>,
+    /// entrega 5), leído sin decidir la doble puerta del spec: el llamador (entrega 6, el controller,
+    /// donde vive el contexto de usuario) verifica el permiso del módulo Optimization Y
+    /// <c>OptimizationService.AccessAllowed(email)</c> ANTES de llamar a esto, y usa
+    /// <see cref="RegistroBarrido.NoAutorizado"/> cuando no pasa — este método nunca se llama en ese
+    /// caso.
+    ///
+    /// <para>El llamador también debe correr <c>OptimizationService.EnsureSchemaAsync</c> antes de
+    /// invocar este método: las tablas del barrido no las asegura <see cref="SqlInsumosBdRecolector"/>
+    /// (no forma parte del schema-ensure de <see cref="LeerAsync"/> a propósito, el barrido no es un
+    /// insumo de <see cref="InsumosBd"/>).</para>
+    /// </summary>
+    Task<RegistroBarrido> LeerBarridoResueltoAsync(int clientId, CancellationToken ct = default);
 }

@@ -544,6 +544,11 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
         public Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
             int clientId, CancellationToken ct = default) =>
             Task.FromResult(_insumos.HallazgosResueltos ?? []);
+
+        // Ningún test de esta clase pega a /preview ni a /generar (solo al recolector directo o a
+        // /insumos-bd): mismo default seguro que el resto de los fakes de este módulo.
+        public Task<RegistroBarrido> LeerBarridoResueltoAsync(int clientId, CancellationToken ct = default) =>
+            Task.FromResult(RegistroBarrido.SinBarrido());
     }
 
     /// <summary>Ningún test de esta clase pega a /preview/variacion-consumo: revienta a propósito si

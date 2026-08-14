@@ -18,6 +18,7 @@ using OptimizacionCostos.Api.Features.Identity;
 using OptimizacionCostos.Api.Features.InformeValor;
 using OptimizacionCostos.Api.Features.InformeValor.Entrega;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
+using OptimizacionCostos.Api.Features.Optimization;
 using OptimizacionCostos.Api.Features.Storage;
 
 namespace OptimizacionCostos.Api.Tests.InformeValor;
@@ -682,6 +683,34 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
     }
 
     /// <summary>
+    /// T10: la corrida de evolución que alimentó el informe se archiva igual que sus tres hermanas
+    /// (facturación, casos, RBAC), y el fake store la devuelve intacta al releerla por
+    /// <c>GetEntregaAsync</c> -- no solo desde la lista de escritura (<c>_factory.Store.Entregas</c>,
+    /// que ya prueba el test hermano de arriba para las otras tres corridas). Si el índice posicional
+    /// de <c>EvolucionIngestaId</c> quedara mal contado en el fake (o en el store real, que usa el
+    /// mismo criterio posicional sobre <c>ColumnasEntregaCompleta</c>), esta vuelta lo detecta.
+    /// </summary>
+    [Fact]
+    public async Task Generar_archiva_la_corrida_de_evolucion_y_la_entrega_archivada_la_devuelve()
+    {
+        const int clientId = 942;
+        _factory.Access.Allow(clientId);
+        var client = ClientFor("g29@bit.ec", Roles.Consultor, canEdit: true);
+
+        var res = await client.PostAsJsonAsync($"/informe-valor/clients/{clientId}/generar", Cuerpo());
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var entregaId = (await res.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("entrega_id").GetInt32();
+
+        var entrega = Assert.Single(_factory.Store.Entregas.Where(e => e.ClientId == clientId).ToList());
+        Assert.Equal(FakeInformeValorStoreConDatosParaEntrega.IngestaEvolucion, entrega.EvolucionIngestaId);
+
+        var archivada = await _factory.Store.GetEntregaAsync(clientId, entregaId, CancellationToken.None);
+        Assert.NotNull(archivada);
+        Assert.Equal(FakeInformeValorStoreConDatosParaEntrega.IngestaEvolucion, archivada!.EvolucionIngestaId);
+    }
+
+    /// <summary>
     /// "La entrega no existe" y "la entrega existe pero su artefacto ya no está" son dos hechos
     /// distintos y llevan a acciones distintas (revisar el id contra volver a generar). Los dos son
     /// 404, pero el texto tiene que separarlos.
@@ -756,6 +785,7 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
         public InformeValorPreviewApiTests.FakeAzureReservationsClientControlable ReservationsClient { get; } = new();
         public FakeModulePermissionStore Perms { get; } = new FakeModulePermissionStore().SeedDefaults();
         public IModulePermissionService Service => Services.GetRequiredService<IModulePermissionService>();
+        public InformeValorPreviewApiTests.FakeOptimizationServiceControlable Optimization { get; } = new();
 
         public Factory() => Environment.SetEnvironmentVariable("JWT_SECRET", Secret);
 
@@ -806,6 +836,11 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
                 services.AddSingleton<IModulePermissionStore>(Perms);
                 services.RemoveAll<IModulePermissionService>();
                 services.AddSingleton<IModulePermissionService, ModulePermissionService>();
+                // Entrega 6 (T10): mismo motivo que en InformeValorPreviewApiTests.Factory -- sin
+                // este falso, /generar con un rol con acceso al módulo Optimization intentaría
+                // EnsureSchemaAsync contra una conexión SQL de verdad.
+                services.RemoveAll<IOptimizationService>();
+                services.AddSingleton<IOptimizationService>(Optimization);
             });
         }
     }
@@ -883,6 +918,7 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
     {
         public const int IngestaFacturacion = 4001;
         public const int IngestaCasos = 4002;
+        public const int IngestaEvolucion = 4003;
 
         public List<EntregaNueva> Entregas { get; } = [];
         private readonly Dictionary<(int ClientId, int EntregaId), EntregaArchivada> _archivadas = [];
@@ -902,7 +938,8 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
             _archivadas[(clientId, entregaId)] = new EntregaArchivada(
                 resumen, container, blobName, MesesParcialesForzados: [], RbacCorridaFecha: null,
                 SeguridadGestionadaExternamente: false, FacturacionIngestaId: null, CasosIngestaId: null,
-                RbacIngestaId: null, FotoReservas: null, PlantillaVersion: null, SummaryJson: null);
+                RbacIngestaId: null, EvolucionIngestaId: null, FotoReservas: null, PlantillaVersion: null,
+                SummaryJson: null);
         }
 
         public Task<int> ReplaceFacturacionAsync(
@@ -923,8 +960,8 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
 
         public Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct) => throw new NotSupportedException();
 
-        /// <summary>Facturación y casos cargados (con su corrida), RBAC no: el tri-estado de
-        /// "insumo ausente" tiene que llegar como null a la entrega, no como cero.</summary>
+        /// <summary>Facturación, casos y evolución cargados (con su corrida), RBAC no: el tri-estado
+        /// de "insumo ausente" tiene que llegar como null a la entrega, no como cero.</summary>
         public Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<InsumoEstado>>(
             [
@@ -934,6 +971,9 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
                 new InsumoEstado(
                     SqlInformeValorStore.KindCasos, true, "casos.xlsx",
                     new DateTime(2026, 3, 1, 8, 5, 0, DateTimeKind.Utc), 0, 0, "ok", [], IngestaCasos),
+                new InsumoEstado(
+                    SqlInformeValorStore.KindEvolucion, true, "evolucion.xlsx",
+                    new DateTime(2026, 3, 1, 8, 10, 0, DateTimeKind.Utc), 0, 0, "ok", [], IngestaEvolucion),
             ]);
 
         public Task<IReadOnlyList<FacturacionRow>> GetFacturacionAsync(int clientId, CancellationToken ct) =>
@@ -975,7 +1015,7 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
                 resumen, entrega.BlobContainer, entrega.BlobName, entrega.MesesParcialesForzados,
                 entrega.RbacCorridaFecha, entrega.SeguridadGestionadaExternamente,
                 entrega.FacturacionIngestaId, entrega.CasosIngestaId, entrega.RbacIngestaId,
-                entrega.FotoReservas, entrega.PlantillaVersion, entrega.SummaryJson);
+                entrega.EvolucionIngestaId, entrega.FotoReservas, entrega.PlantillaVersion, entrega.SummaryJson);
             return Task.FromResult(entregaId);
         }
 
@@ -1015,6 +1055,12 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
 
         public Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
             int clientId, CancellationToken ct = default) => throw new NotSupportedException();
+
+        // Entrega 6 (T10): ningún test de esta clase configura el barrido en particular (la doble
+        // puerta ya está cubierta en InformeValorPreviewApiTests); mismo default seguro del resto de
+        // los fakes de este módulo.
+        public Task<RegistroBarrido> LeerBarridoResueltoAsync(int clientId, CancellationToken ct = default) =>
+            Task.FromResult(RegistroBarrido.SinBarrido());
     }
 
     public sealed class FakeClientStoreParaEntrega : IClientStore
