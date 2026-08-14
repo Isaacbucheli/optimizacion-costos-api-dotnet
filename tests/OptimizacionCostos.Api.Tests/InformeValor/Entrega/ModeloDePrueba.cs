@@ -6,9 +6,9 @@ namespace OptimizacionCostos.Api.Tests.InformeValor.Entrega;
 /// <summary>
 /// Un <see cref="ModeloInformeValor"/> con un valor distinto en CADA monto del modelo. Los montos
 /// son marcadores irrepetibles (11xxx para consumo, 22xxx para Advisor, 33xxx para el acumulado
-/// ejecutado, 34xxx para sus reservas facturadas) para que un test pueda afirmar "este monto no
-/// está en el artefacto" buscando el número, sin depender de cómo se formatea ni de qué sección lo
-/// dibuja.
+/// ejecutado, 34xxx para sus reservas facturadas, 35xxx para la conciliación entre los dos
+/// archivos de bitcost) para que un test pueda afirmar "este monto no está en el artefacto"
+/// buscando el número, sin depender de cómo se formatea ni de qué sección lo dibuja.
 /// </summary>
 internal static class ModeloDePrueba
 {
@@ -61,6 +61,14 @@ internal static class ModeloDePrueba
         ("reservasFacturadas", 34005m),   // ejecutado.reservas.filas[0].demanda
         ("reservasFacturadas", 34006m),   // ejecutado.reservas.filas[0].reserva
         ("reservasFacturadas", 34007m),   // ejecutado.reservas.filas[0].ahorro
+        // meta.conciliacion (Tarea 8 de la entrega 6, C1 del review final): no lo cubre ninguno de
+        // los ocho bloques ("conciliacion" no es la clave de ninguno), así que ningún bloque
+        // aprobado lo publica nunca — el barrido de "Cada_bloque_aprobado_publica_exactamente_sus_
+        // montos" lo confirma al no encontrar coincidencia jamás. Igual que fact.variacionConsumo,
+        // se recorta entero (Recortar), no campo por campo.
+        ("conciliacion", 35001.10m),      // meta.conciliacion.difs[0][1] (total de hechos del mes)
+        ("conciliacion", 35002.10m),      // meta.conciliacion.difs[0][2] (total de evolución del mes)
+        ("conciliacion", 35003.10m),      // meta.conciliacion.difs[0][3] (diferencia)
     ];
 
     /// <summary>El porcentaje de la tarjeta 1 (<c>ejecutado.pctGasto</c>): viaja SIEMPRE, aprobado o
@@ -74,7 +82,13 @@ internal static class ModeloDePrueba
             Periodo: "2026-01 a 2026-02",
             Corte: "2026-03-01",
             Cobertura: new InformeValorCobertura(1, [new CoberturaSuscripcion("sub-1", SuscripcionConAcentos, true, false, true)]),
-            RbacOrigen: "base"),
+            RbacOrigen: "base",
+            // Marcadores 35xxx (C1 del review final de la entrega 6): meta.conciliacion tiene que
+            // desaparecer entero en la variante del cliente (InformeValorHtmlExporterTests).
+            Conciliacion: new ConciliacionArchivos(
+                Coincide: false,
+                Diferencias: [["2026-01", 35001.10m, 35002.10m, 35003.10m]],
+                Umbral: 0.005m)),
         Operacion: new OperacionModelo(
             Total: 10, Cumple: 3, NoCumple: 1, SinEvaluar: 6, PctCumplimiento: 75d,
             DenominadorPctCumplimiento: 4, Cerrados: 8, MediaHoras: 4d, MedianaHoras: 3d, P90Horas: 9d,

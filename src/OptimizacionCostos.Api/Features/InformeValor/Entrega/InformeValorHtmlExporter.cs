@@ -154,8 +154,9 @@ public static class InformeValorHtmlExporter
             AnularEnFilas(fact?["subs"], 1);
             AnularEnFilas((fact?["comp"] as JsonObject)?["filas"], 1, 2);
             // fact.mom (Tarea 7 de la entrega 6) deriva de los deltas de categoría de facturación:
-            // mismo bloque que cubre esa composición. El mes (índice 0) sigue viajando; reducciones,
-            // incrementos y neto son montos.
+            // mismo bloque que cubre esa composición. El mes (índice 0) y el flag de mes parcial
+            // (índice 4, I4 del review final de la entrega 6) siguen viajando: ninguno de los dos es
+            // dinero. Reducciones, incrementos y neto (índices 1 a 3) son montos.
             AnularEnFilas(fact?["mom"], 1, 2, 3);
         }
 
@@ -183,6 +184,17 @@ public static class InformeValorHtmlExporter
         // sección que el consultor nunca eligió publicar. Cuando esa sección tenga que llegar a un
         // cliente, necesita su propio interruptor de aprobación.
         Anular(fact, "variacionConsumo");
+
+        // meta.conciliacion (Tarea 8 de la entrega 6) lleva los totales MENSUALES de BITCOST y del
+        // archivo de evolución, exactamente la clase de cifra que SerieMensual/GastoTotal protegen
+        // detrás de su propio interruptor — pero conciliacion no tiene interruptor propio ni lo
+        // cubre ninguno de los ocho bloques (ContratoEntreRenderizadoresTests ya la declara
+        // Lado.Ninguno: ningún renderizador la lee todavía). Sin este recorte viajaba intacta en la
+        // variante del cliente y filtraba esos montos mensuales a quien nadie se los aprobó — el
+        // mismo hallazgo (C1) que motivó cerrar fact.variacionConsumo arriba. Se anula entero, no
+        // campo por campo, por el mismo motivo que esa otra rama: nulear a medias simularía una
+        // sección que el consultor nunca eligió publicar.
+        Anular(raiz["meta"] as JsonObject, "conciliacion");
 
         // ejecutado (Tarea 9 de la entrega 6): el titular del informe (decisión 2026-08-13), octava
         // clave de nivel superior desde la Tarea 6. Sin recorte propio viajaría intacto en la

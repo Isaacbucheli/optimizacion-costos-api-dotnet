@@ -266,6 +266,9 @@ public sealed class InformeValorHtmlExporterTests
         Assert.Equal(JsonValueKind.Null, fila[1].ValueKind);
         Assert.Equal(JsonValueKind.Null, fila[2].ValueKind);
         Assert.Equal(JsonValueKind.Null, fila[3].ValueKind);
+        // I4 del review final de la entrega 6: el flag de mes parcial (índice 4) no es dinero,
+        // igual que el mes (índice 0): sigue viajando aunque el bloque no esté aprobado.
+        Assert.Equal(1, fila[4].GetInt32());
     }
 
     /// <summary>Con <c>composicionServicio</c> aprobado, <c>fact.mom</c> viaja intacto.</summary>
@@ -280,6 +283,7 @@ public sealed class InformeValorHtmlExporterTests
         Assert.Equal(40m, fila[1].GetDecimal());
         Assert.Equal(15m, fila[2].GetDecimal());
         Assert.Equal(25m, fila[3].GetDecimal());
+        Assert.Equal(1, fila[4].GetInt32());
     }
 
     /// <summary>La variante interna nunca recorta, ni siquiera lo nuevo de esta tarea: ejecutado,
@@ -298,6 +302,7 @@ public sealed class InformeValorHtmlExporterTests
         Assert.Equal(660m, unitario[2].GetDecimal());
         var mom = embedded.GetProperty("fact").GetProperty("mom")[0];
         Assert.Equal(40m, mom[1].GetDecimal());
+        Assert.Equal(1, mom[4].GetInt32());
     }
 
     /// <summary>
@@ -411,6 +416,30 @@ public sealed class InformeValorHtmlExporterTests
 
         Assert.Equal(8, interna.BloquesPublicados.Count);
         Assert.Equal([BloqueEconomico.CentroCosto], cliente.BloquesPublicados);
+    }
+
+    /// <summary>
+    /// C1 del review final de la entrega 6: <c>meta.conciliacion</c> lleva los totales MENSUALES de
+    /// BITCOST y del archivo de evolución — la misma clase de cifra que <c>SerieMensual</c>/
+    /// <c>GastoTotal</c> protegen detrás de su propio bloque — pero no tiene interruptor propio ni
+    /// lo cubre ninguno de los ocho. Se recorta ENTERO en la variante del cliente, incluso con los
+    /// ocho bloques aprobados: no es cuestión de qué se aprobó, es que la sección todavía no tiene
+    /// dónde aprobarse. La variante interna sigue viéndolo completo.
+    /// </summary>
+    [Fact]
+    public void La_conciliacion_de_meta_desaparece_en_la_variante_del_cliente_y_viaja_intacta_en_la_interna()
+    {
+        var modelo = ModeloDePrueba.Crear();
+
+        var cliente = Exportar(modelo, VarianteInforme.Cliente, BloqueEconomicoExtensions.Todos);
+        var (embeddedCliente, _) = DatosDe(cliente);
+        Assert.Equal(JsonValueKind.Null, embeddedCliente.GetProperty("meta").GetProperty("conciliacion").ValueKind);
+
+        var interna = Exportar(modelo, VarianteInforme.Interna);
+        var (embeddedInterna, _) = DatosDe(interna);
+        var conciliacion = embeddedInterna.GetProperty("meta").GetProperty("conciliacion");
+        Assert.False(conciliacion.GetProperty("coincide").GetBoolean());
+        Assert.Equal(35001.10m, conciliacion.GetProperty("difs")[0][1].GetDecimal());
     }
 
     /// <summary>La huella de la plantilla es estable entre corridas (si no, cada entrega quedaría
