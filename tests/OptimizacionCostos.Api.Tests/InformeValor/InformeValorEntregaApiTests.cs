@@ -400,6 +400,63 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
     }
 
     /// <summary>
+    /// La trampa que encontró la revisión de la Tarea 9: <c>Generar_para_el_cliente_sin_bloques_aprobados_no_sube_ningun_monto</c>
+    /// no siembra ninguna credencial de reservas, así que <c>FotoReservas.Medido</c> queda en
+    /// <c>false</c> y <see cref="InformeValorEnsamblador.Ensamblar"/> nunca entra a calcular
+    /// <c>ejecutado</c> — la clave queda <c>null</c> y ese test pasa sin haber custodiado nada del
+    /// subárbol nuevo (Tarea 9), que es el de más riesgo por ser el más reciente y el que más
+    /// piezas cruza (barrido, matriz y reservas). Este test siembra una reserva medida (mismo
+    /// helper que <see cref="Generar_captura_la_foto_de_reservas_y_la_archiva"/>) para que
+    /// <c>ejecutado</c> viaje poblado de verdad, y solo entonces confirma que su propio recorte
+    /// (<c>InformeValorHtmlExporter</c>, cuando <c>AhorroEjecutado</c> no está aprobado) hace su
+    /// trabajo igual que el resto de los bloques.
+    /// </summary>
+    [Fact]
+    public async Task Generar_para_el_cliente_sin_bloques_con_ejecutado_poblado_no_sube_sus_montos()
+    {
+        const int clientId = 941;
+        _factory.Access.Allow(clientId);
+        _factory.SembrarUnaReservaConConsumidor(clientId, credentialId: 41, reservationId: "resv-941");
+        var client = ClientFor("g28@bit.ec", Roles.Consultor, canEdit: true);
+
+        var res = await client.PostAsJsonAsync(
+            $"/informe-valor/clients/{clientId}/generar", Cuerpo(variante: "cliente"));
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var json = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(0, json.GetProperty("bloques_publicados").GetArrayLength());
+
+        var subida = Assert.Single(_factory.Blobs.Uploads.Where(u => u.BlobName.Contains($"client-{clientId}/", StringComparison.Ordinal)).ToList());
+        var datos = BloqueDeDatos(Encoding.UTF8.GetString(subida.Data));
+
+        // El guard positivo primero: si "ejecutado" volviera a quedar null (la trampa de arriba),
+        // esto revienta ACÁ, antes de llegar a los DoesNotContain de abajo — que de otro modo
+        // pasarían igual de vacíos por la razón equivocada.
+        // El bloque de datos es JS, no JSON puro ("var EMBEDDED={...};var PUBLICACION={...};"): se
+        // recorta el objeto de EMBEDDED antes de parsear.
+        const string prefijoEmbedded = "var EMBEDDED=";
+        const string separadorPublicacion = ";var PUBLICACION=";
+        Assert.StartsWith(prefijoEmbedded, datos, StringComparison.Ordinal);
+        var finEmbedded = datos.IndexOf(separadorPublicacion, StringComparison.Ordinal);
+        Assert.True(finEmbedded > 0, "El bloque de datos no tiene el separador esperado entre EMBEDDED y PUBLICACION.");
+        var embeddedJson = datos[prefijoEmbedded.Length..finEmbedded];
+
+        var ejecutado = JsonDocument.Parse(embeddedJson).RootElement.GetProperty("ejecutado");
+        Assert.True(ejecutado.GetProperty("medido").GetBoolean());
+        Assert.True(ejecutado.TryGetProperty("pctGasto", out var pctGasto));
+        Assert.NotEqual(JsonValueKind.Null, pctGasto.ValueKind);
+        Assert.True(ejecutado.TryGetProperty("ejes", out var ejes));
+        Assert.Equal(JsonValueKind.Object, ejes.ValueKind);
+
+        // Y con "ejecutado" de verdad poblado, la variante del cliente sin bloques aprobados sigue
+        // sin subir los montos de la facturación (1000 + 500 = 1500 del mismo fixture que la reserva
+        // ahora comparte recurso): el recorte de "ejecutado" tiene que nulear sus propios campos de
+        // monto igual que lo hacen los demás bloques, no solo el bloque de facturación de siempre.
+        Assert.DoesNotContain("1500", datos, StringComparison.Ordinal);
+        Assert.DoesNotContain("1000", datos, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Reemitir el mismo período es legítimo (F4) y las dos emisiones tienen que quedar en dos filas
     /// con DOS artefactos distintos. Con un nombre de blob derivado solo del período, la segunda
     /// emisión sobrescribiría la primera y la fila vieja apuntaría a un archivo con contenido nuevo.

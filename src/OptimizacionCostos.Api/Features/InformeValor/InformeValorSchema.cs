@@ -153,7 +153,7 @@ public static class InformeValorSchema
                 -- Guardar la lista vacía como NULL cambiaría el resultado al reemitir.
                 meses_parciales NVARCHAR(2000) NULL,
                 variante NVARCHAR(20) NOT NULL,
-                -- JSON con las claves de los seis bloques económicos aprobados. NUNCA NULL: '[]'
+                -- JSON con las claves de los ocho bloques económicos aprobados. NUNCA NULL: '[]'
                 -- significa "se generó sin aprobar ninguno", que es el default y un dato en sí.
                 bloques_publicados NVARCHAR(400) NOT NULL,
                 -- De dónde salió el insumo de RBAC ("base"/"archivo"/NULL si ninguna fuente tenía

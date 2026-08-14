@@ -66,7 +66,7 @@ public sealed class ContratoEntreRenderizadoresTests
             "para el consultor que arma el informe, no para quien lo recibe: el artefacto del cliente " +
             "no tiene por qué declarar la plomería interna de la plataforma."),
         ("fact.variacionConsumo", Lado.React,
-            "Los tres baldes de la entrega 2d. NINGUNO de los seis bloques económicos los cubre, así " +
+            "Los tres baldes de la entrega 2d. NINGUNO de los ocho bloques económicos los cubre, así " +
             "que el exportador los recorta enteros para el cliente y el artefacto interno los lleva sin " +
             "dibujarlos. Es la asimetría más grande del módulo y está abierta a propósito: la sección " +
             "necesita su propio interruptor de aprobación antes de poder viajar. Hasta entonces, el " +

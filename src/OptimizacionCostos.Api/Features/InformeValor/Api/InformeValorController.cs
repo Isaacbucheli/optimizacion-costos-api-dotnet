@@ -368,7 +368,7 @@ public sealed class InformeValorController(
     ///
     /// <para><b>Lo que se archiva es lo que el artefacto HACE, no lo que se pidió</b>
     /// (<see cref="ArtefactoInforme.BloquesPublicados"/>): pedir la variante interna con tres bloques
-    /// aprobados produce el informe completo, y la bitácora dice los seis. La respuesta devuelve el
+    /// aprobados produce el informe completo, y la bitácora dice los ocho. La respuesta devuelve el
     /// mismo dato para que quien llama vea qué pasó de verdad.</para>
     /// </summary>
     [HttpPost("clients/{clientId:int}/generar")]
@@ -942,7 +942,7 @@ public sealed record PreviewRequest(
 /// de meses parciales por su cuenta, el informe entregado podría medir otra ventana que la vista
 /// previa que el consultor aprobó, y las dos piezas serían coherentes consigo mismas.</para>
 ///
-/// <para><see cref="Bloques"/> ausente, <c>null</c> o vacío es "ninguno aprobado": los seis nacen
+/// <para><see cref="Bloques"/> ausente, <c>null</c> o vacío es "ninguno aprobado": los ocho nacen
 /// apagados (F1) y generar sin decidir produce la versión sin cifras, que es el default del spec y no
 /// un error. <see cref="Variante"/>, en cambio, es obligatoria — ver <c>Generar</c> para por qué no
 /// hay default seguro.</para>
