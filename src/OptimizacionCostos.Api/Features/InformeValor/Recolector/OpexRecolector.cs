@@ -1,3 +1,4 @@
+using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Features.Waf;
 
 namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
@@ -24,12 +25,42 @@ public static class OpexRecolector
 {
     public static async Task<OpexScore> LeerAsync(IAdvisorScoreStore store, int clientId, CancellationToken ct = default)
     {
+        var hist = await store.LoadHistoryAsync(clientId, 'M', ct);
+        var snap = await store.LoadLatestSnapshotAsync(clientId, includeBreakdown: false, ct);
+        return Armar(snap, hist);
+    }
+
+    /// <summary>
+    /// Mismo resultado que la sobrecarga de arriba, pero sobre la conexión compartida de
+    /// <c>SqlInsumosBdRecolector</c> cuando el store inyectado es el SQL real (entrega 6 tarea
+    /// 11, hallazgo del review final de la entrega 5): sin esta sobrecarga, cada preview abría 2
+    /// conexiones nuevas y corría 2 veces el schema-ensure de WAF solo para leer Opex, en un App
+    /// Service B1 compartido. Llama las sobrecargas internas de <c>SqlAdvisorScoreStore</c> que
+    /// reciben la conexión ya abierta -- el schema WAF ya está asegurado por el llamador.
+    /// </summary>
+    public static async Task<OpexScore> LeerAsync(
+        SqlConnection conn, SqlAdvisorScoreStore store, int clientId, CancellationToken ct = default)
+    {
+        var hist = await SqlAdvisorScoreStore.LoadHistoryAsync(conn, clientId, 'M', ct);
+        var snap = await SqlAdvisorScoreStore.LoadLatestSnapshotAsync(conn, clientId, includeBreakdown: false, ct);
+        return Armar(snap, hist);
+    }
+
+    /// <summary>
+    /// El mapeo de snapshot + historia a <see cref="OpexScore"/>, compartido por las dos
+    /// sobrecargas de <c>LeerAsync</c> de arriba: sin este método común, la clave 5 del
+    /// diccionario y los dos motivos de "no medido" iban a vivir duplicados en dos lugares que
+    /// tarde o temprano se iban a desalinear. Internal (no private) para que
+    /// <c>OpexRecolectorTests.ArmarTests</c> lo pruebe directo, sin necesidad de una conexión SQL
+    /// real: es la única forma práctica de confirmar que las dos sobrecargas dan lo mismo.
+    /// </summary>
+    internal static OpexScore Armar(WafAdvisorScoreSnapshot? snap, IReadOnlyList<ClientScoreHistoryPoint> hist)
+    {
         var puntos = new List<OpexPunto>();
-        foreach (var p in await store.LoadHistoryAsync(clientId, 'M', ct))
+        foreach (var p in hist)
             if (p.Series.TryGetValue(5, out var v))
                 puntos.Add(new OpexPunto(p.Date, v));
 
-        var snap = await store.LoadLatestSnapshotAsync(clientId, includeBreakdown: false, ct);
         if (snap is null)
             return new OpexScore(null, null, null, puntos, false,
                 "El cliente no tiene ningún snapshot de Advisor Score.");

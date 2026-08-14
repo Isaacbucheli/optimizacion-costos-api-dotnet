@@ -147,6 +147,21 @@ internal static class InsumoCellUtils
         return true;
     }
 
+    /// <summary>
+    /// Nombre de mes en español (ya normalizado por <see cref="Norm"/>) -> número 1-12. Compartido
+    /// por <see cref="BitcostParser"/> y <see cref="EvolucionParser"/>, que antes de esta tarea
+    /// declaraban el mismo diccionario por separado (entrega 6 tarea 11, deuda de la entrega 5).
+    /// "Setiembre" es alias de "septiembre" -- variante ortográfica vista en exports reales, no un
+    /// error de tipeo. Cada parser conserva su propia tolerancia extra por fuera de este
+    /// diccionario (p. ej. <c>BitcostParser.Mes</c> además acepta el mes como número).
+    /// </summary>
+    internal static readonly IReadOnlyDictionary<string, byte> MesesPorNombre = new Dictionary<string, byte>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["enero"] = 1, ["febrero"] = 2, ["marzo"] = 3, ["abril"] = 4, ["mayo"] = 5, ["junio"] = 6,
+        ["julio"] = 7, ["agosto"] = 8, ["septiembre"] = 9, ["setiembre"] = 9, ["octubre"] = 10,
+        ["noviembre"] = 11, ["diciembre"] = 12,
+    };
+
     /// <summary>Recorta al ancho de la columna. El hash ya se calculó sobre el valor completo.</summary>
     internal static string? Trunc(string s, int max, ref int counter)
     {

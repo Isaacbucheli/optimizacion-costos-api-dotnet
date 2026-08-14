@@ -176,6 +176,22 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
         Assert.True(evolucion.GetProperty("obligatorio").GetBoolean());
     }
 
+    /// <summary>El front dibuja las tarjetas por el orden del arreglo, no por un campo propio de
+    /// orden (minor diferido de la entrega 5): fija ese orden para que no se mueva sin querer.</summary>
+    [Fact]
+    public async Task El_estado_devuelve_los_insumos_en_el_orden_del_front()
+    {
+        _factory.Access.Allow(clientId: 7);
+        var client = ClientFor("orden@bit.ec", Roles.Consultor, canEdit: false);
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/informe-valor/clients/7/estado");
+
+        var kinds = body.GetProperty("insumos").EnumerateArray()
+            .Select(i => i.GetProperty("kind").GetString())
+            .ToArray();
+        Assert.Equal(["facturacion", "evolucion", "casos", "rbac"], kinds);
+    }
+
     private static MultipartFormDataContent Multipart(string fileName, byte[] bytes)
     {
         var content = new MultipartFormDataContent();

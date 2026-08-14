@@ -11,8 +11,10 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
 /// Advisor, Matriz y Retiros (los tres reciben una <see cref="SqlConnection"/> ya abierta y, a
 /// propósito, no aseguran su propio schema: ver el comentario de clase de cada uno). RBAC no la
 /// usa: pasa por <see cref="IAccessReviewStore"/>, que administra su propia conexión. Opex
-/// (<see cref="OpexRecolector"/>) tampoco: pasa por <see cref="IAdvisorScoreStore"/>, mismo motivo,
-/// y se lee antes de abrir la conexión compartida para no mantenerla abierta de más.
+/// (<see cref="OpexRecolector"/>) la reusa también cuando <see cref="IAdvisorScoreStore"/> inyectado
+/// es el <see cref="SqlAdvisorScoreStore"/> concreto (entrega 6 tarea 11 -- ver el comentario en
+/// <see cref="LeerAsync"/>); con un fake de tests cae al camino de interfaz, que administra su
+/// propia conexión, igual que RBAC.
 ///
 /// <para>La corrida de accesos se lee UNA sola vez (<c>GetLatestFinishedRunAsync</c> +
 /// <c>GetSnapshotAsync</c>) y el mismo snapshot alimenta dos cosas: <see cref="EstadoRbac.Resolver"/>
@@ -93,21 +95,22 @@ public sealed class SqlInsumosBdRecolector(
 
     public async Task<InsumosBd> LeerAsync(int clientId, CancellationToken ct = default)
     {
-        // Opex no toca la conexión compartida de abajo: IAdvisorScoreStore administra la suya
-        // propia (mismo patrón que accessReviewStore/informeValorStore). Se lee antes de abrir la
-        // conexión de Advisor/Matriz/Retiros para no mantenerla abierta de más mientras se hace
-        // este IO independiente.
-        var opex = await OpexRecolector.LeerAsync(advisorScoreStore, clientId, ct);
-
         await using var conn = await factory.OpenAsync(ct);
 
         // Advisor y Matriz dependen del schema WAF; Retiros, del de Boletín. Ninguno de los tres
         // recolectores lo asegura por sí mismo (ver sus comentarios de clase): centralizarlo acá
         // en vez de repetirlo en cada uno evita 3 chequeos de DDL idempotente por request cuando
-        // 2 alcanzan (WAF sirve para Advisor y Matriz a la vez). Y correrlos una sola vez por
-        // proceso (ver _schemaEnsured) evita repetir esas ~19+ sentencias en cada request de un
-        // endpoint que no escribe nada.
+        // 2 alcanzan (WAF sirve para Advisor, Matriz y Opex a la vez). Y correrlos una sola vez
+        // por proceso (ver _schemaEnsured) evita repetir esas ~19+ sentencias en cada request de
+        // un endpoint que no escribe nada.
         await AsegurarSchemaAsync(conn, ct);
+
+        // Opex: sobre la conexión compartida cuando el store es el SQL real (el schema WAF ya está
+        // asegurado acá); por la interfaz cuando es un fake de tests. Evita 2 conexiones y 2 batches
+        // DDL por preview en el B1 compartido (hallazgo del review final de la entrega 5).
+        var opex = advisorScoreStore is SqlAdvisorScoreStore sqlScore
+            ? await OpexRecolector.LeerAsync(conn, sqlScore, clientId, ct)
+            : await OpexRecolector.LeerAsync(advisorScoreStore, clientId, ct);
 
         var administradas = await SuscripcionesAdministradasAsync(conn, clientId, ct);
         var (seguridadGestionadaExternamente, seguridadGestionadaNota) =

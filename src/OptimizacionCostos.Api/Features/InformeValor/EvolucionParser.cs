@@ -23,13 +23,6 @@ public static class EvolucionParser
         "El archivo no tiene el formato del export de evolución por recurso de BITCOST " +
         "(dos filas de encabezado de fechas y columnas Categoría / Subcategoría / Recurso).";
 
-    private static readonly Dictionary<string, byte> MesPorNombre = new()
-    {
-        ["enero"] = 1, ["febrero"] = 2, ["marzo"] = 3, ["abril"] = 4, ["mayo"] = 5, ["junio"] = 6,
-        ["julio"] = 7, ["agosto"] = 8, ["septiembre"] = 9, ["setiembre"] = 9, ["octubre"] = 10,
-        ["noviembre"] = 11, ["diciembre"] = 12,
-    };
-
     public static ParseResult<EvolucionRow> Parse(Stream stream)
     {
         string[]? filaAnios = null, filaPrev = null;
@@ -133,7 +126,7 @@ public static class EvolucionParser
         {
             var anioTxt = Get(filaAnios, i);
             if (short.TryParse(anioTxt, out var a) && a is >= 2000 and <= 2100) anioActual = a;
-            if (MesPorNombre.TryGetValue(Norm(Get(filaMeses, i)), out var mes) && anioActual > 0)
+            if (MesesPorNombre.TryGetValue(Norm(Get(filaMeses, i)), out var mes) && anioActual > 0)
                 columnas.Add((i, anioActual, mes));
         }
         return columnas;
