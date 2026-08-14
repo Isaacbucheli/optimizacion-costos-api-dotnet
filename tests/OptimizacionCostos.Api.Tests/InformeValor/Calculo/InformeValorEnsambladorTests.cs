@@ -1,6 +1,7 @@
 using System.Text.Json;
 using OptimizacionCostos.Api.Features.InformeValor;
 using OptimizacionCostos.Api.Features.InformeValor.Calculo;
+using OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 
 namespace OptimizacionCostos.Api.Tests.InformeValor.Calculo;
@@ -426,6 +427,73 @@ public sealed class InformeValorEnsambladorTests
         var catSerie = ModeloJson().GetProperty("catSerie");
         Assert.True(catSerie.TryGetProperty("Cómputo", out var porMes));
         Assert.True(porMes.TryGetProperty("2026-01", out _));
+    }
+
+    // ===================================================================================
+    // Tarea 6 de la entrega 6: D.ejecutado, la octava clave. Regla dura del encargo: con los
+    // insumos nuevos (registroBarrido/evolucion) en null y sin foto de reservas medida, Ejecutado
+    // sale null y ningún test de arriba —escrito antes de esta tarea— cambia de comportamiento.
+    // ===================================================================================
+
+    private static BarridoResueltoFila BarridoFila(
+        string checkId, string subscriptionId, string resourceGroup, string resourceName, DateTime resueltoEn,
+        decimal? estimatedMonthlySavings = null) => new(
+        CheckId: checkId, SubscriptionId: subscriptionId,
+        AzureResourceId: $"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.Compute/virtualMachines/{resourceName}",
+        ResourceName: resourceName, ResourceType: "microsoft.compute/virtualmachines",
+        EstimatedMonthlySavings: estimatedMonthlySavings, Currency: "USD", ResueltoEn: resueltoEn,
+        ResueltoPor: "consultor@bit.com", ResolvedByKind: "manual", Notas: null);
+
+    /// <summary>La regla dura: sin <c>registroBarrido</c> ni <c>evolucion</c>, y sin una foto de
+    /// reservas ya medida (no se le pasa <c>fotoReservas</c>), <see cref="ModeloInformeValor.Ejecutado"/>
+    /// sale null — misma semántica que los demás bloques ausentes, no un objeto "vacío" que simule
+    /// que sí se midió.</summary>
+    [Fact]
+    public void Sin_registro_de_barrido_ni_foto_de_reservas_medida_ejecutado_sale_null()
+    {
+        var (facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto) = FixtureRica();
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto);
+
+        Assert.Null(modelo.Ejecutado);
+    }
+
+    /// <summary>
+    /// Con un <c>registroBarrido</c> mínimo (una fila resuelta, sin foto de reservas) el ensamblador
+    /// encadena T4→T3→T5: <see cref="RegistroEjecutadoCalculador"/> produce la fila y
+    /// <see cref="AcumuladoCalculador"/> arma la serie sobre el rango del contexto (enero-febrero de
+    /// <see cref="FixtureRica"/>). El recurso resuelto es <c>vm-1</c> de <c>sub-a</c>, el mismo que
+    /// factura en el fixture, pero como Enero ES su mes de ejecución no hay mes "antes" del que sacar
+    /// un delta (Regla 4 de <c>RegistroEjecutadoCalculador</c>): el monto sale del estimado del
+    /// barrido, no de la factura, y viaja sin fecha de fin, así que queda vigente los dos meses del
+    /// rango.
+    /// </summary>
+    [Fact]
+    public void Con_un_registro_de_barrido_minimo_ejecutado_trae_filas_y_serie_consistente()
+    {
+        var (facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto) = FixtureRica();
+        var registroBarrido = new RegistroBarrido(true, null,
+            [BarridoFila("orphaned_disks", "sub-a", "rg-1", "vm-1", new DateTime(2026, 1, 15), estimatedMonthlySavings: 50m)]);
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto, registroBarrido: registroBarrido);
+
+        Assert.NotNull(modelo.Ejecutado);
+        var ejecutado = modelo.Ejecutado!;
+        Assert.True(ejecutado.Medido);
+        var fila = Assert.Single(ejecutado.Filas);
+        Assert.Equal("barrido", fila.Fuente);
+        Assert.Equal(50m, fila.MontoMensual);
+        Assert.Equal("estimado", fila.FuenteMonto);
+
+        // Serie: un punto por mes del rango (2026-01, 2026-02), sin fecha de fin la fila queda
+        // vigente en los dos y el acumulado sube 50 cada mes.
+        Assert.Equal(2, ejecutado.Serie.Count);
+        Assert.Equal(new object?[] { "2026-01", 50m, 50m }, ejecutado.Serie[0]);
+        Assert.Equal(new object?[] { "2026-02", 50m, 100m }, ejecutado.Serie[1]);
+        Assert.Equal(100m, ejecutado.AcumuladoTotal);
+        Assert.Equal(50m, ejecutado.TasaVigenteCierre);
     }
 
     // ===================================================================================

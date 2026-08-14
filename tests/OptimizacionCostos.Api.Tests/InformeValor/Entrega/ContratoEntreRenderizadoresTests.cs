@@ -71,6 +71,14 @@ public sealed class ContratoEntreRenderizadoresTests
             "dibujarlos. Es la asimetría más grande del módulo y está abierta a propósito: la sección " +
             "necesita su propio interruptor de aprobación antes de poder viajar. Hasta entonces, el " +
             "consultor la revisa en la vista y el artefacto no la publica."),
+        ("ejecutado", Lado.React,
+            "Comparte tokens con fact.variacionConsumo.reservas (medido, motivo, reservas, nota, " +
+            "reservationId, consumidoresNoLeidos): la Tarea 3 de esta entrega reusa esos nombres para " +
+            "la tabla de reservas contra la factura, y la vista React ya los lee para el bloque de la " +
+            "entrega 2d. El barrido por texto no distingue de qué padre viene cada token repetido " +
+            "(mismo límite de colisión que el docstring de esta clase declara para los nombres cortos), " +
+            "así que el mismo veredicto de esos tokens compartidos aplica acá aunque nadie dibuje " +
+            "ejecutado todavía."),
 
         // ---- lo que no lee ninguno de los dos ----
         ("fact.variacionConsumo", Lado.Ninguno,
@@ -78,6 +86,9 @@ public sealed class ContratoEntreRenderizadoresTests
             "que son insumo interno del backend (los recursos que explican cada balde, sus tarifas " +
             "antes y después, la utilización de cada reserva) y que ninguna de las dos vistas dibuja. " +
             "Se revisa cuando la sección tenga su interruptor y un renderizador que la publique."),
+        ("ejecutado", Lado.Ninguno,
+            "La sección titular del acumulado se dibuja en la entrega 7; el modelo se calcula y " +
+            "archiva desde la 6 para que las entregas ya emitidas lleven el dato."),
         ("meta.cobertura.suscripciones.id", Lado.Ninguno,
             "El identificador con el que D12 normaliza y concilia las tres fuentes. Es la clave del " +
             "cruce, no una columna: la tabla publica el nombre, y cuando ninguna fuente trajo nombre " +

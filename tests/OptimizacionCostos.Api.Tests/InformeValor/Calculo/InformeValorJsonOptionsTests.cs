@@ -61,12 +61,16 @@ public sealed class InformeValorJsonOptionsTests
         Assert.Contains("\"corte\":", json, StringComparison.Ordinal);
     }
 
-    /// <summary>El modelo completo serializa con las siete claves de nivel superior que espera
-    /// <c>render()</c> (<c>D.meta/.tickets/.fact/.rbac/.advisor/.matriz/.catSerie</c>), ni una
-    /// más ni una menos, y los bloques ausentes viajan como <c>null</c> JSON real, no un objeto
-    /// vacío que simule ausencia (render() distingue "sin insumo" con <c>if(!t)</c>).</summary>
+    /// <summary>El modelo completo serializa con las OCHO claves de nivel superior (entrega 6:
+    /// <c>ejecutado</c> se suma a las siete que ya esperaba <c>render()</c>
+    /// —<c>D.meta/.tickets/.fact/.rbac/.advisor/.matriz/.catSerie</c>—), ni una más ni una menos, y
+    /// los bloques ausentes viajan como <c>null</c> JSON real, no un objeto vacío que simule
+    /// ausencia (render() distingue "sin insumo" con <c>if(!t)</c>). <c>ejecutado</c> es la única de
+    /// las ocho que <c>render()</c> todavía no lee (llega en la entrega 7): acá solo se fija que
+    /// viaja como clave propia, en null cuando el ensamblador no tuvo insumo con qué calcularla.
+    /// </summary>
     [Fact]
-    public void El_modelo_completo_serializa_con_las_siete_claves_de_D()
+    public void El_modelo_completo_serializa_con_las_ocho_claves_de_D()
     {
         var modelo = new ModeloInformeValor(
             new InformeValorMeta("Cliente", "2026", "2026-12-31", new InformeValorCobertura(0, [])),
@@ -77,10 +81,11 @@ public sealed class InformeValorJsonOptionsTests
         using var doc = JsonDocument.Parse(json);
         var claves = doc.RootElement.EnumerateObject().Select(p => p.Name).ToHashSet();
         Assert.Equal(
-            new HashSet<string> { "meta", "tickets", "fact", "rbac", "advisor", "matriz", "catSerie" },
+            new HashSet<string> { "meta", "tickets", "fact", "rbac", "advisor", "matriz", "catSerie", "ejecutado" },
             claves);
         Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("tickets").ValueKind);
         Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("catSerie").ValueKind);
+        Assert.Equal(JsonValueKind.Null, doc.RootElement.GetProperty("ejecutado").ValueKind);
     }
 
     /// <summary>

@@ -1,15 +1,32 @@
 using System.Text.Json.Serialization;
+using OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 
 namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 
 /// <summary>
 /// El modelo completo del informe: <see cref="Meta"/> más los cinco bloques —consumo, operación,
-/// seguridad, postura y roadmap— y <see cref="CatSerie"/>. Forma exacta del objeto <c>D</c> que
-/// arma <c>recalcula()</c> en <c>docs/Plantilla-Dashboard-BIT.html</c>: <c>D.meta</c>,
-/// <c>D.tickets</c>, <c>D.fact</c>, <c>D.rbac</c>, <c>D.advisor</c>, <c>D.matriz</c>,
-/// <c>D.catSerie</c>. Todo bloque ausente en la plantilla es <c>null</c> (insumo no cargado):
-/// <c>render()</c> ya maneja ese caso con <c>if(!t){ ...pendiente... }</c> por sección, así que
-/// cada propiedad de bloque acá es nullable, nunca un objeto "vacío" que simule ausencia.
+/// seguridad, postura y roadmap—, <see cref="CatSerie"/> y <see cref="Ejecutado"/>. Forma exacta
+/// del objeto <c>D</c> que arma <c>recalcula()</c> en <c>docs/Plantilla-Dashboard-BIT.html</c>:
+/// <c>D.meta</c>, <c>D.tickets</c>, <c>D.fact</c>, <c>D.rbac</c>, <c>D.advisor</c>, <c>D.matriz</c>,
+/// <c>D.catSerie</c>, <c>D.ejecutado</c>. Todo bloque ausente en la plantilla es <c>null</c>
+/// (insumo no cargado): <c>render()</c> ya maneja ese caso con <c>if(!t){ ...pendiente... }</c>
+/// por sección, así que cada propiedad de bloque acá es nullable, nunca un objeto "vacío" que
+/// simule ausencia.
+///
+/// <para><b><see cref="Ejecutado"/> es la octava clave de nivel superior, y va DELIBERADAMENTE
+/// fuera de <c>fact</c> (entrega 6, Tarea 6).</b> <c>fact</c> es el bloque de la tabla de
+/// hechos —la facturación cruda de BITCOST y lo que de ahí se deriva (variación de consumo,
+/// series, comparativas)—, mientras que <see cref="Ejecutado"/> es el titular del informe
+/// (decisión 2026-08-13): el acumulado de lo que efectivamente se ejecutó, cruzando tres fuentes
+/// que <c>fact</c> nunca mira (el barrido de optimización, la matriz WAF resuelta y las reservas
+/// activas). Meterlo dentro de <c>fact</c> habría escondido el dato más importante del informe
+/// adentro de un bloque pensado para otra cosa. El contrato de siete claves que fijaba
+/// <c>InformeValorJsonOptionsTests</c> se amplía a OCHO a propósito, en el mismo commit que
+/// introduce el campo (spec §Modelo): a diferencia de <see cref="InformeValorMeta.Cobertura"/>
+/// (D12), que sí vive DENTRO de <c>meta</c> porque <c>render()</c> nunca la va a leer,
+/// <see cref="Ejecutado"/> es contenido para el cliente que un renderizador futuro (entrega 7) SÍ
+/// va a dibujar — necesita su propio lugar de nivel superior, igual que <c>catSerie</c>, no un
+/// rincón de otro bloque.</para>
 ///
 /// <para>Lo ensambla la Tarea 8, que también resuelve D12 (las tres cifras de suscripciones se
 /// concilian) sobre este objeto: cruza las suscripciones que ve cada bloque y publica el conjunto
@@ -39,7 +56,8 @@ public sealed record ModeloInformeValor(
     [property: JsonPropertyName("rbac")] SeguridadModelo? Seguridad,
     [property: JsonPropertyName("advisor")] PosturaModelo? Postura,
     [property: JsonPropertyName("matriz")] RoadmapModelo? Roadmap,
-    [property: JsonPropertyName("catSerie")] IReadOnlyDictionary<string, IReadOnlyDictionary<string, decimal>>? CatSerie);
+    [property: JsonPropertyName("catSerie")] IReadOnlyDictionary<string, IReadOnlyDictionary<string, decimal>>? CatSerie,
+    [property: JsonPropertyName("ejecutado")] EjecutadoModelo? Ejecutado = null);
 
 /// <summary>
 /// Encabezado del informe (<c>D.meta</c>). <see cref="Corte"/> es la fecha de corte tal como
