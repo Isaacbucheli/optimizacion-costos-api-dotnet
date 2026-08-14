@@ -573,6 +573,44 @@ public sealed class InformeValorEnsambladorTests
         Assert.Empty(conciliacion.Diferencias);
     }
 
+    /// <summary>
+    /// Un mes presente SOLO en evolución (sin filas de facturación ese mes) produce una fila de
+    /// diferencia: dif = hechos - evolución = 0 - 5000 = -5000. Caso espejo: un mes con hechos
+    /// pero sin evolución (p. ej. 20000 en hechos, 0 en evolución) produce dif = 20000 - 0 = 20000.
+    /// Ambos casos superan el umbral (que en ambos es max(1.00, 0.5% de hechos de ese mes) —
+    /// cuando hechos es 0, el umbral queda en $1 y -5000 lo supera; cuando evolución es 0, 0.5%
+    /// de 20000 es 100 y 20000 también lo supera) así que las dos filas entran a Diferencias y
+    /// Coincide=false.
+    /// </summary>
+    [Fact]
+    public void La_union_de_meses_de_facturacion_y_evolucion_produce_diferencias()
+    {
+        var facturacion = new List<FacturacionRow> { Factura("sub-a", "Suscripción A", 20000m, 2026, 6) };
+        var evolucion = new List<EvolucionRow> { Evolucion(5000m, 2026, 7) };
+        var contexto = Contexto(2026, 6, 7);
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, 0, [], Insumos(), "Cliente", contexto, evolucion: evolucion);
+
+        var conciliacion = modelo.Meta.Conciliacion!;
+        Assert.False(conciliacion.Coincide);
+        Assert.Equal(2, conciliacion.Diferencias.Count);
+
+        // Mes 2026-06: hechos 20000, evolución 0 → dif = 20000 − 0 = 20000
+        var filaJunio = conciliacion.Diferencias[0];
+        Assert.Equal("2026-06", filaJunio[0]);
+        Assert.Equal(20000m, filaJunio[1]);
+        Assert.Equal(0m, filaJunio[2]);
+        Assert.Equal(20000m, filaJunio[3]);
+
+        // Mes 2026-07: hechos 0, evolución 5000 → dif = 0 − 5000 = −5000
+        var filaJulio = conciliacion.Diferencias[1];
+        Assert.Equal("2026-07", filaJulio[0]);
+        Assert.Equal(0m, filaJulio[1]);
+        Assert.Equal(5000m, filaJulio[2]);
+        Assert.Equal(-5000m, filaJulio[3]);
+    }
+
     // ===================================================================================
     // No cubierto por este test (según pide el punto 5 del encargo): tres nombres/formas que
     // render(), TAL CUAL ESTÁ HOY (sin el patch que le corresponde a la entrega 3), no puede leer

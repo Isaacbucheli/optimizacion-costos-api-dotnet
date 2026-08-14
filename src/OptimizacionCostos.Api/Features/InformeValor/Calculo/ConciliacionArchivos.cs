@@ -25,4 +25,4 @@ public sealed record ConciliacionArchivos(
     [property: JsonPropertyName("coincide")] bool Coincide,
     // [mes "aaaa-MM", total hechos, total evolución, diferencia] — solo meses con diferencia sobre el umbral
     [property: JsonPropertyName("difs")] IReadOnlyList<IReadOnlyList<object?>> Diferencias,
-    [property: JsonPropertyName("umbral")] decimal Umbral);
+    [property: JsonPropertyName("umbralTasa")] decimal Umbral);
