@@ -305,7 +305,7 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
     }
 
     /// <summary>
-    /// La variante interna publica los seis bloques aunque no se apruebe ninguno: pedir la interna es
+    /// La variante interna publica los ocho bloques aunque no se apruebe ninguno: pedir la interna es
     /// pedir el informe completo. Lo que se archiva es lo que el artefacto HACE, no lo que se pidió.
     /// </summary>
     [Fact]
@@ -320,11 +320,11 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
 
         Assert.Equal(HttpStatusCode.OK, res.StatusCode);
         var json = await res.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(6, json.GetProperty("bloques_publicados").GetArrayLength());
-        Assert.Equal(6, json.GetProperty("bloques_totales").GetInt32());
+        Assert.Equal(8, json.GetProperty("bloques_publicados").GetArrayLength());
+        Assert.Equal(8, json.GetProperty("bloques_totales").GetInt32());
 
         var entrega = Assert.Single(_factory.Store.Entregas.Where(e => e.ClientId == clientId).ToList());
-        Assert.Equal(6, entrega.BloquesPublicados.Count);
+        Assert.Equal(8, entrega.BloquesPublicados.Count);
     }
 
     /// <summary>
@@ -561,7 +561,7 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
         Assert.Equal("cliente", fila.GetProperty("variante").GetString());
         // La MISMA grafía que aceptó el POST y que lee la capa de dibujo: una sola por concepto.
         Assert.Equal("centroCosto", fila.GetProperty("bloques_publicados")[0].GetString());
-        Assert.Equal(6, fila.GetProperty("bloques_totales").GetInt32());
+        Assert.Equal(8, fila.GetProperty("bloques_totales").GetInt32());
         Assert.Equal("2026-01-01", fila.GetProperty("period_start").GetString());
         Assert.Contains("/descargar", fila.GetProperty("download_url").GetString()!, StringComparison.Ordinal);
     }

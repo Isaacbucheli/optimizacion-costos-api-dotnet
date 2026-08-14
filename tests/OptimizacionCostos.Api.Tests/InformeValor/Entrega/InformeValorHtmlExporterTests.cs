@@ -87,7 +87,7 @@ public sealed class InformeValorHtmlExporterTests
     }
 
     // ================================================================================
-    // Las dos variantes y los seis bloques (F1)
+    // Las dos variantes y los ocho bloques (F1)
     // ================================================================================
 
     [Fact]
@@ -152,6 +152,174 @@ public sealed class InformeValorHtmlExporterTests
         Assert.Equal(8, embedded.GetProperty("advisor").GetProperty("n").GetInt32());
     }
 
+    /// <summary>
+    /// El titular del informe (<c>ejecutado</c>, Tarea 6) es la clave más peligrosa de recortar mal:
+    /// sin su propio interruptor viajaría intacta y filtraría todo el acumulado. Con
+    /// <c>ahorroEjecutado</c> y <c>reservasFacturadas</c> sin aprobar, los montos de las dos ramas
+    /// salen null, pero <c>pctGasto</c> (tarjeta 1, un porcentaje) y todo lo que no es dinero
+    /// —conteos, ejes, la oportunidad y la VM de cada fila— se quedan.
+    /// </summary>
+    [Fact]
+    public void Un_monto_suprimido_de_ejecutado_viaja_como_null_y_no_como_cero()
+    {
+        var html = Exportar(ModeloDePrueba.Crear(), VarianteInforme.Cliente, []);
+
+        var (embedded, _) = DatosDe(html);
+        var ejecutado = embedded.GetProperty("ejecutado");
+
+        Assert.Equal(JsonValueKind.Null, ejecutado.GetProperty("total").ValueKind);
+        Assert.Equal(JsonValueKind.Null, ejecutado.GetProperty("tasaVigente").ValueKind);
+        Assert.Equal(JsonValueKind.Null, ejecutado.GetProperty("facturado").ValueKind);
+        Assert.Equal(JsonValueKind.Null, ejecutado.GetProperty("estimado").ValueKind);
+        Assert.Equal(JsonValueKind.Null, ejecutado.GetProperty("proyeccionFin").ValueKind);
+        Assert.Equal(JsonValueKind.Null, ejecutado.GetProperty("serie")[0][1].ValueKind);
+        Assert.Equal(JsonValueKind.Null, ejecutado.GetProperty("serie")[0][2].ValueKind);
+        Assert.Equal(JsonValueKind.Null, ejecutado.GetProperty("porOportunidad")[0][1].ValueKind);
+        Assert.Equal(JsonValueKind.Null, ejecutado.GetProperty("proyeccion")[0][1].ValueKind);
+        Assert.Equal(JsonValueKind.Null, ejecutado.GetProperty("proyeccion")[0][2].ValueKind);
+        Assert.Equal(JsonValueKind.Null, ejecutado.GetProperty("catAcum").ValueKind);
+        Assert.Equal(JsonValueKind.Null, ejecutado.GetProperty("filas")[0].GetProperty("monto").ValueKind);
+        var reservas = ejecutado.GetProperty("reservas");
+        Assert.Equal(JsonValueKind.Null, reservas.GetProperty("totalDemanda").ValueKind);
+        Assert.Equal(JsonValueKind.Null, reservas.GetProperty("totalReserva").ValueKind);
+        Assert.Equal(JsonValueKind.Null, reservas.GetProperty("totalAhorro").ValueKind);
+        Assert.Equal(JsonValueKind.Null, reservas.GetProperty("ahorroAnualizado").ValueKind);
+        Assert.Equal(JsonValueKind.Null, reservas.GetProperty("filas")[0].GetProperty("demanda").ValueKind);
+        Assert.Equal(JsonValueKind.Null, reservas.GetProperty("filas")[0].GetProperty("reserva").ValueKind);
+        Assert.Equal(JsonValueKind.Null, reservas.GetProperty("filas")[0].GetProperty("ahorro").ValueKind);
+
+        // pctGasto es porcentaje, no monto: viaja siempre (tarjeta 1, decisión 2026-08-13).
+        Assert.Equal(ModeloDePrueba.PctGastoDePrueba, ejecutado.GetProperty("pctGasto").GetDecimal());
+        // Y lo que no es dinero sigue contando su relato.
+        Assert.Equal("Apagar VM ociosa", ejecutado.GetProperty("porOportunidad")[0][0].GetString());
+        Assert.Equal("Apagar VM ociosa", ejecutado.GetProperty("filas")[0].GetProperty("oportunidad").GetString());
+        Assert.Equal("vm-1", reservas.GetProperty("filas")[0].GetProperty("vm").GetString());
+        Assert.True(ejecutado.GetProperty("medido").GetBoolean());
+        Assert.True(ejecutado.GetProperty("ejes").GetProperty("barridoMedido").GetBoolean());
+    }
+
+    /// <summary>Aprobando los dos bloques del acumulado, <c>ejecutado</c> viaja intacto —el contraste
+    /// del test de arriba.</summary>
+    [Fact]
+    public void Ejecutado_viaja_intacto_con_sus_dos_bloques_aprobados()
+    {
+        var html = Exportar(ModeloDePrueba.Crear(), VarianteInforme.Cliente,
+            [BloqueEconomico.AhorroEjecutado, BloqueEconomico.ReservasFacturadas]);
+
+        var (embedded, _) = DatosDe(html);
+        var ejecutado = embedded.GetProperty("ejecutado");
+
+        Assert.Equal(33001m, ejecutado.GetProperty("total").GetDecimal());
+        Assert.Equal(33007m, ejecutado.GetProperty("serie")[0][2].GetDecimal());
+        Assert.Equal(33009m, ejecutado.GetProperty("catAcum").GetProperty(ModeloDePrueba.CategoriaConAcentos).GetProperty("2026-01").GetDecimal());
+        Assert.Equal(33010m, ejecutado.GetProperty("filas")[0].GetProperty("monto").GetDecimal());
+        Assert.Equal(34001m, ejecutado.GetProperty("reservas").GetProperty("totalDemanda").GetDecimal());
+        Assert.Equal(34005m, ejecutado.GetProperty("reservas").GetProperty("filas")[0].GetProperty("demanda").GetDecimal());
+    }
+
+    /// <summary>
+    /// <c>fact.unitario</c> (Tarea 7) deriva de <c>fact.serie</c>: el mismo bloque <c>serieMensual</c>
+    /// lo cubre. Sin ese bloque aprobado, el monto del mes y el costo por recurso (índices 2 y 3)
+    /// salen null; el mes y los recursos activos (índices 0 y 1) —no son dinero— se quedan.
+    /// </summary>
+    [Fact]
+    public void Sin_serieMensual_el_costo_unitario_pierde_sus_montos_pero_no_el_mes_ni_los_recursos()
+    {
+        var html = Exportar(ModeloDePrueba.Crear(), VarianteInforme.Cliente, []);
+
+        var (embedded, _) = DatosDe(html);
+        var fila = embedded.GetProperty("fact").GetProperty("unitario")[0];
+
+        Assert.Equal("2026-01", fila[0].GetString());
+        Assert.Equal(12, fila[1].GetInt32());
+        Assert.Equal(JsonValueKind.Null, fila[2].ValueKind);
+        Assert.Equal(JsonValueKind.Null, fila[3].ValueKind);
+    }
+
+    /// <summary>Con <c>serieMensual</c> aprobado, <c>fact.unitario</c> viaja intacto.</summary>
+    [Fact]
+    public void Con_serieMensual_el_costo_unitario_viaja_intacto()
+    {
+        var html = Exportar(ModeloDePrueba.Crear(), VarianteInforme.Cliente, [BloqueEconomico.SerieMensual]);
+
+        var (embedded, _) = DatosDe(html);
+        var fila = embedded.GetProperty("fact").GetProperty("unitario")[0];
+
+        Assert.Equal(660m, fila[2].GetDecimal());
+        Assert.Equal(55m, fila[3].GetDecimal());
+    }
+
+    /// <summary>
+    /// <c>fact.mom</c> (Tarea 7) deriva de los deltas de categoría de facturación: el mismo bloque
+    /// <c>composicionServicio</c> lo cubre. Sin ese bloque aprobado, reducciones, incrementos y neto
+    /// (índices 1 a 3) salen null; el mes (índice 0) se queda.
+    /// </summary>
+    [Fact]
+    public void Sin_composicionServicio_la_variacion_mom_pierde_sus_montos_pero_no_el_mes()
+    {
+        var html = Exportar(ModeloDePrueba.Crear(), VarianteInforme.Cliente, []);
+
+        var (embedded, _) = DatosDe(html);
+        var fila = embedded.GetProperty("fact").GetProperty("mom")[0];
+
+        Assert.Equal("2026-02", fila[0].GetString());
+        Assert.Equal(JsonValueKind.Null, fila[1].ValueKind);
+        Assert.Equal(JsonValueKind.Null, fila[2].ValueKind);
+        Assert.Equal(JsonValueKind.Null, fila[3].ValueKind);
+    }
+
+    /// <summary>Con <c>composicionServicio</c> aprobado, <c>fact.mom</c> viaja intacto.</summary>
+    [Fact]
+    public void Con_composicionServicio_la_variacion_mom_viaja_intacta()
+    {
+        var html = Exportar(ModeloDePrueba.Crear(), VarianteInforme.Cliente, [BloqueEconomico.ComposicionServicio]);
+
+        var (embedded, _) = DatosDe(html);
+        var fila = embedded.GetProperty("fact").GetProperty("mom")[0];
+
+        Assert.Equal(40m, fila[1].GetDecimal());
+        Assert.Equal(15m, fila[2].GetDecimal());
+        Assert.Equal(25m, fila[3].GetDecimal());
+    }
+
+    /// <summary>La variante interna nunca recorta, ni siquiera lo nuevo de esta tarea: ejecutado,
+    /// sus reservas, y las dos filas derivadas viajan enteros.</summary>
+    [Fact]
+    public void La_variante_interna_no_recorta_ejecutado_ni_unitario_ni_mom()
+    {
+        var html = Exportar(ModeloDePrueba.Crear(), VarianteInforme.Interna);
+
+        var (embedded, _) = DatosDe(html);
+        var ejecutado = embedded.GetProperty("ejecutado");
+
+        Assert.Equal(33001m, ejecutado.GetProperty("total").GetDecimal());
+        Assert.Equal(34001m, ejecutado.GetProperty("reservas").GetProperty("totalDemanda").GetDecimal());
+        var unitario = embedded.GetProperty("fact").GetProperty("unitario")[0];
+        Assert.Equal(660m, unitario[2].GetDecimal());
+        var mom = embedded.GetProperty("fact").GetProperty("mom")[0];
+        Assert.Equal(40m, mom[1].GetDecimal());
+    }
+
+    /// <summary>
+    /// PUBLICACION crece con el enum sin que nadie tenga que tocar este exportador: los OCHO bloques
+    /// —los seis de antes más <c>ahorroEjecutado</c> y <c>reservasFacturadas</c>— viajan con boolean
+    /// explícito porque <c>Publicacion</c> arma el diccionario iterando
+    /// <see cref="BloqueEconomicoExtensions.Todos"/>.
+    /// </summary>
+    [Fact]
+    public void PUBLICACION_lleva_los_ocho_bloques_con_boolean_explicito()
+    {
+        var html = Exportar(ModeloDePrueba.Crear(), VarianteInforme.Cliente,
+            [BloqueEconomico.AhorroEjecutado]);
+
+        var (_, publicacion) = DatosDe(html);
+        var bloques = publicacion.GetProperty("bloques");
+
+        Assert.Equal(8, bloques.EnumerateObject().Count());
+        Assert.True(bloques.GetProperty("ahorroEjecutado").GetBoolean());
+        Assert.False(bloques.GetProperty("reservasFacturadas").GetBoolean());
+    }
+
     /// <summary>Aprobar un bloque publica SUS montos y nada más. Es la prueba de que el recorte va
     /// por bloque y no por sección entera.</summary>
     [Theory]
@@ -161,6 +329,8 @@ public sealed class InformeValorHtmlExporterTests
     [InlineData(BloqueEconomico.AhorroActivo)]
     [InlineData(BloqueEconomico.CentroCosto)]
     [InlineData(BloqueEconomico.AhorroAdvisor)]
+    [InlineData(BloqueEconomico.AhorroEjecutado)]
+    [InlineData(BloqueEconomico.ReservasFacturadas)]
     public void Cada_bloque_aprobado_publica_exactamente_sus_montos(BloqueEconomico bloque)
     {
         var html = Exportar(ModeloDePrueba.Crear(), VarianteInforme.Cliente, [bloque]);
@@ -179,9 +349,9 @@ public sealed class InformeValorHtmlExporterTests
     }
 
     /// <summary>
-    /// La descomposición de la variación del consumo (entrega 2d) no la cubre ninguno de los seis
+    /// La descomposición de la variación del consumo (entrega 2d) no la cubre ninguno de los ocho
     /// bloques aprobables ni la dibuja ningún renderizador todavía. En la variante del cliente no
-    /// viaja, ni siquiera con los seis bloques aprobados: publicar por descuido montos que nadie
+    /// viaja, ni siquiera con los ocho bloques aprobados: publicar por descuido montos que nadie
     /// aprobó es exactamente lo que la aprobación caso por caso existe para impedir.
     /// </summary>
     [Fact]
@@ -231,7 +401,7 @@ public sealed class InformeValorHtmlExporterTests
     }
 
     /// <summary>Lo que se archiva es lo que el archivo hace, no lo que se pidió: la interna publica
-    /// los seis aunque quien llame no pase ninguno.</summary>
+    /// los ocho aunque quien llame no pase ninguno.</summary>
     [Fact]
     public void El_artefacto_declara_los_bloques_que_realmente_publica()
     {
@@ -239,7 +409,7 @@ public sealed class InformeValorHtmlExporterTests
         var cliente = InformeValorHtmlExporter.Exportar(
             ModeloDePrueba.Crear(), VarianteInforme.Cliente, [BloqueEconomico.CentroCosto, BloqueEconomico.CentroCosto]);
 
-        Assert.Equal(6, interna.BloquesPublicados.Count);
+        Assert.Equal(8, interna.BloquesPublicados.Count);
         Assert.Equal([BloqueEconomico.CentroCosto], cliente.BloquesPublicados);
     }
 

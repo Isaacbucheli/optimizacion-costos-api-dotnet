@@ -144,7 +144,7 @@ public sealed class ArchivoDeEntregaTests
         foreach (var b in BloqueEconomicoExtensions.Todos)
             Assert.Equal(b, BloqueEconomicoExtensions.Parsear(b.Clave()));
 
-        Assert.Equal(6, BloqueEconomicoExtensions.Todos.Select(b => b.Clave()).Distinct().Count());
+        Assert.Equal(8, BloqueEconomicoExtensions.Todos.Select(b => b.Clave()).Distinct().Count());
         Assert.Null(BloqueEconomicoExtensions.Parsear("gasto_total"));
         Assert.Null(BloqueEconomicoExtensions.Parsear(null));
     }
