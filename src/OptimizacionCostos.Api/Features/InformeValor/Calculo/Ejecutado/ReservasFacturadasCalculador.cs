@@ -101,10 +101,15 @@ public static class ReservasFacturadasCalculador
 
         foreach (var reserva in foto.Reservas)
         {
-            var linea = EncontrarLinea(reserva, lineas);
+            var (linea, candidatasAmbiguas) = EncontrarLinea(reserva, lineas);
             if (linea is null)
             {
-                sinLinea.Add(NombreDeLaReserva(reserva));
+                // candidatasAmbiguas > 0: SKU+término (y región, si desempató) siguen dejando 2+
+                // líneas indistinguibles — la nota lo dice porque el hueco es del dato, no un bug
+                // silencioso (D9: nunca elegir a ciegas y publicar un número con confianza falsa).
+                sinLinea.Add(candidatasAmbiguas > 0
+                    ? $"{NombreDeLaReserva(reserva)}: {candidatasAmbiguas} líneas candidatas en evolución; no se elige a ciegas."
+                    : NombreDeLaReserva(reserva));
                 continue;
             }
 
@@ -130,6 +135,7 @@ public static class ReservasFacturadasCalculador
                 var ahorro = demanda is { } d ? d - reservaMes : (decimal?)null;
 
                 filas.Add(new ReservaVmFila(
+                    ReservationId: reserva.ReservationId,
                     Vm: consumidor.ResourceName ?? consumidor.InstanceId,
                     Sku: consumidor.SkuName ?? linea.Sku,
                     PorDemandaMes: demanda,
@@ -181,11 +187,13 @@ public static class ReservasFacturadasCalculador
         return new LineaReserva(resourceName, sku, region, term, filas);
     }
 
-    /// <summary>Regla 1: SKU + término, región solo si hay ambigüedad. El SKU de la reserva sale de
-    /// cualquiera de sus consumidores confirmados o de <see cref="ReservaActiva.Producto"/> —
-    /// cualquiera de los dos que contenga el SKU de la línea alcanza, porque ninguno de los dos es
-    /// consistentemente el más específico entre clientes.</summary>
-    private static LineaReserva? EncontrarLinea(ReservaActiva reserva, IReadOnlyList<LineaReserva> lineas)
+    /// <summary>Regla 1: SKU + término, región solo si hay ambigüedad. Devuelve la línea encontrada,
+    /// o <c>null</c> con el conteo de candidatas que quedaron empatadas después del desempate por
+    /// región (0 si sencillamente no hubo ninguna candidata). Con 2+ candidatas SIN desempatar, NO se
+    /// elige <c>candidatas[0]</c> a ciegas: D9 existe justamente para no publicar un número con
+    /// confianza falsa, así que el llamador manda la reserva a <c>SinLineaEnEvolucion</c> con una
+    /// nota que nombra la ambigüedad.</summary>
+    private static (LineaReserva? Linea, int CandidatasAmbiguas) EncontrarLinea(ReservaActiva reserva, IReadOnlyList<LineaReserva> lineas)
     {
         var candidatas = lineas
             .Where(l => l.Term is not null && string.Equals(l.Term, reserva.Term, StringComparison.OrdinalIgnoreCase)
@@ -194,18 +202,45 @@ public static class ReservasFacturadasCalculador
 
         if (candidatas.Count > 1 && !string.IsNullOrWhiteSpace(reserva.Region))
         {
-            var porRegion = candidatas
-                .Where(l => string.Equals(l.Region, reserva.Region, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            var porRegion = candidatas.Where(l => RegionCoincide(l.Region, reserva.Region!)).ToList();
             if (porRegion.Count > 0) candidatas = porRegion;
         }
 
-        return candidatas.Count > 0 ? candidatas[0] : null;
+        return candidatas.Count switch
+        {
+            1 => (candidatas[0], 0),
+            0 => (null, 0),
+            _ => (null, candidatas.Count),
+        };
     }
 
+    /// <summary>Regla 1, el SKU: el de la línea contra el de la reserva, por IGUALDAD exacta
+    /// case-insensitive — nunca <c>Contains</c>, porque un SKU puede ser substring literal de otro de
+    /// otra familia/tamaño (p. ej. <c>"Standard_A1"</c> dentro de <c>"Standard_A1_v2"</c>: distinta VM,
+    /// distinto precio). El SKU de la reserva sale de cualquier <c>Consumidores[].SkuName</c>
+    /// confirmado (ya viene como el token solo) o de <see cref="ReservaActiva.Producto"/> (texto
+    /// libre tipo <c>"Reserved VM Instance, Standard_B16ms, US East 2"</c>): se parte por <c>","</c>,
+    /// se recorta cada parte, y basta con que UN token calce exacto — nunca una comparación de
+    /// substring sobre el texto completo.</summary>
     private static bool CoincideSku(string skuLinea, ReservaActiva reserva) =>
-        (reserva.Producto is not null && reserva.Producto.Contains(skuLinea, StringComparison.OrdinalIgnoreCase))
-        || reserva.Consumidores.Any(c => c.SkuName is not null && c.SkuName.Contains(skuLinea, StringComparison.OrdinalIgnoreCase));
+        (reserva.Producto is not null && reserva.Producto.Split(',')
+            .Select(token => token.Trim())
+            .Any(token => string.Equals(token, skuLinea, StringComparison.OrdinalIgnoreCase)))
+        || reserva.Consumidores.Any(c => c.SkuName is not null && string.Equals(c.SkuName, skuLinea, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>Desempate de región cuando SKU+término dejan 2+ candidatas — es un DESEMPATE
+    /// heurístico, no una comparación de identidad: nunca hay igualdad exacta entre los dos formatos.
+    /// El archivo de evolución trae la región en formato de visualización de facturación
+    /// (<c>"US East 2"</c>); <see cref="ReservaActiva.Region"/> trae el formato ARM (<c>"eastus2"</c>).
+    /// Se tokeniza el nombre de visualización por espacios en minúsculas (<c>["us","east","2"]</c>) y
+    /// se exige que TODOS los tokens aparezcan como substring del nombre ARM en minúsculas — coincide
+    /// con <c>"eastus2"</c> pero no con <c>"westeurope"</c>.</summary>
+    private static bool RegionCoincide(string regionEvolucion, string regionArm)
+    {
+        var armEnMinuscula = regionArm.ToLowerInvariant();
+        var tokens = regionEvolucion.ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return tokens.Length > 0 && tokens.All(armEnMinuscula.Contains);
+    }
 
     /// <summary>Regla 1, la tarifa mensual estable de la línea: los meses de compra suelen venir
     /// prorrateados (la reserva empieza a mitad de mes), así que un solo valor atípico puede

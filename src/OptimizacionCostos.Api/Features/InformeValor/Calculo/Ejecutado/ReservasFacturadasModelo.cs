@@ -22,6 +22,7 @@ public sealed record ReservasFacturadasModelo(
     [property: JsonPropertyName("consumidoresNoLeidos")] int ConsumidoresNoLeidos);
 
 public sealed record ReservaVmFila(
+    [property: JsonPropertyName("reservationId")] string? ReservationId, // la ReservaActiva que originó esta fila (Tarea 4: sumar AhorroMes por reserva)
     [property: JsonPropertyName("vm")] string Vm,
     [property: JsonPropertyName("sku")] string? Sku,
     [property: JsonPropertyName("demanda")] decimal? PorDemandaMes,   // null = sin mes base en BITCOST

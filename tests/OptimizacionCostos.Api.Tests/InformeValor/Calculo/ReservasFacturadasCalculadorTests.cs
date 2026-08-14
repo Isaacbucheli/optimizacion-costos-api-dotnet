@@ -243,6 +243,122 @@ public sealed class ReservasFacturadasCalculadorTests
         Assert.Equal(1804.92m, modelo.AhorroAnualizado);
     }
 
+    // ── Regla 1: el SKU matchea por igualdad exacta, nunca por substring ──
+
+    /// <summary>"Standard_A1" es substring literal de "Standard_A1_v2" pero son familias de VM
+    /// distintas con precio distinto: con Contains, la reserva de la v2 matchearía la línea SIN v2 y
+    /// facturaría dinero equivocado en silencio. Dos líneas con el mismo término, una reserva cuyo
+    /// SKU es "Standard_A1_v2": debe matchear SOLO la línea _v2.</summary>
+    [Fact]
+    public void El_sku_matchea_por_igualdad_exacta_no_por_substring()
+    {
+        var reserva = Reserva("r1", "Reserva A1 v2", "Standard_A1_v2", "eastus", "P1Y", "2027-01-10",
+            [Consumidor("vmA1v2", sku: "Standard_A1_v2")]);
+        var foto = Foto(reservas: [reserva]);
+        var evolucion = new[]
+        {
+            LineaReserva("Standard_A1", "eastus", "1 Year", pvp: 50m, year: 2026, month: 1),
+            LineaReserva("Standard_A1_v2", "eastus", "1 Year", pvp: 90m, year: 2026, month: 1),
+        };
+
+        var modelo = ReservasFacturadasCalculador.Calcular(foto, evolucion, [], ContextoAmplio);
+
+        var fila = Assert.Single(modelo.Filas);
+        Assert.Equal(90m, fila.ReservaMes); // la linea de "Standard_A1" (sin v2) nunca debio matchear
+        Assert.Empty(modelo.SinLineaEnEvolucion);
+    }
+
+    // ── Regla 1: la region desempata por token entre formato ARM y formato de visualizacion ──
+
+    /// <summary>Dos lineas con el mismo SKU+termino, una en "US East 2" y otra en "West Europe": la
+    /// reserva activa trae la region en formato ARM ("eastus2"). El desempate tokeniza el nombre de
+    /// visualizacion ("us","east","2") y exige que todos los tokens aparezcan en el ARM en minuscula:
+    /// matchea la primera linea, nunca la de Europa.</summary>
+    [Fact]
+    public void La_region_desempata_por_token_entre_formato_arm_y_formato_de_visualizacion()
+    {
+        var reserva = Reserva("r1", "Reserva con desempate de region", "Standard_B16ms", "eastus2", "P1Y", "2027-02-01",
+            [Consumidor("vmEastUs2")]);
+        var foto = Foto(reservas: [reserva]);
+        var evolucion = new[]
+        {
+            LineaReserva("Standard_B16ms", "US East 2", "1 Year", pvp: 300m, year: 2026, month: 1),
+            LineaReserva("Standard_B16ms", "West Europe", "1 Year", pvp: 700m, year: 2026, month: 1),
+        };
+
+        var modelo = ReservasFacturadasCalculador.Calcular(foto, evolucion, [], ContextoAmplio);
+
+        var fila = Assert.Single(modelo.Filas);
+        Assert.Equal(300m, fila.ReservaMes);
+        Assert.Empty(modelo.SinLineaEnEvolucion);
+    }
+
+    /// <summary>El desempate por token es una heuristica, no una identidad: "US East" (sin el "2") y
+    /// "US East 2" tokenizan ambas dentro de "eastus2" ("us","east" son substring igual que
+    /// "us","east","2"). Cuando el desempate no logra separar las candidatas, la regla 2 del review
+    /// manda: NO se elige candidatas[0] a ciegas, la reserva va a SinLineaEnEvolucion con una nota que
+    /// nombra la ambiguedad.</summary>
+    [Fact]
+    public void Cuando_el_desempate_de_region_no_separa_las_candidatas_no_se_elige_a_ciegas()
+    {
+        var reserva = Reserva("r1", "Reserva ambigua", "Standard_B16ms", "eastus2", "P1Y", "2027-02-01",
+            [Consumidor("vmAmbigua")]);
+        var foto = Foto(reservas: [reserva]);
+        var evolucion = new[]
+        {
+            LineaReserva("Standard_B16ms", "US East 2", "1 Year", pvp: 300m, year: 2026, month: 1),
+            LineaReserva("Standard_B16ms", "US East", "1 Year", pvp: 310m, year: 2026, month: 1),
+        };
+
+        var modelo = ReservasFacturadasCalculador.Calcular(foto, evolucion, [], ContextoAmplio);
+
+        Assert.Empty(modelo.Filas);
+        var nota = Assert.Single(modelo.SinLineaEnEvolucion);
+        Assert.Contains("2", nota); // 2 lineas candidatas
+        Assert.Contains("no se elige a ciegas", nota);
+    }
+
+    // ── Regla 1: con 3+ meses completos en rango, ReservaMes usa la mediana, no el promedio ──
+
+    /// <summary>Tres meses de la misma linea: 300, 900, 320 (el 900 es el mes de compra prorrateado
+    /// distorsionando hacia arriba). El promedio simple daria 506.67; la mediana (320) es la que la
+    /// regla 1 exige a partir de 3 meses, justo para absorber ese atipico sin tener que identificar
+    /// cual mes fue.</summary>
+    [Fact]
+    public void Con_tres_meses_completos_en_rango_reserva_mes_usa_la_mediana_no_el_promedio()
+    {
+        var reserva = Reserva("r1", "Reserva con outlier de prorrateo", "Standard_B16ms", "US East 2", "P1Y", "2027-03-15",
+            [Consumidor("vmMediana")]);
+        var foto = Foto(reservas: [reserva]);
+        var evolucion = new[]
+        {
+            LineaReserva("Standard_B16ms", "US East 2", "1 Year", pvp: 300m, year: 2026, month: 1),
+            LineaReserva("Standard_B16ms", "US East 2", "1 Year", pvp: 900m, year: 2026, month: 2),
+            LineaReserva("Standard_B16ms", "US East 2", "1 Year", pvp: 320m, year: 2026, month: 3),
+        };
+
+        var modelo = ReservasFacturadasCalculador.Calcular(foto, evolucion, [], ContextoAmplio);
+
+        var fila = Assert.Single(modelo.Filas);
+        Assert.Equal(320m, fila.ReservaMes); // mediana de 300/900/320, nunca el promedio 506.67
+    }
+
+    // ── ReservationId de la fila viaja desde la ReservaActiva que la origino (Tarea 4 lo necesita) ──
+
+    [Fact]
+    public void La_fila_lleva_el_reservation_id_de_la_reserva_que_la_origino()
+    {
+        var reserva = Reserva("r-abc-123", "Reserva con id", "Standard_B16ms", "US East 2", "P1Y", "2027-03-15",
+            [Consumidor("vmConId")]);
+        var foto = Foto(reservas: [reserva]);
+        var evolucion = new[] { LineaReserva("Standard_B16ms", "US East 2", "1 Year", pvp: 100m, year: 2026, month: 1) };
+
+        var modelo = ReservasFacturadasCalculador.Calcular(foto, evolucion, [], ContextoAmplio);
+
+        var fila = Assert.Single(modelo.Filas);
+        Assert.Equal("r-abc-123", fila.ReservationId);
+    }
+
     // ── ConsumidoresNoLeidos viaja desde la foto (mismo criterio de D9 que el resto del modulo) ──
 
     [Fact]
