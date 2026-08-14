@@ -86,7 +86,11 @@ public sealed class ModeloInformeValorSerializacionTests
         PromediosPorAnio: [["2026", 1, 20000m, 20000m]],
         Ahorro: new ConsumoAhorro("Backup", 5000m, "2025-10", 1800m, "2026-01", 3200m, 3, 38400m),
         Comparativa: new ConsumoComparativa("2025-01", "2026-01", [["Storage", 4000m, 3500m]]),
-        PorCentroCosto: [["TI", 100000m]]);
+        PorCentroCosto: [["TI", 100000m]],
+        // unitario/mom: Tarea 7 de la entrega 6, agregada despues de esta fixture. Valores de
+        // ejemplo, no afectan estas pruebas de round-trip.
+        CostoUnitario: [["2026-01", 120, 20000m, 166.67m, 0]],
+        VariacionMoM: []);
 
     private static readonly InformeValorCobertura Cobertura = new(
         Total: 2,

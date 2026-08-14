@@ -174,6 +174,15 @@ public static class InformeValorHtmlExporter
         // sección que el consultor nunca eligió publicar. Cuando esa sección tenga que llegar a un
         // cliente, necesita su propio interruptor de aprobación.
         Anular(fact, "variacionConsumo");
+
+        // fact.unitario/fact.mom (Tarea 7 de la entrega 6): mismo caso que fact.variacionConsumo de
+        // arriba. Ninguno de los seis bloques económicos los cubre y ningún renderizador los dibuja
+        // todavía (Lado.Ninguno en ContratoEntreRenderizadoresTests) — dejarlos pasar filtraría al
+        // cliente un monto por recurso y una variación mes contra mes que nadie aprobó publicar,
+        // aunque nadie los dibuje hoy: el archivo se puede leer desde el navegador. Se recortan
+        // enteros, no fila por fila, por el mismo motivo que variacionConsumo: nulear solo el monto
+        // dejaría una fila con mes y conteo de recursos que simularía una sección aprobada a medias.
+        Anular(fact, "unitario", "mom");
     }
 
     private static void Anular(JsonObject? obj, params string[] propiedades)

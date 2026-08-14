@@ -106,6 +106,15 @@ public sealed class ContratoEntreRenderizadoresTests
         ("matriz.items.g", Lado.Ninguno,
             "El registro de origen del hallazgo de la matriz. Ninguna de las dos tablas de hallazgos " +
             "publica esa columna."),
+        ("fact.unitario", Lado.Ninguno,
+            "Costo por recurso (Tarea 7 de la entrega 6): el modelo lo calcula y lo archiva desde " +
+            "esta entrega, pero el gráfico que lo dibuja —recursos activos, factura y costo unitario " +
+            "en el mismo eje— es de la entrega 7. Se revisa cuando esa entrega agregue el renderizador."),
+        ("fact.mom", Lado.Ninguno,
+            "Variación mes contra mes con reducciones e incrementos ya separados (Observación 6 de " +
+            "la reunión): el modelo entrega las dos series en positivo para que la entrega 7 las " +
+            "dibuje arriba y abajo del eje, pero ese dibujo todavía no existe en ninguno de los dos " +
+            "renderizadores."),
     ];
 
     public enum Lado { Html, React, Ninguno }

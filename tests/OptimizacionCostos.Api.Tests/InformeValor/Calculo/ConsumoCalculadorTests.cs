@@ -490,4 +490,128 @@ public sealed class ConsumoCalculadorTests
         var fila = Assert.Single(modelo!.Comparativa!.Filas);
         Assert.Equal("(sin categoría)", fila[0]);
     }
+
+    // ---------------------------------------------------- Tarea 7, entrega 6: unitario/mom ----
+    // Costo por recurso y variación mes contra mes con reducciones/incrementos separados. Las dos
+    // reusan agregados que Calcular ya arma para Serie y para D3 (cats): ningún test de acá agrupa
+    // facturación por su cuenta, salvo el escenario de 0 recursos activos, que es defensivo (ver
+    // el docstring de CalcularCostoUnitario: esa fila no existe con datos reales).
+
+    private static IReadOnlyList<object?> UnitarioDelMes(ConsumoModelo modelo, string mes) =>
+        modelo.CostoUnitario.Single(fila => (string)fila[0]! == mes);
+
+    /// <summary>Genera un solo mes con exactamente <paramref name="numRecursos"/> recursos activos
+    /// y <paramref name="montoDelMes"/> de facturación total: un recurso factura el monto completo,
+    /// el resto factura cero y aun así queda activo (D5/D6: "activo" es "tiene una fila ese mes",
+    /// no "facturó más de cero" — ver el docstring de <c>ConstruirSerieAltasYBajas</c>).</summary>
+    private static IReadOnlyList<FacturacionRow> MesConNRecursosYMonto(
+        int anio, int mes, int numRecursos, decimal montoDelMes)
+    {
+        var filas = new List<FacturacionRow>();
+        for (var i = 0; i < numRecursos; i++)
+            filas.Add(Fila($"recurso-{i}", i == 0 ? montoDelMes : 0m, anio, mes));
+        return filas;
+    }
+
+    /// <summary>
+    /// Las dos cifras del HTML de referencia (D.O. de la Tarea 7): 558 recursos/$18,129.29 de
+    /// diciembre dan un costo por recurso de 32.49; 912 recursos/$20,896.90 de junio dan 22.91.
+    /// Calculado a mano: 18129.29/558=32.4897...-&gt;32.49 (ComoJs); 20896.90/912=22.9132...-&gt;22.91.
+    /// </summary>
+    [Fact]
+    public void Unitario_costo_por_recurso_sale_exacto_con_las_cifras_del_html_de_referencia()
+    {
+        var modeloDiciembre = ConsumoCalculador.Calcular(
+            MesConNRecursosYMonto(2025, 12, 558, 18129.29m), filasAntesDeFusionar: 558,
+            contexto: Contexto(2025, 12, 2025, 12, forzados: []));
+        var filaDiciembre = UnitarioDelMes(modeloDiciembre!, "2025-12");
+        Assert.Equal(558, filaDiciembre[1]);
+        Assert.Equal(18129.29m, filaDiciembre[2]);
+        Assert.Equal(32.49m, filaDiciembre[3]);
+        Assert.Equal(0, filaDiciembre[4]);
+
+        var modeloJunio = ConsumoCalculador.Calcular(
+            MesConNRecursosYMonto(2026, 6, 912, 20896.90m), filasAntesDeFusionar: 912,
+            contexto: Contexto(2026, 6, 2026, 6, forzados: []));
+        var filaJunio = UnitarioDelMes(modeloJunio!, "2026-06");
+        Assert.Equal(912, filaJunio[1]);
+        Assert.Equal(20896.90m, filaJunio[2]);
+        Assert.Equal(22.91m, filaJunio[3]);
+    }
+
+    /// <summary>
+    /// Guard defensivo: con 0 recursos activos, el costo por recurso es <c>null</c>, nunca una
+    /// división por cero. No es reproducible con datos reales llamando a <c>Calcular</c> (una fila
+    /// de Serie sin ningún recurso activo ese mes no llega a existir: D0 solo agrega meses que
+    /// tienen al menos una fila de facturación, y esa fila ya cuenta como un recurso activo), así
+    /// que se prueba con una fila de Serie sintética directamente sobre el método interno.
+    /// </summary>
+    [Fact]
+    public void Unitario_con_cero_recursos_activos_no_divide()
+    {
+        List<IReadOnlyList<object?>> serieSintetica = [["2026-01", 0, 0, 0, 500m, 0m, 0]];
+
+        var unitario = ConsumoCalculador.CalcularCostoUnitario(serieSintetica);
+
+        var fila = Assert.Single(unitario);
+        Assert.Equal(0, fila[1]);
+        Assert.Null(fila[3]);
+    }
+
+    [Fact]
+    public void Unitario_marca_el_mes_parcial_con_flag_1()
+    {
+        var contexto = Contexto(2026, 1, 2026, 4, forzados: ["2026-04"]);
+        var modelo = ConsumoCalculador.Calcular(
+            EscenarioMesParcialAlFinal(), filasAntesDeFusionar: 9, contexto: contexto);
+
+        Assert.Equal(1, UnitarioDelMes(modelo!, "2026-04")[4]);
+        Assert.Equal(0, UnitarioDelMes(modelo!, "2026-03")[4]); // control: no parcial
+    }
+
+    /// <summary>Dos categorías entre dos meses: Backup baja 300 (1000-&gt;700), Redes sube 100
+    /// (200-&gt;300). Reducciones=300, incrementos=100, neto=300-100=200 — la fila del segundo mes,
+    /// el único que tiene un mes anterior contra el cual comparar.</summary>
+    [Fact]
+    public void MoM_separa_reducciones_e_incrementos_con_signo_positivo_los_dos()
+    {
+        var filas = MesesDeCategoria("Backup", 1000m, 700m)
+            .Concat(MesesDeCategoria("Redes", 200m, 300m))
+            .ToList();
+        var modelo = ConsumoCalculador.Calcular(
+            filas, filasAntesDeFusionar: 4, contexto: Contexto(2026, 1, 2026, 2, forzados: []));
+
+        var fila = Assert.Single(modelo!.VariacionMoM);
+        Assert.Equal(["2026-02", 300m, 100m, 200m], fila);
+    }
+
+    [Fact]
+    public void MoM_el_primer_mes_del_rango_no_produce_fila()
+    {
+        var filas = MesesDeCategoria("Backup", 1000m, 700m)
+            .Concat(MesesDeCategoria("Redes", 200m, 300m))
+            .ToList();
+        var modelo = ConsumoCalculador.Calcular(
+            filas, filasAntesDeFusionar: 4, contexto: Contexto(2026, 1, 2026, 2, forzados: []));
+
+        Assert.DoesNotContain(modelo!.VariacionMoM, fila => (string)fila[0]! == "2026-01");
+    }
+
+    /// <summary>
+    /// Una categoría que no facturó en el mes anterior (Nueva, ausente en enero) cuenta como cero
+    /// ese mes, no se ignora: su alta completa (500) entra como incremento. Backup se mantiene
+    /// estable (1000 los dos meses) y no aporta nada a ninguna de las dos series.
+    /// </summary>
+    [Fact]
+    public void MoM_una_categoria_ausente_en_el_mes_anterior_cuenta_como_cero()
+    {
+        var filas = MesesDeCategoria("Backup", 1000m, 1000m)
+            .Concat(new[] { Fila("recurso-Nueva", 500m, 2026, 2, categoria: "Nueva") })
+            .ToList();
+        var modelo = ConsumoCalculador.Calcular(
+            filas, filasAntesDeFusionar: 3, contexto: Contexto(2026, 1, 2026, 2, forzados: []));
+
+        var fila = Assert.Single(modelo!.VariacionMoM);
+        Assert.Equal(["2026-02", 0m, 500m, -500m], fila);
+    }
 }

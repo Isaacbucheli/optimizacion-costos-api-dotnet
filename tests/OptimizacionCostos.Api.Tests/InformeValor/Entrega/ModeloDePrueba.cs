@@ -84,7 +84,13 @@ internal static class ModeloDePrueba
                 Fin: 11302m, FinHastaMes: "2026-02", TasaMensual: 11303m, MesesSostenido: 4,
                 Anualizada: 11304m),
             Comparativa: new ConsumoComparativa("2025-01", "2026-01", [["Storage", 11203m, 11204m]]),
-            PorCentroCosto: [["Finanzas", 11401m]]),
+            PorCentroCosto: [["Finanzas", 11401m]],
+            // unitario/mom (Tarea 7, entrega 6): Lado.Ninguno en ContratoEntreRenderizadoresTests,
+            // ningún renderizador los lee todavía, así que no llevan marcador de la lista de Montos
+            // de arriba (esa lista audita fugas hacia los dos renderizadores existentes) ni
+            // reutilizan ninguno de esos marcadores, para no ensuciar esa auditoría por accidente.
+            CostoUnitario: [["2026-01", 12, 660m, 55m, 0]],
+            VariacionMoM: [["2026-02", 40m, 15m, 25m]]),
         Seguridad: null,
         Postura: new PosturaModelo(
             Total: 8, TiposDeRecomendacion: 4,

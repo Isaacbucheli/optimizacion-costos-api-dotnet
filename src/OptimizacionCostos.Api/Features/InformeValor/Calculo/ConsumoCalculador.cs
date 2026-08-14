@@ -134,6 +134,8 @@ public static class ConsumoCalculador
 
         var ids = recs.Keys.ToList();
         var serie = ConstruirSerieAltasYBajas(mk, meses, parcial, ids, recs);
+        var costoUnitario = CalcularCostoUnitario(serie);
+        var variacionMoM = CalcularVariacionMoM(mk, cats);
 
         var (bajasDef, cargaRet) = CalcularBajasDefinitivasYCargaRetirada(ids, recs, ultCompleto);
 
@@ -175,7 +177,59 @@ public static class ConsumoCalculador
             PorCentroCosto: ordenCc
                 .OrderByDescending(k => cc[k])
                 .Select(k => (IReadOnlyList<object?>)[k, Redondeo.ComoJs(cc[k])])
-                .ToList());
+                .ToList(),
+            CostoUnitario: costoUnitario,
+            VariacionMoM: variacionMoM);
+    }
+
+    /// <summary>
+    /// Tarea 7 de la entrega 6: costo por recurso, releyendo <paramref name="serie"/> (sus índices
+    /// 1 = recursos activos y 4 = monto del mes, ya redondeados por <see cref="ConstruirSerieAltasYBajas"/>)
+    /// en vez de volver a agrupar la facturación. <c>internal</c> porque el guard de "cero recursos
+    /// activos" es defensivo: con datos reales, un mes sin ningún recurso facturando no genera fila
+    /// en <paramref name="serie"/> (no está en <c>meses</c>, D0), así que ese caso se prueba con una
+    /// fila sintética directa en vez de intentar reproducirlo a través de <see cref="Calcular"/>.
+    /// </summary>
+    internal static List<IReadOnlyList<object?>> CalcularCostoUnitario(List<IReadOnlyList<object?>> serie) =>
+        serie.Select(fila =>
+        {
+            var activos = (int)fila[1]!;
+            var monto = (decimal)fila[4]!;
+            decimal? costo = activos == 0 ? null : Redondeo.ComoJs(monto / activos);
+            return (IReadOnlyList<object?>)[fila[0], activos, monto, costo, fila[6]];
+        }).ToList();
+
+    /// <summary>
+    /// Tarea 7 de la entrega 6, Observación 6 de la reunión: el dibujo (entrega 7) pone las
+    /// reducciones arriba del eje y los incrementos abajo, así que el modelo entrega las dos series
+    /// ya separadas y en positivo, sin firmar la resta hasta el final. Reusa
+    /// <paramref name="cats"/>, el mismo agregado por categoría y mes que <see cref="Calcular"/> ya
+    /// arma para <see cref="CalcularAhorro"/> (y que el ensamblador reusa para <c>D.catSerie</c>):
+    /// no vuelve a agrupar la facturación. Compara cada mes de <paramref name="mk"/> contra el
+    /// anterior DENTRO DEL RANGO — una categoría ausente en un mes cuenta como cero ese mes — y el
+    /// primer mes no tiene anterior, así que no produce fila. Reducciones e incrementos se
+    /// redondean una sola vez (E1); el neto sale de restar esos dos valores ya redondeados, no de
+    /// redondear la resta cruda.
+    /// </summary>
+    internal static List<IReadOnlyList<object?>> CalcularVariacionMoM(
+        List<string> mk, Dictionary<string, Dictionary<string, decimal>> cats)
+    {
+        var filas = new List<IReadOnlyList<object?>>();
+        for (var i = 1; i < mk.Count; i++)
+        {
+            var reducciones = 0m;
+            var incrementos = 0m;
+            foreach (var porMes in cats.Values)
+            {
+                var delta = porMes.GetValueOrDefault(mk[i]) - porMes.GetValueOrDefault(mk[i - 1]);
+                if (delta < 0) reducciones -= delta;
+                else incrementos += delta;
+            }
+            var reduccionesRedondeadas = Redondeo.ComoJs(reducciones);
+            var incrementosRedondeados = Redondeo.ComoJs(incrementos);
+            filas.Add([mk[i], reduccionesRedondeadas, incrementosRedondeados, reduccionesRedondeadas - incrementosRedondeados]);
+        }
+        return filas;
     }
 
     private static void AcumularOrdenado(Dictionary<string, decimal> acumulado, List<string> orden, string clave, decimal monto)
