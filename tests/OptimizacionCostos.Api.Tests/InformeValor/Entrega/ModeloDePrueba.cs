@@ -130,7 +130,10 @@ internal static class ModeloDePrueba
             // de arriba (esa lista audita fugas hacia los dos renderizadores existentes) ni
             // reutilizan ninguno de esos marcadores, para no ensuciar esa auditoría por accidente.
             CostoUnitario: [["2026-01", 12, 660m, 55m, 0]],
-            VariacionMoM: [["2026-02", 40m, 15m, 25m]]),
+            // Índice 4 (I4 del review final de la entrega 6): 1 si el mes es parcial / 0 si no,
+            // misma convención que CostoUnitario y las demás filas posicionales. "2026-02" ya es
+            // parcial en SerieMensual de arriba, así que el flag va en 1 acá también.
+            VariacionMoM: [["2026-02", 40m, 15m, 25m, 1]]),
         Seguridad: null,
         Postura: new PosturaModelo(
             Total: 8, TiposDeRecomendacion: 4,

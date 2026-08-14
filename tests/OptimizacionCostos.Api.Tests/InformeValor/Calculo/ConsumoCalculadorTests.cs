@@ -582,7 +582,7 @@ public sealed class ConsumoCalculadorTests
             filas, filasAntesDeFusionar: 4, contexto: Contexto(2026, 1, 2026, 2, forzados: []));
 
         var fila = Assert.Single(modelo!.VariacionMoM);
-        Assert.Equal(["2026-02", 300m, 100m, 200m], fila);
+        Assert.Equal(["2026-02", 300m, 100m, 200m, 0], fila);
     }
 
     [Fact]
@@ -612,6 +612,24 @@ public sealed class ConsumoCalculadorTests
             filas, filasAntesDeFusionar: 3, contexto: Contexto(2026, 1, 2026, 2, forzados: []));
 
         var fila = Assert.Single(modelo!.VariacionMoM);
-        Assert.Equal(["2026-02", 0m, 500m, -500m], fila);
+        Assert.Equal(["2026-02", 0m, 500m, -500m, 0], fila);
+    }
+
+    /// <summary>I4 del review final de la entrega 6: el flag de mes parcial (índice 4) sigue la
+    /// misma convención que <c>CostoUnitario</c> (ver <c>Unitario_marca_el_mes_parcial_con_flag_1</c>)
+    /// — se lee del mismo <c>parcial</c> que ya resuelve <c>ResolverParciales</c>, no de un cálculo
+    /// nuevo. "2026-03" se fuerza como parcial; "2026-02" (control) no lo es.</summary>
+    [Fact]
+    public void MoM_marca_el_mes_parcial_con_flag_1()
+    {
+        var filas = MesesDeCategoria("Backup", 1000m, 900m, 800m);
+        var contexto = Contexto(2026, 1, 2026, 3, forzados: ["2026-03"]);
+
+        var modelo = ConsumoCalculador.Calcular(filas, filasAntesDeFusionar: 3, contexto: contexto);
+
+        var filaFeb = modelo!.VariacionMoM.Single(f => (string)f[0]! == "2026-02");
+        var filaMar = modelo.VariacionMoM.Single(f => (string)f[0]! == "2026-03");
+        Assert.Equal(0, filaFeb[4]);
+        Assert.Equal(1, filaMar[4]);
     }
 }

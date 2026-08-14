@@ -201,10 +201,13 @@ public sealed class InformeValorPreviewApiTests : IClassFixture<InformeValorPrev
     {
         const int clientId = 82;
         _factory.Access.Allow(clientId);
+        // M5c del review final de la entrega 6: "orphaned_disks" (el CheckId real registrado en
+        // OptimizationChecks), no "orphan_disk" (que no existe y caía al residual "sin mapear") —
+        // para que este fixture ejercite el camino mapeado, que es el que corre en producción.
         _factory.Recolector.ConBarrido(clientId, new RegistroBarrido(true, null,
         [
             new BarridoResueltoFila(
-                CheckId: "orphan_disk", SubscriptionId: "sub-1",
+                CheckId: "orphaned_disks", SubscriptionId: "sub-1",
                 AzureResourceId: "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Compute/disks/disco-1",
                 ResourceName: "disco-1", ResourceType: "Microsoft.Compute/disks",
                 EstimatedMonthlySavings: 25m, Currency: "USD",

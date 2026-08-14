@@ -41,6 +41,11 @@ public static class OpexRecolector
     public static async Task<OpexScore> LeerAsync(
         SqlConnection conn, SqlAdvisorScoreStore store, int clientId, CancellationToken ct = default)
     {
+        // T11 del review final de la entrega 6: el parámetro es el testigo de que el llamador tiene
+        // el store SQL concreto (ver SqlInsumosBdRecolector.LeerAsync, el "is SqlAdvisorScoreStore
+        // sqlScore" que elige esta sobrecarga); las lecturas van por los estáticos internos sobre
+        // conn, no por la instancia.
+        _ = store;
         var hist = await SqlAdvisorScoreStore.LoadHistoryAsync(conn, clientId, 'M', ct);
         var snap = await SqlAdvisorScoreStore.LoadLatestSnapshotAsync(conn, clientId, includeBreakdown: false, ct);
         return Armar(snap, hist);

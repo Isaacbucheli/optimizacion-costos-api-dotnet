@@ -159,7 +159,12 @@ public static class ReservasFacturadasCalculador
         return new ReservasFacturadasModelo(
             Medido: true, Motivo: null, Filas: filas,
             TotalDemanda: totalDemanda, TotalReserva: totalReserva, TotalAhorro: totalAhorro,
-            AhorroAnualizado: Redondeo.ComoJs(totalAhorro * 12),
+            // M5d del review final de la entrega 6: sin Redondeo.ComoJs. totalAhorro ya es exacto a
+            // 2 decimales (Regla 6, arriba: suma de filas ya redondeadas una vez cada una); multiplicar
+            // un decimal exacto de 2 cifras por el entero 12 no genera ninguna cifra nueva que
+            // redondear, así que una segunda pasada de Redondeo.ComoJs acá sería exactamente la
+            // "segunda pasada de redondeo sobre la suma" que la Regla 6 prohíbe.
+            AhorroAnualizado: totalAhorro * 12,
             SinLineaEnEvolucion: sinLinea,
             ConsumidoresNoLeidos: foto.Reservas.Count(r => r.ConsumidoresNoLeidos));
     }

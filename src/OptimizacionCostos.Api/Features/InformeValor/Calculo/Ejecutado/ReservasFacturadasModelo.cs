@@ -17,7 +17,7 @@ public sealed record ReservasFacturadasModelo(
     [property: JsonPropertyName("totalDemanda")] decimal TotalDemanda,
     [property: JsonPropertyName("totalReserva")] decimal TotalReserva,
     [property: JsonPropertyName("totalAhorro")] decimal TotalAhorro,
-    [property: JsonPropertyName("ahorroAnualizado")] decimal AhorroAnualizado,      // TotalAhorro*12, redondeado una vez
+    [property: JsonPropertyName("ahorroAnualizado")] decimal AhorroAnualizado,      // TotalAhorro*12, exacto (M5d: ×12 de un decimal de 2 cifras no genera cifras nuevas)
     [property: JsonPropertyName("sinLineaEnEvolucion")] IReadOnlyList<string> SinLineaEnEvolucion, // reservas de la foto sin match (p. ej. no-VM: is_reservation solo detecta VM)
     [property: JsonPropertyName("consumidoresNoLeidos")] int ConsumidoresNoLeidos);
 

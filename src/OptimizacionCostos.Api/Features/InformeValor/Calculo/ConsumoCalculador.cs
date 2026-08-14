@@ -135,7 +135,7 @@ public static class ConsumoCalculador
         var ids = recs.Keys.ToList();
         var serie = ConstruirSerieAltasYBajas(mk, meses, parcial, ids, recs);
         var costoUnitario = CalcularCostoUnitario(serie);
-        var variacionMoM = CalcularVariacionMoM(mk, cats);
+        var variacionMoM = CalcularVariacionMoM(mk, cats, parcial);
 
         var (bajasDef, cargaRet) = CalcularBajasDefinitivasYCargaRetirada(ids, recs, ultCompleto);
 
@@ -210,9 +210,18 @@ public static class ConsumoCalculador
     /// primer mes no tiene anterior, así que no produce fila. Reducciones e incrementos se
     /// redondean una sola vez (E1); el neto sale de restar esos dos valores ya redondeados, no de
     /// redondear la resta cruda.
+    ///
+    /// <para><b>I4 del review final de la entrega 6.</b> El plan original de la Tarea 7 no le dio a
+    /// esta fila el flag de mes parcial que sí llevan <see cref="ConsumoModelo.SerieMensual"/>,
+    /// <see cref="ConsumoModelo.Serie"/> y <see cref="CalcularCostoUnitario"/> — un defecto
+    /// del plan, no una decisión: sin consumidor todavía (mismo caso de <c>fact.mom</c> declarado
+    /// <c>Lado.Ninguno</c> en <c>ContratoEntreRenderizadoresTests</c>), pero el contrato queda
+    /// completo desde ya en vez de agregarse a medias cuando llegue el primer renderizador.
+    /// <paramref name="parcial"/> es el mismo conjunto que ya calcula <see cref="ResolverParciales"/>
+    /// para <see cref="ConstruirSerieAltasYBajas"/>: no se recalcula nada nuevo.</para>
     /// </summary>
     internal static List<IReadOnlyList<object?>> CalcularVariacionMoM(
-        List<string> mk, Dictionary<string, Dictionary<string, decimal>> cats)
+        List<string> mk, Dictionary<string, Dictionary<string, decimal>> cats, HashSet<string> parcial)
     {
         var filas = new List<IReadOnlyList<object?>>();
         for (var i = 1; i < mk.Count; i++)
@@ -227,7 +236,8 @@ public static class ConsumoCalculador
             }
             var reduccionesRedondeadas = Redondeo.ComoJs(reducciones);
             var incrementosRedondeados = Redondeo.ComoJs(incrementos);
-            filas.Add([mk[i], reduccionesRedondeadas, incrementosRedondeados, reduccionesRedondeadas - incrementosRedondeados]);
+            filas.Add([mk[i], reduccionesRedondeadas, incrementosRedondeados,
+                reduccionesRedondeadas - incrementosRedondeados, parcial.Contains(mk[i]) ? 1 : 0]);
         }
         return filas;
     }

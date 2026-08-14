@@ -62,13 +62,16 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// mismos índices 1 y 4 de <see cref="Serie"/>, releídos, no recalculados. Es el argumento del
 /// HTML de referencia: recursos activos suben, factura sube menos, costo por recurso baja.
 /// <see cref="VariacionMoM"/> = [mes, reducciones (positivo), incrementos (positivo), neto =
-/// reducciones − incrementos], una fila por cada mes del rango salvo el primero (que no tiene mes
-/// anterior contra el cual comparar). Por categoría, compara el monto de ese mes contra el
-/// anterior dentro del rango — una categoría ausente en un mes cuenta como cero ese mes — y suma
-/// las caídas por un lado y las subidas por otro, ya en positivo. Observación 6 de la reunión: el
-/// dibujo (entrega 7) pone las reducciones arriba del eje y los incrementos abajo; publicar las
-/// dos series ya separadas es lo que hace posible ese dibujo sin que el modelo tenga que saber de
-/// ejes.</para>
+/// reducciones − incrementos, 1 si el mes es parcial / 0 si no], una fila por cada mes del rango
+/// salvo el primero (que no tiene mes anterior contra el cual comparar). Por categoría, compara
+/// el monto de ese mes contra el anterior dentro del rango — una categoría ausente en un mes
+/// cuenta como cero ese mes — y suma las caídas por un lado y las subidas por otro, ya en
+/// positivo. Observación 6 de la reunión: el dibujo (entrega 7) pone las reducciones arriba del
+/// eje y los incrementos abajo; publicar las dos series ya separadas es lo que hace posible ese
+/// dibujo sin que el modelo tenga que saber de ejes. El flag de mes parcial (índice 4, defecto del
+/// plan original, corregido en el review final de la entrega 6, I4) sigue la misma convención que
+/// <see cref="SerieMensual"/>/<see cref="Serie"/>/<see cref="CostoUnitario"/>: sin él, esta era la
+/// única fila posicional de la entrega que no declaraba si su propio mes era parcial.</para>
 /// </summary>
 public sealed record ConsumoModelo(
     /// <summary>Filas aceptadas antes de fusionar, de TODA la carga (D14, sin filtrar por rango:
