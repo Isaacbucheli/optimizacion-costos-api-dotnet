@@ -497,6 +497,83 @@ public sealed class InformeValorEnsambladorTests
     }
 
     // ===================================================================================
+    // Tarea 8 de la entrega 6: la conciliación entre los dos archivos de BITCOST (spec, "Reglas
+    // de convivencia entre los dos archivos"). La tabla de hechos manda para identidad; el archivo
+    // de evolución, para reservas. Si los totales por mes divergen más allá del umbral, el informe
+    // declara la discrepancia con la cifra de cada fuente en vez de promediar o elegir en silencio.
+    // ===================================================================================
+
+    private static EvolucionRow Evolucion(
+        decimal pvp, int anio, int mes, bool esReserva = false, string recurso = "vm-1",
+        string? categoria = "Cómputo") => new(
+        NaturalKeyHash: $"h{++_n}", Category: categoria, Subcategory: null, ResourceName: recurso,
+        IsReservation: esReserva, Pvp: pvp, PeriodYear: (short)anio, PeriodMonth: (byte)mes);
+
+    [Fact]
+    public void Sin_evolucion_cargada_la_conciliacion_sale_null()
+    {
+        var (facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto) = FixtureRica();
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto);
+
+        Assert.Null(modelo.Meta.Conciliacion);
+    }
+
+    [Fact]
+    public void Con_los_mismos_totales_por_mes_la_conciliacion_coincide_sin_filas()
+    {
+        var facturacion = new List<FacturacionRow> { Factura("sub-a", "Suscripción A", 20000m, 2026, 6) };
+        var evolucion = new List<EvolucionRow> { Evolucion(20000m, 2026, 6) };
+        var contexto = Contexto(2026, 6, 6);
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, 0, [], Insumos(), "Cliente", contexto, evolucion: evolucion);
+
+        Assert.NotNull(modelo.Meta.Conciliacion);
+        var conciliacion = modelo.Meta.Conciliacion!;
+        Assert.True(conciliacion.Coincide);
+        Assert.Empty(conciliacion.Diferencias);
+    }
+
+    [Fact]
+    public void Un_mes_con_diferencia_sobre_el_umbral_se_declara_con_la_cifra_de_cada_fuente()
+    {
+        var facturacion = new List<FacturacionRow> { Factura("sub-a", "Suscripción A", 20000m, 2026, 6) };
+        var evolucion = new List<EvolucionRow> { Evolucion(19000m, 2026, 6) };
+        var contexto = Contexto(2026, 6, 6);
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, 0, [], Insumos(), "Cliente", contexto, evolucion: evolucion);
+
+        var conciliacion = modelo.Meta.Conciliacion!;
+        Assert.False(conciliacion.Coincide);
+        var fila = Assert.Single(conciliacion.Diferencias);
+        Assert.Equal(new object?[] { "2026-06", 20000m, 19000m, 1000m }, fila);
+    }
+
+    /// <summary>
+    /// El umbral es POR MES, con piso de $1: <c>max(1.00, 0.5% del total de hechos de ESE mes)</c>.
+    /// Con hechos en $100 el 0.5% da $0.50, por debajo del piso — el umbral real que se aplica es
+    /// $1.00, y una diferencia de $0.80 queda debajo. Si el piso no existiera, el 0.5% puro habría
+    /// dejado pasar esta misma diferencia a la lista.
+    /// </summary>
+    [Fact]
+    public void Una_diferencia_bajo_el_umbral_no_se_declara()
+    {
+        var facturacion = new List<FacturacionRow> { Factura("sub-a", "Suscripción A", 100m, 2026, 6) };
+        var evolucion = new List<EvolucionRow> { Evolucion(99.20m, 2026, 6) };
+        var contexto = Contexto(2026, 6, 6);
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, 0, [], Insumos(), "Cliente", contexto, evolucion: evolucion);
+
+        var conciliacion = modelo.Meta.Conciliacion!;
+        Assert.True(conciliacion.Coincide);
+        Assert.Empty(conciliacion.Diferencias);
+    }
+
+    // ===================================================================================
     // No cubierto por este test (según pide el punto 5 del encargo): tres nombres/formas que
     // render(), TAL CUAL ESTÁ HOY (sin el patch que le corresponde a la entrega 3), no puede leer
     // desde este modelo. Los tres son consecuencia DIRECTA de una decisión ya tomada (D2, D4, D7),

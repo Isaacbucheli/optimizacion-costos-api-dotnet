@@ -89,6 +89,10 @@ public sealed class ContratoEntreRenderizadoresTests
         ("ejecutado", Lado.Ninguno,
             "La sección titular del acumulado se dibuja en la entrega 7; el modelo se calcula y " +
             "archiva desde la 6 para que las entregas ya emitidas lleven el dato."),
+        ("meta.conciliacion", Lado.Ninguno,
+            "La discrepancia declarada entre la tabla de hechos y el archivo de evolución (Tarea 8 " +
+            "de la entrega 6). Ningún renderizador la dibuja todavía: el modelo se calcula y archiva " +
+            "desde esta entrega para que la 7, que sí la dibuja, no dependa de recalcularla."),
         ("meta.cobertura.suscripciones.id", Lado.Ninguno,
             "El identificador con el que D12 normaliza y concilia las tres fuentes. Es la clave del " +
             "cruce, no una columna: la tabla publica el nombre, y cuando ninguna fuente trajo nombre " +

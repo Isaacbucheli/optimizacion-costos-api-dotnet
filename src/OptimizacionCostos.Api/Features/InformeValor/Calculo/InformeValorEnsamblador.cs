@@ -73,6 +73,12 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// p. ej. el preview liviano) se usa <see cref="RegistroBarrido.NoAutorizado"/> con un motivo propio de
 /// esta ruta, nunca <see cref="RegistroBarrido.SinBarrido"/>: la ausencia acá es de LECTURA, no un
 /// hecho confirmado de que el cliente nunca corrió el barrido.</para>
+///
+/// <para><b>Tarea 8 de la entrega 6: resuelve <see cref="InformeValorMeta.Conciliacion"/></b>
+/// cruzando <paramref name="facturacion"/> (ya filtrada al rango) contra <paramref name="evolucion"/>
+/// — ver <see cref="CalcularConciliacion"/>. Independiente de <c>D.ejecutado</c>: se calcula siempre
+/// que llegue <paramref name="evolucion"/>, sin importar si hay <paramref name="registroBarrido"/> o
+/// una foto de reservas medida.</para>
 /// </summary>
 public static class InformeValorEnsamblador
 {
@@ -111,7 +117,8 @@ public static class InformeValorEnsamblador
             Periodo: FormatearPeriodo(contexto.PeriodStart, contexto.PeriodEnd),
             Corte: contexto.Corte.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             Cobertura: CalcularCobertura(facturacionEnRango, insumosBd.Rbac, insumosBd.Advisor),
-            RbacOrigen: insumosBd.RbacOrigen);
+            RbacOrigen: insumosBd.RbacOrigen,
+            Conciliacion: CalcularConciliacion(facturacionEnRango, evolucion, contexto));
 
         // Tarea 6: D.ejecutado, la octava clave (ver el comentario de clase de ModeloInformeValor y
         // el de esta clase). Solo se computa cuando hay con qué: sin registroBarrido ni una foto de
@@ -312,6 +319,76 @@ public static class InformeValorEnsamblador
             .ToList();
 
         return new InformeValorCobertura(filas.Count, filas);
+    }
+
+    /// <summary>Piso en dólares del umbral de <see cref="CalcularConciliacion"/>: sin él, un cliente
+    /// con gasto casi nulo dispararía una fila por centavos de redondeo del pivot de Excel.</summary>
+    private const decimal UmbralPiso = 1.00m;
+
+    /// <summary>Tasa del umbral de <see cref="CalcularConciliacion"/>, publicada en
+    /// <see cref="ConciliacionArchivos.Umbral"/>: 0.5% del total de hechos de CADA mes, nunca un
+    /// monto fijo (ver el comentario de clase de <see cref="ConciliacionArchivos"/>).</summary>
+    private const decimal UmbralTasa = 0.005m;
+
+    /// <summary>
+    /// Tarea 8 de la entrega 6 (spec, "Reglas de convivencia entre los dos archivos"): compara el
+    /// total mensual de <paramref name="facturacionEnRango"/> (ya filtrada por el mismo D0 que usan
+    /// <see cref="CalcularCobertura"/> y <see cref="CalcularCatSerie"/>) contra el de
+    /// <paramref name="evolucion"/>, filtrada acá mismo con la misma <see cref="ConsumoCalculador.EnRango"/>
+    /// — <see cref="EvolucionRow.PeriodYear"/>/<see cref="EvolucionRow.PeriodMonth"/> son los mismos
+    /// tipos que ya acepta esa función, así que no hace falta una segunda definición de rango.
+    /// Ningún bloque individual ve las dos fuentes a la vez, así que este cruce vive acá — mismo
+    /// motivo que <see cref="CalcularCobertura"/> (D12).
+    ///
+    /// <para>El umbral se recalcula POR MES, nunca contra un total global: <c>max(<see cref="UmbralPiso"/>,
+    /// <see cref="UmbralTasa"/> del total de hechos de ESE mes)</c>. La comparación usa los totales
+    /// SIN redondear; el redondeo (E1) se aplica solo a los tres números que se publican en cada
+    /// fila, después de decidir si esa fila entra — para que un mes justo en el borde no cambie de
+    /// lado según el orden en que se redondee y se compare.</para>
+    ///
+    /// <para><c>null</c> cuando no hay evolución cargada (ni siquiera una lista vacía): sin la
+    /// segunda fuente no hay nada que conciliar, ni siquiera "coincide".</para>
+    /// </summary>
+    private static ConciliacionArchivos? CalcularConciliacion(
+        IReadOnlyList<FacturacionRow> facturacionEnRango,
+        IReadOnlyList<EvolucionRow>? evolucion,
+        ContextoInformeValor contexto)
+    {
+        if (evolucion is null || evolucion.Count == 0) return null;
+
+        var totalesHechos = new Dictionary<string, decimal>();
+        foreach (var f in facturacionEnRango)
+        {
+            var mes = ConsumoCalculador.Ym(f.Year, f.Month);
+            totalesHechos[mes] = totalesHechos.GetValueOrDefault(mes) + f.Pvp;
+        }
+
+        var totalesEvolucion = new Dictionary<string, decimal>();
+        foreach (var e in evolucion)
+        {
+            if (!ConsumoCalculador.EnRango(e.PeriodYear, e.PeriodMonth, contexto.PeriodStart, contexto.PeriodEnd))
+                continue;
+            var mes = ConsumoCalculador.Ym(e.PeriodYear, e.PeriodMonth);
+            totalesEvolucion[mes] = totalesEvolucion.GetValueOrDefault(mes) + e.Pvp;
+        }
+
+        var meses = totalesHechos.Keys.Union(totalesEvolucion.Keys, StringComparer.Ordinal)
+            .OrderBy(m => m, StringComparer.Ordinal);
+
+        var diferencias = new List<IReadOnlyList<object?>>();
+        foreach (var mes in meses)
+        {
+            var hechos = totalesHechos.GetValueOrDefault(mes);
+            var evolucionMes = totalesEvolucion.GetValueOrDefault(mes);
+            var dif = hechos - evolucionMes;
+            var umbralDelMes = Math.Max(UmbralPiso, hechos * UmbralTasa);
+            if (Math.Abs(dif) <= umbralDelMes) continue; // el redondeo del pivot no es discrepancia
+
+            diferencias.Add((IReadOnlyList<object?>)
+                [mes, Redondeo.ComoJs(hechos), Redondeo.ComoJs(evolucionMes), Redondeo.ComoJs(dif)]);
+        }
+
+        return new ConciliacionArchivos(Coincide: diferencias.Count == 0, Diferencias: diferencias, Umbral: UmbralTasa);
     }
 
     /// <summary>
