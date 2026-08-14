@@ -17,12 +17,14 @@ public static class CategoriaEjecutado
     // Los 13 CheckId reales de OptimizationChecks.Registered (Features/Optimization/OptimizationChecks.cs),
     // asignados por lo que cada check detecta. Dos no calzan de forma literal en las cinco categorías de
     // la PPT y se anotan aparte:
-    //   - storage_no_retention (cuentas de Storage sin retención/soft-delete de blobs) → Discos: no hay
-    //     categoría de "Storage" en la PPT; "Discos / Réplicas" es la más cercana porque la retención de
-    //     blobs es, en esencia, protección de datos igual que una réplica/snapshot.
+    //   - storage_no_retention (cuentas de Storage sin retención/soft-delete de blobs) → Residual: es governance
+    //     de storage accounts, no de discos administrados; declarado así en D1 para no forzarlo a un balde
+    //     que no le corresponde. Si el negocio decide otra cosa, es una línea.
     //   - lb_appgw_no_backend, empty_subnets, basic_load_balancers, orphaned_nics → Red: son recursos de
     //     networking (load balancer, App Gateway, subnet, NIC) aunque el check no hable de IP/DNS/Endpoint
     //     en el nombre.
+    //   - vms_without_ha, vms_without_ahb → Vms: quedan deliberadamente en VMs (tipo de recurso umbrella),
+    //     no son sub-categorías de otra cosa.
     internal static readonly IReadOnlyDictionary<string, string> PorCheck = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     {
         ["orphaned_disks"] = Discos,               // Discos administrados no conectados
@@ -31,7 +33,7 @@ public static class CategoriaEjecutado
         ["long_deallocated_vms"] = Vms,             // VMs desasignadas (posibles VMs olvidadas)
         ["empty_app_service_plans"] = AppService,   // App Service Plans sin aplicaciones
         ["lb_appgw_no_backend"] = Red,               // Balanceadores / App Gateways sin backend
-        ["storage_no_retention"] = Discos,          // Storage sin política de retención (ver nota arriba)
+        ["storage_no_retention"] = Residual,        // Storage sin política de retención (governance, no discos)
         ["orphaned_nics"] = Red,                     // Interfaces de red huérfanas
         ["empty_subnets"] = Red,                     // Subnets vacías
         ["vms_without_ha"] = Vms,                    // VMs sin alta disponibilidad
