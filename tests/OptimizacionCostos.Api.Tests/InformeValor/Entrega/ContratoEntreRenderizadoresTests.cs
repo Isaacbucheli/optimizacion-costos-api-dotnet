@@ -89,58 +89,19 @@ public sealed class ContratoEntreRenderizadoresTests
             "`mecanismos: {...; nota: string}[]` y `r.nota`), una etiqueta de presentación de los " +
             "baldes de atribución sin relación con el modelo ni con la tabla de reservas por VM. La " +
             "Tarea 5 de esta entrega no dibuja la nota de la reserva en esa tabla."),
-        ("ejecutado", Lado.Html,
-            "La tarjeta OPTIMIZACIÓN del resumen (Tarea 3 de la entrega 7, observación 1 de la reunión " +
-            "del 2026-08-13) lee D.ejecutado directamente: es la primera vez que la capa de dibujo toca " +
-            "esta clave de nivel superior. El consultor todavía no la revisa en la vista React; se " +
-            "cierra cuando esa vista dibuje la misma tarjeta."),
-        ("ejecutado.pctGasto", Lado.Html,
-            "El porcentaje del acumulado ejecutado sobre el gasto total del período: la tarjeta " +
-            "OPTIMIZACIÓN lo publica también en la variante del cliente (decisión 2026-08-13: es un " +
-            "porcentaje, nunca dinero, así que viaja siempre). La vista React no dibuja esta tarjeta " +
-            "todavía."),
-        ("opex", Lado.Html,
-            "La tarjeta OPEX del resumen (Tarea 3 de la entrega 7, observación 3 de la reunión) lee " +
-            "D.opex directamente por primera vez: cubre la clave de nivel superior y opex.actual, el " +
-            "único campo de este bloque sin colisión de nombre con otro. medido/motivo/serie ya eran " +
-            "simétricos por colisión de token con ejecutado y fact; opex.fecha queda declarado aparte " +
-            "junto con su colisión de texto con cronologia.hitos.fecha."),
+        ("ejecutado.reservas", Lado.Html,
+            "La tabla de reservas del acumulado ejecutado (Tarea 5 de la entrega 7): una fila por VM " +
+            "con vm/sku/demanda/reserva/ahorro/compartida/vence/porVencer, más los totales " +
+            "(totalDemanda, totalReserva, totalAhorro, ahorroAnualizado) y sinLineaEnEvolucion. La " +
+            "Tarea 9 de esta entrega (la vista React) no incluye una sección de reservas del acumulado " +
+            "en su alcance -ver la tabla de archivos del plan de la entrega 7, que asigna esta tabla a " +
+            "la Tarea 5 y no a la 9-: verificado que SeccionEjecutado.tsx no lee ej.reservas (grep para " +
+            "\"reservas\" en ese archivo: solo aparece en ejes.reservasMedidas/reservasMotivo, campos " +
+            "distintos). Queda declarada para cuando una sección de Reservas propia la dibuje."),
         ("opex.estado", Lado.Ninguno,
             "El estado textual del score (por ejemplo \"en riesgo\"), sin usar todavía: la tarjeta del " +
             "resumen (Tarea 3) y el gráfico de la sección Advisor (Tarea 5) leen actual/serie/medido/" +
             "motivo, no este campo."),
-        ("cronologia.hitos.fecha", Lado.Html,
-            "Falso positivo del barrido por texto: \"ox.fecha\" (Tarea 3 de la entrega 7) colisiona con " +
-            "\"hitos[].fecha\" porque los dos campos se llaman igual y el barrido no distingue de qué " +
-            "padre viene cada token repetido. Con la cronología ya dibujada (Tarea 5, ver la entrada de " +
-            "\"cronologia\" más abajo) el resultado es el mismo -Lado.Html-, así que la colisión ya no " +
-            "cambia nada, pero se deja declarada porque sigue siendo la explicación correcta de POR QUÉ " +
-            "el barrido la marca."),
-        ("cronologia", Lado.Html,
-            "La sección Cronología (Tarea 5 de la entrega 7) dibuja los hitos de la bitácora de la " +
-            "matriz de mejoras -fecha, código de la matriz, el título en prosa que tituloHito() arma " +
-            "desde el campo trackeado, antes/después y la recomendación asociada- y declara cuántos " +
-            "quedaron fuera de la lista blanca (omitidos). Es la primera vez que la capa de dibujo toca " +
-            "esta clave de nivel superior: verificado contra innovacion-CDC " +
-            "(src/components/informe-valor/informe, grep sin resultados para \"cronologia\"/\"hitos\") " +
-            "que la vista React todavía no tiene una sección de cronología. Se cierra cuando la Tarea 9 " +
-            "de esta entrega la dibuje ahí."),
-        ("fact.unitario", Lado.Html,
-            "El panel \"Costo por recurso: el entorno crece y el unitario baja\" (Tarea 6 de la entrega " +
-            "7) dibuja recursos activos y costo por recurso con linea(), leyendo f.unitario en sus " +
-            "posiciones [1] recursos, [3] costo, [4] parcial. El backend ConsumoCalculador.CalcularCostoUnitario " +
-            "construye fact.unitario desde fact.serie[1] y fact.serie[4]. Es la primera vez que la capa " +
-            "de dibujo toca esta clave: verificado contra innovacion-CDC (src/components/informe-valor/informe, " +
-            "src/lib/informeValor.ts, grep sin resultados para \"unitario\") que la vista React todavía no " +
-            "la lee. Se cierra cuando la Tarea 9 de esta entrega agregue el renderizador ahí."),
-        ("fact.mom", Lado.Html,
-            "El panel \"Variación del consumo mes a mes\" (Tarea 6 de la entrega 7, Observación 6 de la " +
-            "reunión) dibuja reducciones e incrementos con colsBidir(), la primitiva nueva que reparte " +
-            "las dos series -ya en positivo- a los dos lados de una línea de cero (cols() no admite " +
-            "valores negativos: corta todo v<=0). Es la primera vez que la capa de dibujo toca esta " +
-            "clave: verificado contra innovacion-CDC (src/components/informe-valor/informe, " +
-            "src/lib/informeValor.ts, grep sin resultados para \"mom\") que la vista React todavía no " +
-            "la lee. Se cierra cuando la Tarea 9 de esta entrega agregue el renderizador ahí."),
 
         // ---- lo que no lee ninguno de los dos ----
         ("fact.variacionConsumo", Lado.Ninguno,
@@ -148,19 +109,14 @@ public sealed class ContratoEntreRenderizadoresTests
             "que son insumo interno del backend (los recursos que explican cada balde, sus tarifas " +
             "antes y después, la utilización de cada reserva) y que ninguna de las dos vistas dibuja. " +
             "Se revisa cuando la sección tenga su interruptor y un renderizador que la publique."),
-        // "ejecutado" ya no es una excepción de bloque entero (Tarea 3 de la entrega 7 empieza a
-        // dibujarlo): la Tarea 4 (la sección TITULAR: los tres gráficos de la PPT de MERCANTIL más su
-        // tabla) dibuja casi todos los campos puntuales del acumulado que quedaban pendientes -- de
-        // Lado.Ninguno pasan a Lado.Html. Lo único que sigue sin lector de los dos lados es la SERIE
-        // de la proyección mensual (ejecutado.proyeccion, ver más abajo): la sección titular publica
-        // el total proyectado a fin de año (proyeccionFin) pero no dibuja esa curva mes a mes.
-        ("ejecutado.filas", Lado.Html,
-            "Las columnas de detalle de cada acción ejecutada que SÍ dibuja la tabla de Acciones " +
-            "ejecutadas de la sección titular (Tarea 4 de la entrega 7): oportunidad, mes de " +
-            "ejecución, fuente del monto y motivo sin monto. cat/rec/monto ya eran simétricos por " +
-            "colisión de token con otros bloques; la vista React no dibuja esta sección todavía. El " +
-            "grupo de recursos (rg) y la autoría quedan fuera de esa tabla: ver sus entradas propias " +
-            "más abajo."),
+        // "ejecutado" ya no es una excepción de bloque entero (la Tarea 4 del HTML y la Tarea 9 de
+        // React dibujan la sección titular completa: acumulado mes a mes, ranking por oportunidad y
+        // la tabla de acciones -oportunidad/cat/rec/mes/monto/fuenteMonto/sinMonto- en los dos lados).
+        // Lo único que sigue sin lector de los dos lados es la SERIE de la proyección mensual
+        // (ejecutado.proyeccion, ver más abajo): la sección titular publica el total proyectado a fin
+        // de año (proyeccionFin) pero no dibuja esa curva mes a mes. El apilado por categoría
+        // (ejecutado.catAcum) y la tabla de reservas (ejecutado.reservas) siguen solo en el HTML: ver
+        // sus entradas propias, arriba.
         ("ejecutado.filas.rg", Lado.Ninguno,
             "El grupo de recursos de cada acción ejecutada: la tabla de la sección titular (Tarea 4 de " +
             "la entrega 7) identifica el recurso por su nombre (rec), no por su grupo. Ninguno de los " +
@@ -170,48 +126,25 @@ public sealed class ContratoEntreRenderizadoresTests
             "sección titular (Tarea 4 de la entrega 7) no dibuja esta columna. El conteo de " +
             "indeterminadas sí se declara, pero por ejecutado.ejes.indeterminadas, no por esta " +
             "columna fila por fila."),
-        ("ejecutado.sinMonto", Lado.Html,
-            "El conteo de filas del acumulado sin monto atribuible: la sección titular (Tarea 4 de la " +
-            "entrega 7) lo publica en la bajada de la sección. La vista React no dibuja esta sección " +
-            "todavía."),
-        ("ejecutado.tasaVigente", Lado.Html,
-            "La tasa vigente de cierre, en dólares: la tarjeta \"Tasa vigente al cierre\" de la sección " +
-            "titular (Tarea 4 de la entrega 7) la publica directamente. La vista React no dibuja esta " +
-            "sección todavía."),
-        ("ejecutado.facturado", Lado.Html,
-            "La composición declarada del acumulado entre monto facturado y estimado: la sección " +
-            "titular del acumulado (Tarea 4 de la entrega 7) la publica en la tarjeta de Acciones " +
-            "ejecutadas. La vista React no dibuja esta sección todavía."),
-        ("ejecutado.estimado", Lado.Html,
-            "Ver ejecutado.facturado: misma composición declarada del acumulado, misma tarjeta de la " +
-            "sección titular (Tarea 4 de la entrega 7)."),
         ("ejecutado.proyeccion", Lado.Ninguno,
             "La proyección mensual del acumulado a fin de año, mes a mes: la sección titular (Tarea 4 " +
             "de la entrega 7) publica el TOTAL proyectado (proyeccionFin) en una tarjeta, pero no " +
             "dibuja esta curva mensual. Pendiente de un renderizador que la grafique."),
-        ("ejecutado.proyeccionFin", Lado.Html,
-            "El total del acumulado proyectado a fin de año: la tarjeta \"Proyectado a fin de año\" de " +
-            "la sección titular (Tarea 4 de la entrega 7) la publica. Ver ejecutado.proyeccion para la " +
-            "curva mensual, que sigue sin dibujarse. La vista React no dibuja esta sección todavía."),
         ("ejecutado.catAcum", Lado.Html,
             "El apilado por categoría del acumulado ejecutado: el segundo gráfico de la sección " +
-            "titular (Tarea 4 de la entrega 7, la PPT de MERCANTIL). La vista React no dibuja esta " +
-            "sección todavía."),
-        ("ejecutado.porOportunidad", Lado.Html,
-            "El ranking por oportunidad del acumulado ejecutado: el tercer gráfico de la sección " +
-            "titular (Tarea 4 de la entrega 7, la PPT de MERCANTIL). La vista React no dibuja esta " +
-            "sección todavía."),
-        ("ejecutado.ejes", Lado.Html,
-            "Qué ejes del registro se pudieron medir (barrido y reservas, con su motivo si faltan): la " +
-            "sección titular (Tarea 4 de la entrega 7) los declara en la nota \"Alcance de esta " +
-            "sección\" cuando alguno no se midió. La vista React no dibuja esta sección todavía."),
+            "titular (Tarea 4 de la entrega 7, la PPT de MERCANTIL). La Tarea 9 de esta entrega (la " +
+            "vista React) solo agregó el acumulado mes a mes y el ranking por oportunidad a " +
+            "SeccionEjecutado.tsx -no este apilado por categoría-: verificado con grep para \"catAcum\" " +
+            "en ese archivo, sin resultados."),
         ("meta.conciliacion", Lado.Html,
             "El panel \"Los dos archivos de facturación\" (Tarea 7 de la entrega 7) lee M.conciliacion " +
-            "(M=D.meta) directamente y, cuando el nodo llega poblado, sus campos coincide y difs. Es la " +
-            "primera vez que la capa de dibujo toca esta clave: verificado contra innovacion-CDC " +
-            "(src/components/informe-valor/informe, src/lib/informeValor.ts, grep sin resultados para " +
-            "\"conciliacion\"/\"coincide\"/\"difs\") que la vista React todavía no la lee. Se cierra cuando " +
-            "la Tarea 9 de esta entrega agregue el renderizador ahí."),
+            "(M=D.meta) directamente y, cuando el nodo llega poblado, sus campos coincide y difs. La " +
+            "Tarea 9 de esta entrega (la vista React) no incluye este panel en su alcance -ver la tabla " +
+            "de archivos del plan de la entrega 7, que asigna meta.conciliacion a la Tarea 7 y no a la " +
+            "9-: verificado contra innovacion-CDC (src/components/informe-valor/informe, " +
+            "src/lib/informeValor.ts, grep sin resultados para \"conciliacion\"/\"coincide\"/\"difs\", " +
+            "salvo en archivos de test) que la vista React todavía no lo lee. Queda declarada hasta que " +
+            "un renderizador React lo dibuje."),
         ("meta.conciliacion.umbralTasa", Lado.Ninguno,
             "La tasa del 0.5% que decide, mes a mes, qué filas entran a difs (InformeValorEnsamblador." +
             "CalcularConciliacion). El panel de la Tarea 7 publica el veredicto ya aplicado -coincide y " +
@@ -234,15 +167,17 @@ public sealed class ContratoEntreRenderizadoresTests
         ("matriz.items.g", Lado.Ninguno,
             "El registro de origen del hallazgo de la matriz. Ninguna de las dos tablas de hallazgos " +
             "publica esa columna."),
-        // "opex" ya no es una excepción de bloque entero (Tarea 3 de la entrega 7 dibuja la tarjeta
-        // del resumen): lo que sigue sin lector es opex.estado (ver la entrada declarada arriba,
-        // junto a las de "opex" Lado.Html); el gráfico de la sección Advisor lo agrega la Tarea 5 (ver
-        // la entrada de "cronologia" con motivo Html, arriba: "cronologia" ya no es una excepción de
-        // bloque entero tampoco).
+        // "opex" y "cronologia" ya no son excepciones de bloque entero: la tarjeta OPEX del resumen
+        // (Tarea 3 del HTML) y el gráfico de la sección Advisor (Tarea 5) tienen su espejo en React
+        // desde la Tarea 9 (la cabecera de cuatro tarjetas y el nuevo panel de SeccionPostura), y la
+        // línea de tiempo de "cronologia" tiene su SeccionCronologia.tsx desde la misma tarea. Lo
+        // único que sigue sin lector de los dos lados en este bloque es opex.estado (ver la entrada
+        // declarada arriba).
         ("cronologia.hitos.pilar", Lado.Ninguno,
-            "El pilar WAF del hallazgo asociado al hito. La línea de tiempo de la Tarea 5 agrupa por " +
-            "fecha, no por pilar, así que no lo dibuja; la vista React tampoco, porque ni siquiera " +
-            "tiene sección de cronología todavía (ver \"cronologia\" arriba)."),
+            "El pilar WAF del hallazgo asociado al hito. La línea de tiempo del HTML (Tarea 5) y " +
+            "SeccionCronologia.tsx (Tarea 9) agrupan los hitos por fecha, no por pilar, así que ninguno " +
+            "de los dos lo dibuja: verificado con grep para \"pilar\" en SeccionCronologia.tsx, sin " +
+            "resultados."),
     ];
 
     public enum Lado { Html, React, Ninguno }
