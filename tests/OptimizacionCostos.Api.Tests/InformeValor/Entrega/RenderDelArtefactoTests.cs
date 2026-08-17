@@ -313,6 +313,45 @@ public sealed class RenderDelArtefactoTests
     }
 
     // ================================================================================
+    // La dona de avance del hero (fix de la entrega 7)
+    // ================================================================================
+
+    /// <summary>
+    /// <c>ModeloDePrueba.Crear()</c> tenía <c>Roadmap = null</c>: la cuarta tarjeta del hero
+    /// (observación 4) caía siempre en su rama "—" y <c>dona()</c> -- cuya geometría ya se probó en
+    /// aislamiento en node -- nunca se ejercitaba desde un <c>render()</c> real con una matriz de
+    /// mejoras de verdad.
+    ///
+    /// <para>El arnés (ver el docstring de <c>render-artefacto.mjs</c>) guarda <c>innerHTML</c> y
+    /// <c>textContent</c> como texto plano y nunca los reconstruye a partir de los hijos que
+    /// <c>appendChild</c> agrega, así que un nodo SVG armado así -- exactamente lo que hace
+    /// <c>dona()</c> -- siempre serializa con <c>Html=""</c>. La prueba de que corrió de verdad no
+    /// puede ser "el nodo tiene marcado": tiene que ser que <c>$('#dona-avance')</c> se consultó, y
+    /// eso <c>render()</c> solo lo hace dentro de <c>if(mz)</c>. Con la matriz poblada ese lookup se
+    /// ejecuta y el nodo queda registrado; si <c>dona()</c> hubiera reventado leyendo un dato del
+    /// modelo, <see cref="RenderDeArtefacto.Resultado.ExigirQueDibujeCompleto"/> lo habría
+    /// atrapado. Que se dibujó la rama SVG (y no la de "—") se confirma con lo que el hero sí
+    /// escribe como texto literal.</para>
+    /// </summary>
+    [Fact]
+    public void La_cuarta_tarjeta_del_hero_dibuja_la_dona_de_avance_con_la_matriz_poblada()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        // Sin tirar "el artefacto nunca escribió #dona-avance": ese id solo se consulta dentro de
+        // "if(mz) dona(...)", así que su sola presencia en el registro prueba que la rama con matriz
+        // se ejecutó (con Roadmap = null, como antes de este fix, esta línea fallaría).
+        r.Nodo("dona-avance");
+
+        var hero = r.Nodo("hero-kpis").Todo;
+        Assert.Contains("id=\"dona-avance\"", hero, StringComparison.Ordinal);
+        Assert.Contains("2 de 6 recomendaciones cerradas al 100%", hero, StringComparison.Ordinal);
+        Assert.DoesNotContain("Falta la matriz de mejoras", hero, StringComparison.Ordinal);
+    }
+
+    // ================================================================================
     // "0 retiros" y su fuente
     // ================================================================================
 
@@ -452,7 +491,11 @@ public sealed class RenderDelArtefactoTests
             StringComparison.Ordinal);
     }
 
-    /// <summary>Sin snapshot de Advisor la tarjeta dice "sin medición" con su motivo, jamás 0%.</summary>
+    /// <summary>Sin snapshot de Advisor la tarjeta dice "sin medición" con su motivo, jamás 0%.
+    /// Acotado a la tarjeta OPEX (no a todo el hero): con <c>ModeloDePrueba.Crear()</c> ahora con
+    /// Roadmap poblado (fix de la entrega 7), la cuarta tarjeta dice "cerradas al 100%", y ese texto
+    /// -- de una tarjeta que este test no está probando -- contiene "0%" como subcadena y hacía
+    /// fallar un `DoesNotContain` sobre el hero completo.</summary>
     [Fact]
     public void Sin_score_de_opex_la_tarjeta_declara_en_vez_de_publicar_cero()
     {
@@ -460,8 +503,11 @@ public sealed class RenderDelArtefactoTests
         if (r is null) return;
         r.ExigirQueDibujeCompleto();
         var hero = r.Nodo("hero-kpis").Todo;
-        Assert.Contains("Sin medición", hero, StringComparison.Ordinal);
-        Assert.DoesNotContain("0%", hero, StringComparison.Ordinal);
+        var finOptimizacion = hero.IndexOf("OPTIMIZACIÓN", StringComparison.Ordinal) + "OPTIMIZACIÓN".Length;
+        var finOpex = hero.IndexOf("OPEX", StringComparison.Ordinal) + "OPEX".Length;
+        var tarjetaOpex = hero.Substring(finOptimizacion, finOpex - finOptimizacion);
+        Assert.Contains("Sin medición", tarjetaOpex, StringComparison.Ordinal);
+        Assert.DoesNotContain("0%", tarjetaOpex, StringComparison.Ordinal);
     }
 
     /// <summary>Fix del review de la Tarea 3 (entrega 7): sin ningún registro de acciones ejecutadas
@@ -508,6 +554,34 @@ public sealed class RenderDelArtefactoTests
         r.ExigirQueDibujeCompleto();
         var hero = r.Nodo("hero-kpis").Todo;
         Assert.Contains("330 casos registrados, todos con SLA evaluado y dentro del acuerdo", hero, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Defecto de la verificación visual de la entrega 7: <c>ModeloDePrueba.Crear()</c> trae
+    /// exactamente UNA acción ejecutada y UNA máquina cubierta por reservas, y el artefacto publicaba
+    /// "1 acciones ejecutadas" y "1 máquinas cubiertas" -- la misma familia de defecto que ya se
+    /// había encontrado una vez ("1 son de impacto alto"). Es texto de cara al cliente: un informe
+    /// que dice "1 acciones" se lee como un descuido, no como un dato.
+    /// </summary>
+    [Fact]
+    public void El_singular_no_se_lee_en_plural_con_exactamente_una_accion_y_una_maquina()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        var subEjecutado = r.Nodo("sub-ejecutado").Todo;
+        var subReservas = r.Nodo("sub-reservas").Todo;
+        var hero = r.Nodo("hero-kpis").Todo;
+
+        Assert.Contains("1 acción ejecutada en el período", subEjecutado, StringComparison.Ordinal);
+        Assert.DoesNotContain("1 acciones", subEjecutado, StringComparison.Ordinal);
+
+        Assert.Contains("1 máquina cubierta", subReservas, StringComparison.Ordinal);
+        Assert.DoesNotContain("1 máquinas", subReservas, StringComparison.Ordinal);
+
+        Assert.Contains("1 acción de optimización ejecutada", hero, StringComparison.Ordinal);
+        Assert.DoesNotContain("1 acciones", hero, StringComparison.Ordinal);
     }
 
     /// <summary>RBAC baja del resumen al detalle técnico (observación 2), no se elimina.</summary>

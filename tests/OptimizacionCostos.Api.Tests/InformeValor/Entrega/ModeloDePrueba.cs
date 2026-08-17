@@ -166,7 +166,32 @@ internal static class ModeloDePrueba
             RetirosVencidos: 0, RetirosProximosATresMeses: 1,
             RetirosMedido: true, RetirosMotivo: null,
             SeguridadGestionadaExternamente: false, SeguridadGestionadaNota: null),
-        Roadmap: null,
+        // Poblado (antes null) para la Tarea de fix de la entrega 7: con Roadmap siempre null, la
+        // cuarta tarjeta del hero (observación 4, "avance de remediación") caía siempre en su rama
+        // "—" y dona() -- ya probada en aislamiento en node -- nunca se ejercitaba desde un render()
+        // real. n/cerrados/curso/sinIniciar/avance son conteos y un porcentaje, NUNCA dinero, así que
+        // no entran a la lista de Montos de arriba (esa lista audita fugas de DINERO hacia los dos
+        // renderizadores).
+        Roadmap: new RoadmapModelo(
+            Total: 6,
+            Items:
+            [
+                new RoadmapItem("Costo", "Apagar VMs ociosas detectadas por Advisor", "2026-01-10", 1, "1", null, 100, 2, "1.1"),
+                new RoadmapItem("Costo", "Eliminar discos huérfanos", null, 2, "2", null, 100, 1, "1.2"),
+                new RoadmapItem("Confiabilidad", "Habilitar respaldo en las VM de producción", null, 1, "1", null, 60, 3, null),
+                new RoadmapItem("Rendimiento", "Redimensionar el SKU sobredimensionado", null, 2, "2", null, 40, 1, null),
+                new RoadmapItem("Seguridad", "Revisar asignaciones Owner sin expiración", null, 1, "1", null, 0, 1, null),
+                new RoadmapItem("Operación", "Documentar el runbook de conmutación", null, 3, "3", null, 0, 0, null),
+            ],
+            Ambitos:
+            [
+                new RoadmapAmbito("Costo", 2, 3, 100),
+                new RoadmapAmbito("Confiabilidad", 1, 3, 60),
+                new RoadmapAmbito("Rendimiento", 1, 1, 40),
+                new RoadmapAmbito("Seguridad", 1, 1, 0),
+                new RoadmapAmbito("Operación", 1, 0, 0),
+            ],
+            Cerrados: 2, EnCurso: 2, SinIniciar: 2, AvancePromedio: 50d, HorasPendientes: null),
         CatSerie: new Dictionary<string, IReadOnlyDictionary<string, decimal>>
         {
             [CategoriaConAcentos] = new Dictionary<string, decimal> { ["2026-01"] = 11201m },

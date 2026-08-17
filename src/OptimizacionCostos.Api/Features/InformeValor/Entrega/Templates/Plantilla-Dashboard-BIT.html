@@ -296,6 +296,9 @@ var PUB=(typeof PUBLICACION!=='undefined'&&PUBLICACION)?PUBLICACION:null;
 function pub(b){ return !PUB||!PUB.bloques||PUB.bloques[b]!==false; }
 function noPub(txt){ return '<div class="pend"><b>No publicado.</b> '+esc(txt)+'</div>'; }
 function num(n){return (+n).toLocaleString('en-US');}
+/* Concordancia: un informe que dice "1 acciones" se lee como un descuido, y este texto lo ve
+   el cliente. Devuelve el número con el sustantivo en el número que corresponde. */
+function plu(n,sing,plur){ return num(n)+' '+(Math.abs(n)===1?sing:plur); }
 function k(n){return (n===null||n===undefined)?'':'$'+(n/1000).toFixed(1)+'k';}
 function pct(a,b){return b?(a/b*100):0;}
 function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
@@ -1225,7 +1228,7 @@ function render(){
       : ej.pctGasto===null||ej.pctGasto===undefined
         ? ['Sin medición','','na','El acumulado no se puede comparar contra el gasto del período porque el gasto no se midió.','OPTIMIZACIÓN']
         : ['<span class="cnt" data-v="'+ej.pctGasto+'" data-d="1">0</span>','%','',
-           'El ahorro acumulado del período equivale al '+ej.pctGasto.toFixed(1)+'% del gasto total del mismo período. Viene de '+num(ej.filas.length)+' acciones de optimización ejecutadas; el detalle en dinero va en la sección Ahorro ejecutado.','OPTIMIZACIÓN']);
+           'El ahorro acumulado del período equivale al '+ej.pctGasto.toFixed(1)+'% del gasto total del mismo período. Viene de '+plu(ej.filas.length,'acción de optimización ejecutada','acciones de optimización ejecutadas')+'; el detalle en dinero va en la sección Ahorro ejecutado.','OPTIMIZACIÓN']);
 
   /* 2. Opex — score del pilar de costos, con su evolución al lado. */
   HK.push(!ox||!ox.medido
@@ -1244,7 +1247,7 @@ function render(){
   HK.push(!mz
     ? ['—','','na','Falta la matriz de mejoras para medir el avance de remediación.','EVOLUCIÓN']
     : ['<span id="dona-avance" class="dn"></span>','','',
-       'Avance promedio de remediación de la matriz de mejoras. '+num(mz.cerrados)+' de '+num(mz.n)+' recomendaciones cerradas al 100%.','EVOLUCIÓN']);
+       'Avance promedio de remediación de la matriz de mejoras. '+num(mz.cerrados)+' de '+plu(mz.n,'recomendación cerrada al 100%','recomendaciones cerradas al 100%')+'.','EVOLUCIÓN']);
 
   $('#hero-kpis').innerHTML=HK.map(function(r){
     return '<div class="hkpi"><div class="v'+(r[2]?' '+r[2]:'')+'">'+r[0]+(r[1]?'<small>'+esc(r[1])+'</small>':'')+'</div>'+
@@ -1257,7 +1260,7 @@ function render(){
   var R=[];
   if(t){
     R.push(slaMedido(t)
-      ? [t.pct.toFixed(2),'%','','Cumplimiento de SLA',num(t.n)+' casos entre '+t.desde+' y '+t.hasta+', de los cuales '+num(t.denominadorPct)+' tienen SLA evaluado. '+num(t.noCumple)+' quedaron fuera del acuerdo'+(t.sinEvaluar?' y '+num(t.sinEvaluar)+' no traen resultado registrado, así que no cuentan ni a favor ni en contra':'')+'.'+(rachaMedida(t)?' La racha vigente sin incumplimientos es de '+t.racha+' meses y '+num(t.rachaCasos)+' casos.':'')]
+      ? [t.pct.toFixed(2),'%','','Cumplimiento de SLA',num(t.n)+' casos entre '+t.desde+' y '+t.hasta+', de los cuales '+num(t.denominadorPct)+' tienen SLA evaluado. '+plu(t.noCumple,'quedó fuera del acuerdo','quedaron fuera del acuerdo')+(t.sinEvaluar?' y '+num(t.sinEvaluar)+' no traen resultado registrado, así que no cuentan ni a favor ni en contra':'')+'.'+(rachaMedida(t)?' La racha vigente sin incumplimientos es de '+t.racha+' meses y '+num(t.rachaCasos)+' casos.':'')]
       : ['Sin medir','','na','Cumplimiento de SLA',slaSinMedir(t)+' Los casos se registraron entre '+t.desde+' y '+t.hasta+'.']);
     /* El KPI del resumen mide VOLUMEN de casos, igual que el titular de la sección: la proporción
        por frentes trata cada subcategoría como una unidad, así que un frente de un solo caso pesa
@@ -1268,7 +1271,7 @@ function render(){
       : ['Sin medir','','na','Trabajo proactivo, en volumen de casos',
          'Ninguno de los '+num(t.n)+' casos del período trae subcategoría, así que no se puede clasificar entre proactivo y reactivo. Un 0% acá diría que todo el trabajo nació de un incidente.']);
   }
-  if(rb) R.push([num(rb.n),'','','Asignaciones de acceso auditadas',rb.ids+' identidades sobre '+rb.subs.length+' suscripciones, revisadas una por una. '+rb.find.length+' hallazgos abiertos, '+rb.crit+' de severidad crítica.']);
+  if(rb) R.push([num(rb.n),'','','Asignaciones de acceso auditadas',rb.ids+' identidades sobre '+plu(rb.subs.length,'suscripción','suscripciones')+', revisadas una por una. '+plu(rb.find.length,'hallazgo abierto','hallazgos abiertos')+', '+rb.crit+' de severidad crítica.']);
   if(f){
     R.push([fmt(f.total),'','','Gasto gobernado en el período','Consumo revisado línea por línea sobre '+registros(f)+(f.parciales.length?'. '+f.parciales.map(ymAb).join(' y ')+' son meses parciales.':'.')]);
     if(f.ahorro) R.push([fmt(f.ahorro.dif),'/mes','','Ahorro activo y sostenido',
@@ -1276,7 +1279,7 @@ function render(){
     R.push([num(f.bajasDef),'','','Recursos dados de baja','Ciclo de vida gestionado sobre '+num(f.nIds)+' recursos inventariados en el período.']);
   }
   if(ad){
-    R.push([num(ad.n),'','','Recomendaciones de Advisor priorizadas','Sobre '+num(ad.nRes)+' recursos y '+ad.subs.length+' suscripciones. '+num(ad.high)+' son de impacto alto y las quince primeras concentran el '+pct(ad.topSum,ad.n).toFixed(1)+'% del backlog.']);
+    R.push([num(ad.n),'','','Recomendaciones de Advisor priorizadas','Sobre '+num(ad.nRes)+' recursos y '+plu(ad.subs.length,'suscripción','suscripciones')+'. '+plu(ad.high,'es de impacto alto','son de impacto alto')+' y las quince primeras concentran el '+pct(ad.topSum,ad.n).toFixed(1)+'% del backlog.']);
     if(ad.descarte==null) R.push([NOPUB,'','na','Compromiso evitado por criterio técnico',
       'La revisión depuró el ahorro que publica Advisor de duplicados y de opciones excluyentes. Las cifras no se publican en esta versión del informe.']);
     else if(ad.descarte>0) R.push([fmt(ad.descarte,0),'/año','am','Compromiso evitado por criterio técnico',
@@ -1294,7 +1297,7 @@ function render(){
     $('#sub-ejecutado').textContent='';
   } else {
     var pubEj=pub('ahorroEjecutado');
-    $('#sub-ejecutado').textContent=num(ej.filas.length)+' acciones ejecutadas en el período'+(ej.sinMonto?', '+num(ej.sinMonto)+' de ellas sin monto medible':'')+'. Cada acción genera un ahorro mensual recurrente; el acumulado suma ese ahorro desde el mes en que se ejecutó.';
+    $('#sub-ejecutado').textContent=plu(ej.filas.length,'acción ejecutada en el período','acciones ejecutadas en el período')+(ej.sinMonto?', '+num(ej.sinMonto)+' de ellas sin monto medible':'')+'. Cada acción genera un ahorro mensual recurrente; el acumulado suma ese ahorro desde el mes en que se ejecutó.';
     $('#body-ejecutado').innerHTML=
       tarjetas([
         [pubEj?fmt(ej.total):NOPUB,'','','Ahorro acumulado del período','Suma del ahorro mensual de cada acción por los meses que estuvo vigente dentro del período.'],
@@ -1365,7 +1368,7 @@ function render(){
       '<div class="panel" style="margin-top:16px"><h3>Los dos archivos de facturación</h3>'+
       (cc.coincide
         ? '<p class="note">La tabla de hechos y el archivo de evolución por recurso coinciden mes a mes dentro del margen de redondeo. Las cifras de este informe salen de las dos sin contradicción.</p>'
-        : '<p class="note"><b>Los dos archivos no coinciden en '+num(cc.difs.length)+' meses.</b> La tabla de hechos manda para identidad y agrupaciones; el archivo de evolución, para el precio de las reservas. La diferencia se publica para que se pueda resolver, no se promedia ni se elige en silencio.</p>'+
+        : '<p class="note"><b>Los dos archivos no coinciden en '+plu(cc.difs.length,'mes','meses')+'.</b> La tabla de hechos manda para identidad y agrupaciones; el archivo de evolución, para el precio de las reservas. La diferencia se publica para que se pueda resolver, no se promedia ni se elige en silencio.</p>'+
           '<div class="tbl"><table><thead><tr><th>Mes</th><th class="num">Tabla de hechos</th><th class="num">Evolución por recurso</th><th class="num">Diferencia</th></tr></thead><tbody>'+
           cc.difs.map(function(d){
             return '<tr><td>'+esc(ymAb(d[0]))+'</td><td class="num">'+esc(fmt(d[1]))+'</td><td class="num">'+esc(fmt(d[2]))+'</td><td class="num">'+esc(fmt(d[3]))+'</td></tr>';
@@ -1384,7 +1387,7 @@ function render(){
     $('#h2-operacion').textContent = (slaMedido(t)&&t.noCumple===0) ? 'La operación no registró un solo incumplimiento' : 'La operación no se detuvo';
     $('#sub-operacion').textContent=num(t.n)+' casos registrados y '+num(t.cerrados)+' cerrados, entre '+t.desde+' y '+t.hasta+'. '+
       (!slaMedido(t)? 'Ninguno trae el resultado del acuerdo registrado, así que el cumplimiento de SLA de este período no se pudo medir.'
-        : t.noCumple? num(t.noCumple)+' incumplimientos de SLA.':'Ningún incumplimiento de SLA en todo el período.')+
+        : t.noCumple? plu(t.noCumple,'incumplimiento de SLA.','incumplimientos de SLA.'):'Ningún incumplimiento de SLA en todo el período.')+
       (rachaMedida(t)?' Desde hace '+t.racha+' meses la mesa acumula '+num(t.rachaCasos)+' casos consecutivos dentro del acuerdo.':'');
     $('#body-operacion').innerHTML=
       tarjetas([
@@ -1459,7 +1462,7 @@ function render(){
     var pro=t.nFrentesP, denFrentes=frentesClasificados(t), pctPro=pct(pro,denFrentes);
     var pctVol=pct(casosProactivos(t),t.n);
     $('#h2-proactiva').textContent = (proactivoMedido(t)&&pctVol>=70) ? 'Casi todo el trabajo nació antes del problema' : 'Gestión proactiva del servicio';
-    $('#sub-proactiva').textContent='Los '+num(t.n)+' casos se agruparon en '+t.nFrentes+' frentes de trabajo, uno por subcategoría distinta. Un frente es reactivo cuando su subcategoría describe un incidente; es proactivo cuando nace de la vigilancia del servicio.'+
+    $('#sub-proactiva').textContent='Los '+num(t.n)+' casos se agruparon en '+plu(t.nFrentes,'frente de trabajo','frentes de trabajo')+', uno por subcategoría distinta. Un frente es reactivo cuando su subcategoría describe un incidente; es proactivo cuando nace de la vigilancia del servicio.'+
       (t.nFrentes>denFrentes?' Un frente agrupa los casos que llegaron sin subcategoría: no se clasifica, así que queda fuera de la proporción en vez de contarse como proactivo.':'');
     var crit='';
     if(ad&&!pub('ahorroAdvisor')){
@@ -1485,7 +1488,7 @@ function render(){
        '</tbody></table></div>'+
        '<div class="bad-box"><b>Advisor publica '+fmt(ad.bruto,0)+' al año de ahorro potencial. La cifra realizable es '+fmt(ad.real,0)+'.</b> '+
        'La diferencia de '+fmt(ad.descarte,0)+' no es un error del cliente ni del portal: Advisor emite la misma recomendación de compromiso en varios ámbitos, y además propone reserva y savings plan sobre el mismo cómputo cuando solo puede comprarse uno. Llevar la cifra bruta a un comité de inversión habría comprometido capital contra un ahorro que no existe.</div>'+
-       (f?'<div class="note">Las reservas de Azure son irreversibles a uno o tres años. Antes de recomendar cualquier compromiso, el servicio contrastó las recomendaciones contra el inventario real: <b>'+num(f.bajasDef)+' recursos</b> resultaron ser bajas definitivas del período. Reservar a precio pleno sobre cualquiera de ellos habría inmovilizado dinero sin retorno.</div>':'')+
+       (f?'<div class="note">Las reservas de Azure son irreversibles a uno o tres años. Antes de recomendar cualquier compromiso, el servicio contrastó las recomendaciones contra el inventario real: <b>'+plu(f.bajasDef,'recurso','recursos')+'</b> '+(f.bajasDef===1?'resultó ser baja definitiva':'resultaron ser bajas definitivas')+' del período. Reservar a precio pleno sobre cualquiera de ellos habría inmovilizado dinero sin retorno.</div>':'')+
        '</div>';
     }
     $('#body-proactiva').innerHTML=
@@ -1493,7 +1496,7 @@ function render(){
         '<div class="panel"><h3>Frentes de trabajo del período</h3><div id="c-pro"></div>'+
         '<div class="note">'+(proactivoMedido(t)
           ? 'Medido en volumen de casos, <b>'+pctVol.toFixed(1)+'%</b> del trabajo fue proactivo: es la cifra del titular y la del resumen. '+
-            (denFrentes?'Medido por frentes de trabajo son '+pro+' de los '+denFrentes+' frentes clasificados, <b>'+pctPro.toFixed(1)+'%</b> — cada frente cuenta uno, sin importar su volumen. ':'')+
+            (denFrentes?'Medido por frentes de trabajo '+(pro===1?'es':'son')+' '+num(pro)+' de '+(denFrentes===1?'':'los ')+plu(denFrentes,'frente clasificado','frentes clasificados')+', <b>'+pctPro.toFixed(1)+'%</b> — cada frente cuenta uno, sin importar su volumen. ':'')+
             'Los frentes reactivos suman '+num(t.casosR)+' casos'+(t.casosSinSubcategoria?' y '+num(t.casosSinSubcategoria)+' casos no traen subcategoría, así que quedan fuera del numerador en vez de contarse como proactivos por omisión':'')+'.'
           : 'Ninguno de los '+num(t.n)+' casos del período trae subcategoría, así que no hay nada que clasificar entre proactivo y reactivo. Ni un 0% ni un 100% se pueden afirmar acá.')+'</div></div>'+
         '<div class="panel"><h3>Los frentes de mayor volumen</h3><div id="c-frentes"></div>'+
@@ -1503,8 +1506,8 @@ function render(){
        tercer estado ("sin clasificar"), y con el export sin subcategorías las dos barras quedan
        vacías, que es exactamente lo que hay que ver. */
     barras($('#c-pro'),denFrentes?[
-      {k:'Frentes proactivos',v:pro,lbl:pro+' frentes ('+pctPro.toFixed(1)+'%)',c:GREEN,tip:pro+' de '+denFrentes+' frentes clasificados · '+num(casosProactivos(t))+' casos'},
-      {k:'Frentes reactivos',v:t.nFrentesR||0.0001,lbl:t.nFrentesR+' frentes ('+pct(t.nFrentesR,denFrentes).toFixed(1)+'%)',c:AMBER,tip:t.nFrentesR+' de '+denFrentes+' frentes clasificados · '+num(t.casosR)+' casos'}
+      {k:'Frentes proactivos',v:pro,lbl:plu(pro,'frente','frentes')+' ('+pctPro.toFixed(1)+'%)',c:GREEN,tip:pro+' de '+plu(denFrentes,'frente clasificado','frentes clasificados')+' · '+num(casosProactivos(t))+' casos'},
+      {k:'Frentes reactivos',v:t.nFrentesR||0.0001,lbl:plu(t.nFrentesR,'frente','frentes')+' ('+pct(t.nFrentesR,denFrentes).toFixed(1)+'%)',c:AMBER,tip:t.nFrentesR+' de '+plu(denFrentes,'frente clasificado','frentes clasificados')+' · '+num(t.casosR)+' casos'}
     ]:[],{W:560,rowH:56,padL:150,padR:180,fs:13});
     barras($('#c-frentes'),t.frentes.slice(0,13).map(function(fr,i){
       return {k:corta(fr.n,27),v:fr.c,lbl:num(fr.c)+' casos',c:fr.r?AMBER:(i===0?GREEN:(i<5?GREEND:PALE)),
@@ -1516,7 +1519,7 @@ function render(){
   if(!rb){ $('#body-seguridad').innerHTML=pendiente('Adjunta el reporte de RBAC. Debe traer al menos Subscription, Tipo, Rol y, si es posible, Estado y último inicio de sesión.'); $('#sub-seguridad').textContent=''; }
   else {
     $('#h2-seguridad').textContent = rb.crit ? 'Los riesgos se detectaron antes de que costaran algo' : 'Seguridad bajo gobierno';
-    $('#sub-seguridad').textContent=num(rb.n)+' asignaciones RBAC directas revisadas sobre '+rb.ids+' identidades y '+rb.subs.length+' suscripciones. Ninguna se dio por válida sin revisión.';
+    $('#sub-seguridad').textContent=num(rb.n)+' asignaciones RBAC directas revisadas sobre '+rb.ids+' identidades y '+plu(rb.subs.length,'suscripción','suscripciones')+'. Ninguna se dio por válida sin revisión.';
     $('#body-seguridad').innerHTML=
       tarjetas([
         [num(rb.n),'','','Asignaciones RBAC directas',num(rb.nu)+' de usuarios y '+num(rb.ns)+' de service principals.'],
@@ -1559,8 +1562,8 @@ function render(){
            '<td><b>'+esc(h.t)+'</b></td><td class="num" style="font-size:13px">'+esc(h.a)+'</td>'+
            '<td style="font-size:13.5px">'+esc(h.r)+'</td><td style="font-size:13px;white-space:nowrap">'+esc(h.e)+'</td></tr>';
         }).join('')+'</tbody></table></div></div>'+
-      (rb.owner||rb.uaa?'<div class="bad-box"><b>Prioridad uno: '+(rb.owner+rb.uaa)+' caminos hacia el control total del tenant.</b> '+
-        rb.uaa+' asignaciones de User Access Administrator permiten concederse a sí mismo cualquier otro permiso, lo que anula el efecto de todo control de mínimo privilegio aplicado aguas abajo. Sumadas a las '+rb.owner+' asignaciones Owner activas, la remediación no requiere compra ni ventana de indisponibilidad.</div>':'');
+      (rb.owner||rb.uaa?'<div class="bad-box"><b>Prioridad uno: '+plu(rb.owner+rb.uaa,'camino hacia el control total del tenant.','caminos hacia el control total del tenant.')+'</b> '+
+        plu(rb.uaa,'asignación de User Access Administrator permite concederse','asignaciones de User Access Administrator permiten concederse')+' a sí mismo cualquier otro permiso, lo que anula el efecto de todo control de mínimo privilegio aplicado aguas abajo. '+(rb.owner===1?'Sumada a la ':'Sumadas a las ')+plu(rb.owner,'asignación Owner activa','asignaciones Owner activas')+', la remediación no requiere compra ni ventana de indisponibilidad.</div>':'');
     barras($('#c-amb'),rb.subs.map(function(a){
       return {k:corta(a[0],24),v:a[1]+a[2],lbl:(a[1]+a[2])+' asignaciones',
         seg:[{n:'Usuarios',v:a[1],c:GRAY},{n:'Service principals',v:a[2],c:GREEN}]};
@@ -1581,7 +1584,7 @@ function render(){
     var catAlta=primero(ad.cats.slice().sort(function(a,b){return b.h-a.h;}));
     var subTop=primero(ad.subs), tipoTop=primero(ad.tipos);
     $('#sub-advisor').textContent=ad.n
-      ? num(ad.n)+' recomendaciones activas sobre '+num(ad.nRes)+' recursos de '+ad.subs.length+' suscripciones, contadas una por cada recurso afectado.'
+      ? num(ad.n)+' recomendaciones activas sobre '+num(ad.nRes)+' recursos de '+plu(ad.subs.length,'suscripción','suscripciones')+', contadas una por cada recurso afectado.'
       : 'Este cliente no tiene ninguna recomendación de Advisor activa en la plataforma. La sección conserva los retiros de Azure, que salen de otro insumo.';
     $('#body-advisor').innerHTML=
       tarjetas([
@@ -1669,7 +1672,7 @@ function render(){
         '<select id="aSub"><option value="">Todas las suscripciones</option></select>'+
         '<input id="aTxt" type="search" placeholder="Buscar recomendación…">'+
         '<span class="n" id="aCnt"></span></div>'+
-        '<div class="note" style="margin:0 0 12px">Las '+num(ad.n)+' recomendaciones desagregadas en '+ad.det.length+' filas de recomendación por suscripción. Los totales de cada filtro suman siempre contra la fuente original.</div>'+
+        '<div class="note" style="margin:0 0 12px">Las '+num(ad.n)+' recomendaciones desagregadas en '+plu(ad.det.length,'fila de recomendación por suscripción','filas de recomendación por suscripción')+'. Los totales de cada filtro suman siempre contra la fuente original.</div>'+
         '<div class="tbl scroll"><table><thead><tr><th>Recomendación</th><th>Pilar</th><th style="width:1%">Impacto</th><th>Suscripción</th><th class="num">Recursos</th></tr></thead><tbody id="tb-adv"></tbody></table></div></div>':'')+
       '<div class="ok-box"><b>Lo que este informe no puede declarar todavía.</b> La sincronización de Advisor trae el detalle de recomendaciones, no la puntuación por pilar. Sin dos capturas del Overview, corte inicial y corte actual, no es posible publicar una variación de score, y este informe no publica cifras que no pueda sustentar.</div>';
     barras($('#c-adv-cat'),ad.cats.map(function(c){
@@ -1859,7 +1862,7 @@ function render(){
     $('#sub-reservas').textContent='';
   } else {
     var pubRs=pub('reservasFacturadas');
-    $('#sub-reservas').textContent=num(rs.filas.length)+' máquinas cubiertas por instancias reservadas. Por cada una: lo que costaba a tarifa por demanda antes de la compra contra lo que factura la reserva cada mes.';
+    $('#sub-reservas').textContent=plu(rs.filas.length,'máquina cubierta','máquinas cubiertas')+' por instancias reservadas. Por cada una: lo que costaba a tarifa por demanda antes de la compra contra lo que factura la reserva cada mes.';
     var tb='<table><thead><tr><th>VM</th><th>SKU</th><th class="num">Por demanda</th><th class="num">Reserva facturada</th><th class="num">Ahorro</th><th>Vence</th></tr></thead><tbody>';
     rs.filas.forEach(function(f){
       tb+='<tr'+(f.porVencer?' class="warn"':'')+'><td>'+esc(f.vm)+(f.compartida?' <span class="tags"><span>compartida</span></span>':'')+'</td>'+
@@ -1900,7 +1903,7 @@ function render(){
     });
     ev+='</div>';
     $('#body-cronologia').innerHTML=ev+
-      (cr.omitidos?'<div class="note" style="margin-top:14px">'+num(cr.omitidos)+' entradas de la bitácora quedaron fuera: son notas internas, registros de ejecución o cambios fuera del período. La línea de tiempo publica el avance comprometido y las fechas de remediación.</div>':'');
+      (cr.omitidos?'<div class="note" style="margin-top:14px">'+plu(cr.omitidos,'entrada de la bitácora quedó fuera','entradas de la bitácora quedaron fuera')+': son notas internas, registros de ejecución o cambios fuera del período. La línea de tiempo publica el avance comprometido y las fechas de remediación.</div>':'');
   }
 
   /* ---- roadmap ---- */
@@ -1968,13 +1971,13 @@ function render(){
   /* trazabilidad */
   var TR=[];
   if(t) TR.push(['Operación y gestión proactiva','Export de la mesa de servicio',num(t.n)+' casos entre '+t.desde+' y '+t.hasta+'.']);
-  if(rb) TR.push(['Seguridad bajo gobierno','Reporte de RBAC',num(rb.n)+' asignaciones sobre '+rb.ids+' identidades y '+rb.subs.length+' suscripciones.']);
+  if(rb) TR.push(['Seguridad bajo gobierno','Reporte de RBAC',num(rb.n)+' asignaciones sobre '+rb.ids+' identidades y '+plu(rb.subs.length,'suscripción','suscripciones')+'.']);
   if(ad) TR.push(['Postura Well-Architected','Azure Advisor, sincronizado por la plataforma',num(ad.n)+' recomendaciones sobre '+num(ad.nRes)+' recursos. Corte único: no incluye la puntuación por pilar.']);
   /* Los retiros son un insumo PROPIO, del módulo Boletín, no una columna del de Advisor: la única
      fila de esta tabla los atribuía al "export de Azure Advisor", así que un lector que dudara del
      cero no tenía a quién preguntarle. */
   if(ad) TR.push(['Retiros de Azure','Boletín de Azure de la plataforma',ad.retirosMedido
-    ? num(ad.rets.length)+' anuncios vigentes sobre suscripciones administradas, clasificados contra la fecha de corte del informe.'+(ad.retirosMotivo?' '+ad.retirosMotivo:'')
+    ? plu(ad.rets.length,'anuncio vigente','anuncios vigentes')+' sobre suscripciones administradas, clasificados contra la fecha de corte del informe.'+(ad.retirosMotivo?' '+ad.retirosMotivo:'')
     : 'Sin medir. '+(ad.retirosMotivo||'No se pudo determinar el estado de la sincronización.')]);
   if(f) TR.push(['Eficiencia financiera','Bitcost: facturación e inventario',registros(f)+', entre '+ymAb(f.meses[0][0])+' y '+ymAb(f.meses[f.meses.length-1][0])+(f.parciales.length?'. Meses parciales: '+f.parciales.map(ymAb).join(', ')+'.':'.')]);
   if(mz) TR.push(['Roadmap','Matriz de optimización y mejoras',mz.n+' hallazgos en '+mz.amb.length+' ámbitos.']);
@@ -2121,7 +2124,7 @@ function tablaAdvisor(ad){
     var c=aCat.value,i=aImp.value,s=aSub.value,q=aTxt.value.trim().toLowerCase();
     var rows=ad.det.filter(function(x){
       return (!c||x[1]===c)&&(!i||x[2]===i)&&(!s||x[3]===s)&&(!q||String(x[0]).toLowerCase().indexOf(q)>=0);});
-    cnt.textContent=rows.length+' de '+ad.det.length+' filas · '+num(sum(rows.map(function(x){return x[4];})))+' recomendaciones';
+    cnt.textContent=rows.length+' de '+plu(ad.det.length,'fila','filas')+' · '+plu(sum(rows.map(function(x){return x[4];})),'recomendación','recomendaciones');
     tb.innerHTML=rows.map(function(x){
       return '<tr'+(x[2]==='High'?' class="bad"':'')+'><td style="font-size:13.5px">'+esc(x[0])+'</td>'+
        '<td style="font-size:13px">'+esc(x[1])+'</td>'+
@@ -2139,7 +2142,7 @@ function tablaAB(f){
     var o=document.createElement('option');o.value=y;o.textContent=y;sel.appendChild(o);});
   function r(){
     var y=sel.value,rows=f.serie.filter(function(x){return !y||x[0].indexOf(y)===0;});
-    cnt.textContent=rows.length+' meses · '+num(sum(rows.map(function(x){return x[2];})))+' altas · '+num(sum(rows.map(function(x){return x[3];})))+' bajas';
+    cnt.textContent=plu(rows.length,'mes','meses')+' · '+plu(sum(rows.map(function(x){return x[2];})),'alta','altas')+' · '+plu(sum(rows.map(function(x){return x[3];})),'baja','bajas');
     tb.innerHTML=rows.map(function(x){
       var n=x[2]-x[3];
       return '<tr'+(x[6]?' class="warn"':'')+'><td><b>'+x[0]+'</b></td><td class="num">'+num(x[1])+'</td>'+
