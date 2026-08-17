@@ -125,6 +125,22 @@ public sealed class ContratoEntreRenderizadoresTests
             "(src/components/informe-valor/informe, grep sin resultados para \"cronologia\"/\"hitos\") " +
             "que la vista React todavía no tiene una sección de cronología. Se cierra cuando la Tarea 9 " +
             "de esta entrega la dibuje ahí."),
+        ("fact.unitario", Lado.Html,
+            "El panel \"Costo por recurso: el entorno crece y el unitario baja\" (Tarea 6 de la entrega " +
+            "7) dibuja recursos activos y costo por recurso con linea(), releyendo fact.serie por sus " +
+            "índices 1 y 4 (ver el docstring de ConsumoCalculador.CalcularCostoUnitario). Es la primera " +
+            "vez que la capa de dibujo toca esta clave: verificado contra innovacion-CDC " +
+            "(src/components/informe-valor/informe, src/lib/informeValor.ts, grep sin resultados para " +
+            "\"unitario\") que la vista React todavía no la lee. Se cierra cuando la Tarea 9 de esta " +
+            "entrega agregue el renderizador ahí."),
+        ("fact.mom", Lado.Html,
+            "El panel \"Variación del consumo mes a mes\" (Tarea 6 de la entrega 7, Observación 6 de la " +
+            "reunión) dibuja reducciones e incrementos con colsBidir(), la primitiva nueva que reparte " +
+            "las dos series -ya en positivo- a los dos lados de una línea de cero (cols() no admite " +
+            "valores negativos: corta todo v<=0). Es la primera vez que la capa de dibujo toca esta " +
+            "clave: verificado contra innovacion-CDC (src/components/informe-valor/informe, " +
+            "src/lib/informeValor.ts, grep sin resultados para \"mom\") que la vista React todavía no " +
+            "la lee. Se cierra cuando la Tarea 9 de esta entrega agregue el renderizador ahí."),
 
         // ---- lo que no lee ninguno de los dos ----
         ("fact.variacionConsumo", Lado.Ninguno,
@@ -210,15 +226,6 @@ public sealed class ContratoEntreRenderizadoresTests
         ("matriz.items.g", Lado.Ninguno,
             "El registro de origen del hallazgo de la matriz. Ninguna de las dos tablas de hallazgos " +
             "publica esa columna."),
-        ("fact.unitario", Lado.Ninguno,
-            "Costo por recurso (Tarea 7 de la entrega 6): el modelo lo calcula y lo archiva desde " +
-            "esta entrega, pero el gráfico que lo dibuja —recursos activos, factura y costo unitario " +
-            "en el mismo eje— es de la entrega 7. Se revisa cuando esa entrega agregue el renderizador."),
-        ("fact.mom", Lado.Ninguno,
-            "Variación mes contra mes con reducciones e incrementos ya separados (Observación 6 de " +
-            "la reunión): el modelo entrega las dos series en positivo para que la entrega 7 las " +
-            "dibuje arriba y abajo del eje, pero ese dibujo todavía no existe en ninguno de los dos " +
-            "renderizadores."),
         // "opex" ya no es una excepción de bloque entero (Tarea 3 de la entrega 7 dibuja la tarjeta
         // del resumen): lo que sigue sin lector es opex.estado (ver la entrada declarada arriba,
         // junto a las de "opex" Lado.Html); el gráfico de la sección Advisor lo agrega la Tarea 5 (ver

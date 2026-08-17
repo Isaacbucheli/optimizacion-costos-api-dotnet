@@ -140,12 +140,17 @@ public sealed class PlantillaCapaDeDibujoTests
         return texto.Substring(i, j - i);
     }
 
-    /// <summary>Las tres primitivas nuevas existen: la plantilla no tenía dona, sparkline ni línea,
-    /// y las secciones de esta entrega las necesitan.</summary>
+    /// <summary>Las primitivas nuevas existen: la plantilla no tenía dona, sparkline, línea ni el
+    /// bidireccional de la entrega 7, y las secciones de esta entrega las necesitan.
+    /// <c>colsBidir</c> (Tarea 6 de la entrega 7) es la respuesta a que <c>cols</c> no admite valores
+    /// negativos (corta todo <c>v&lt;=0</c>, ver su guarda dentro de la función): en vez de tocar esa
+    /// primitiva -la usan cinco paneles ya desplegados- nace una nueva, con su propia línea de
+    /// cero.</summary>
     [Theory]
     [InlineData("function dona(")]
     [InlineData("function spark(")]
     [InlineData("function linea(")]
+    [InlineData("function colsBidir(")]
     public void La_plantilla_declara_las_primitivas_nuevas(string firma)
     {
         Assert.Contains(firma, InformeValorHtmlExporter.Plantilla, StringComparison.Ordinal);
@@ -157,7 +162,8 @@ public sealed class PlantillaCapaDeDibujoTests
     /// <para>La plantilla no tiene una marca literal "/* ---- 6." — la sección de gráficos
     /// (5) cierra donde empieza "6. RENDER" (el mismo encabezado que usa <see cref="CapaDeDibujo"/>
     /// más arriba en este archivo, sin el bloque de asteriscos), así que se usa esa cadena como fin
-    /// del recorte.</para></summary>
+    /// del recorte. <c>colsBidir</c> vive dentro de esta misma región (entre <c>linea</c> y
+    /// <c>gastoUltCompleto</c>), así que este barrido ya la cubre sin agregar un segundo test.</para></summary>
     [Fact]
     public void Las_primitivas_nuevas_no_usan_sintaxis_moderna()
     {

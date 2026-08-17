@@ -1037,6 +1037,39 @@ function linea(cont,labels,series,o){
   }
   cont.innerHTML=''; cont.appendChild(s);
 }
+
+/* colsBidir: dos series de magnitudes ya positivas repartidas a los dos lados de una línea de
+   cero -una crece hacia arriba, la otra hacia abajo-, ambas escaladas contra el mismo máximo para
+   que compartan una sola unidad. Nace aparte de cols() en vez de extenderla: cols() corta todo
+   valor <=0 (ver su guarda "if(v<=0) return;" unas líneas arriba), así que un incremento pasado en
+   negativo simplemente no se dibujaría ahí, y cols() la usan cinco paneles ya desplegados. Para
+   la variación mes a mes (Observación 6 de la reunión). */
+function colsBidir(cont,labels,arriba,abajo,opts){
+  if(!cont) return; opts=opts||{};
+  var W=opts.W||1100,H=opts.h||320,padL=opts.padL||62,padR=16,padT=30,padB=42;
+  var alto=H-padT-padB, mid=padT+alto/2, mitad=alto/2;
+  var max=Math.max.apply(null,arriba.v.concat(abajo.v).concat([0]))*1.16||1;
+  var bw=(W-padL-padR)/labels.length;
+  var s=SVGE(W,H),g;
+  for(g=-2;g<=2;g++){
+    var y=mid-(g/2)*mitad, val=Math.abs(g/2*max), esCero=g===0;
+    s.appendChild(EE('line',{x1:padL,y1:y,x2:W-padR,y2:y,stroke:esCero?'#c9cac6':'#eeeeeb','stroke-width':esCero?1.5:1}));
+    s.appendChild(TT(padL-9,y+4,opts.fy?opts.fy(val):k(val),{'text-anchor':'end','font-size':11,fill:'#a3a3a0','font-weight':600}));
+  }
+  labels.forEach(function(lb,i){
+    var x=padL+i*bw,va=arriba.v[i]||0,vb=abajo.v[i]||0;
+    var ha=(va/max)*mitad,hb=(vb/max)*mitad;
+    if(va>0) s.appendChild(EE('rect',{x:x+bw*0.18,y:mid-ha,width:bw*0.64,height:Math.max(1,ha-1),fill:arriba.c,rx:3}));
+    if(vb>0) s.appendChild(EE('rect',{x:x+bw*0.18,y:mid+1,width:bw*0.64,height:Math.max(1,hb-1),fill:abajo.c,rx:3}));
+    s.appendChild(TT(x+bw/2,H-padB+20,lb,{'text-anchor':'middle','font-size':labels.length>16?9.5:11,fill:'#8b8b8b','font-weight':600}));
+    var hit=EE('rect',{x:x,y:padT,width:bw,height:alto,fill:'transparent'});
+    var det='<b>'+esc(arriba.n)+':</b> '+(opts.tv?opts.tv(va,arriba):fmt(va))+
+      '<br><b>'+esc(abajo.n)+':</b> '+(opts.tv?opts.tv(vb,abajo):fmt(vb));
+    hov(hit,'<b>'+esc(opts.tl?opts.tl(i):lb)+'</b><br>'+det);
+    s.appendChild(hit);
+  });
+  cont.innerHTML='';cont.appendChild(s);
+}
 function corta(s,n){s=String(s);return s.length>n?s.slice(0,n)+'…':s;}
 function tarjetas(arr){
   return '<div class="cards">'+arr.map(function(r){
@@ -1711,7 +1744,13 @@ function render(){
         }).join('')+'</tbody></table></div>'+
         '<div class="note">Dos meses completos y equivalentes, ordenados por magnitud de la variación. Es la única comparación válida: mide el mismo mes del calendario en dos años distintos.</div></div>':'')+
       (f.cc.length>1?'<div class="panel" style="margin-top:16px"><h3>Asignación por centro de costo</h3><div id="c-cc"></div>'+
-        '<div class="note">Reparto del gasto acumulado del período entre las '+f.cc.length+' áreas del cliente.</div></div>':'');
+        '<div class="note">Reparto del gasto acumulado del período entre las '+f.cc.length+' áreas del cliente.</div></div>':'')+
+      '<div class="panel" style="margin-top:16px"><h3>Costo por recurso: el entorno crece y el unitario baja</h3>'+
+      '<div class="leg"><span><i style="background:'+GREEND+'"></i>Costo por recurso (USD)</span><span><i style="background:'+LIGHT+'"></i>Recursos activos</span></div>'+
+      '<div id="c-unitario"></div></div>'+
+      '<div class="panel" style="margin-top:16px"><h3>Variación del consumo mes a mes</h3>'+
+      '<div class="leg"><span><i style="background:'+GREEN+'"></i>Reducciones</span><span><i style="background:'+RED+'"></i>Incrementos</span></div>'+
+      '<div id="c-mom"></div></div>';
     if(pub('serieMensual'))
       cols($('#c-gasto'),f.meses.map(function(m){return ymAb(m[0]);}),
         [{n:'Consumo facturado',cf:function(i){return f.meses[i][2]?AMBER:GREEN;},v:f.meses.map(function(m){return m[1];})}],
@@ -1742,6 +1781,38 @@ function render(){
       else $('#c-cc').innerHTML=noPub('El reparto del gasto entre las áreas del cliente no se aprobó para esta versión del informe.');
     }
     tablaAB(f);
+
+    if(pub('serieMensual')&&f.unitario&&f.unitario.length){
+      /* Dos series con escalas distintas: el costo unitario normalizado contra el máximo de
+         recursos, para que las dos curvas convivan sin dos ejes. El tooltip da los valores reales. */
+      var maxRec=Math.max.apply(null,f.unitario.map(function(r){return r[1];}));
+      var maxCos=Math.max.apply(null,f.unitario.map(function(r){return r[3]||0;}));
+      linea($('#c-unitario'),f.unitario.map(function(r){return ymAb(r[0]);}),
+        [{n:'Costo por recurso',c:GREEND,v:f.unitario.map(function(r){return r[3];})},
+         {n:'Recursos activos',c:LIGHT,v:f.unitario.map(function(r){return maxCos?r[1]*maxCos/maxRec:0;})}],
+        {h:280,fy:function(v){return fmt(v,0);},
+         tl:function(i){return ymAb(f.unitario[i][0])+(f.unitario[i][4]?' · MES PARCIAL':'');},
+         tv:function(v,se){ return se.n==='Recursos activos'
+           ? num(Math.round(maxCos?v*maxRec/maxCos:0))+' recursos'
+           : fmt(v); }});
+    } else if($('#c-unitario')){
+      $('#c-unitario').innerHTML=noPub('El costo por recurso deriva de la serie mensual de facturación, que no está entre los bloques aprobados.');
+    }
+
+    if(pub('composicionServicio')&&f.mom&&f.mom.length){
+      /* Reducciones arriba, incrementos abajo: el modelo ya entrega las dos series en positivo
+         (Tarea 7 de la entrega 6), así que colsBidir solo las reparte a los dos lados de su línea
+         de cero -no hace falta firmarlas para "empujarlas" bajo el eje, ese truco no funciona
+         contra cols() (ver el docstring de colsBidir)-. */
+      colsBidir($('#c-mom'),f.mom.map(function(r){return ymAb(r[0]);}),
+        {n:'Reducciones',c:GREEN,v:f.mom.map(function(r){return r[1];})},
+        {n:'Incrementos',c:RED,v:f.mom.map(function(r){return r[2];})},
+        {h:300,fy:function(v){return k(v);},
+         tl:function(i){return ymAb(f.mom[i][0])+(f.mom[i][4]?' · MES PARCIAL':'');},
+         tv:function(v){return fmt(v);}});
+    } else if($('#c-mom')){
+      $('#c-mom').innerHTML=noPub('La variación por categoría depende del bloque de composición por servicio.');
+    }
   }
 
   /* ---- reservas ---- */

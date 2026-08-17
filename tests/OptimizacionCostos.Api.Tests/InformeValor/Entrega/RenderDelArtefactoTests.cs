@@ -189,6 +189,47 @@ public sealed class RenderDelArtefactoTests
     }
 
     // ================================================================================
+    // Consumo: costo unitario y variación mes a mes
+    // ================================================================================
+
+    /// <summary>El argumento para clientes en migración: la factura sube y el costo por recurso baja.
+    /// El gráfico lleva las dos series contra el mismo eje temporal.</summary>
+    [Fact]
+    public void La_seccion_de_eficiencia_dibuja_el_costo_unitario()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        Assert.Contains("c-unitario", r.Nodo("body-eficiencia").Todo, StringComparison.Ordinal);
+    }
+
+    /// <summary>Observación 6 de la reunión: reducciones arriba del eje, incrementos abajo.</summary>
+    [Fact]
+    public void La_variacion_mensual_separa_reducciones_de_incrementos()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        var s = r.Nodo("body-eficiencia").Todo;
+        Assert.Contains("Reducciones", s, StringComparison.Ordinal);
+        Assert.Contains("Incrementos", s, StringComparison.Ordinal);
+    }
+
+    /// <summary>El costo unitario deriva del monto mensual: sin el bloque de la serie aprobado,
+    /// no puede publicarse.</summary>
+    [Fact]
+    public void Sin_serie_mensual_aprobada_el_costo_unitario_no_se_publica()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Cliente, []);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        Assert.Contains("No publicado", r.Nodo("body-eficiencia").Todo, StringComparison.Ordinal);
+    }
+
+    // ================================================================================
     // La columna Esfuerzo del roadmap
     // ================================================================================
 
