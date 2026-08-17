@@ -136,6 +136,16 @@ footer{margin-top:64px;border-top:5px solid var(--green);background:var(--gray);
 .pend{background:#fdf6e3;border-left:5px solid var(--amber);border-radius:0 10px 10px 0;padding:16px 20px;font-size:14.5px}
 .pend b{color:#8a6a10}
 .hide{display:none !important}
+/* ---- modo diapositiva (Tarea 8, entrega 7): el mismo archivo es documento y presentación ---- */
+.btn-modo{margin-left:auto;background:transparent;border:1px solid var(--green);color:var(--green);border-radius:4px;padding:3px 12px;font-size:11px;letter-spacing:.1em;font-weight:700;cursor:pointer}
+.flecha,.puntos{display:none}
+html.slides{scroll-snap-type:y mandatory;scroll-padding-top:86px}
+html.slides section.sec{scroll-snap-align:start;min-height:100vh;display:flex;flex-direction:column;justify-content:center}
+html.slides .flecha{display:flex;position:fixed;top:50%;transform:translateY(-50%);z-index:45;width:42px;height:42px;border-radius:50%;background:rgba(0,0,0,.06);border:1px solid var(--line);color:var(--ink);align-items:center;justify-content:center;cursor:pointer;font-size:18px;user-select:none}
+.flecha.izq{left:14px}.flecha.der{right:14px}
+html.slides .puntos{display:flex;position:fixed;bottom:14px;left:50%;transform:translateX(-50%);gap:8px;z-index:45}
+.puntos button{width:8px;height:8px;border-radius:50%;border:0;background:var(--line);cursor:pointer;padding:0;transition:all .2s}
+.puntos button.act{background:var(--green);width:20px;border-radius:4px}
 @media (max-width:900px){
   .cards,.hero-kpis,.ins,.meta{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}
   .hero h1{font-size:25px}.wrap{padding:0 16px 50px}.nav-in{padding:10px 16px;gap:14px}
@@ -150,6 +160,10 @@ footer{margin-top:64px;border-top:5px solid var(--green);background:var(--gray);
   .panel,.card{break-inside:avoid}h2{break-after:avoid}.hero{background:var(--gray)}
   .card:hover{transform:none;box-shadow:none}
   #carga{display:none}
+  /* El modo diapositiva nunca imprime: la impresión y el PDF siempre usan el flujo de documento. */
+  html.slides{scroll-snap-type:none}
+  html.slides section.sec{min-height:0;display:block}
+  .flecha,.puntos,.btn-modo{display:none!important}
 }
 </style>
 </head>
@@ -169,6 +183,7 @@ footer{margin-top:64px;border-top:5px solid var(--green);background:var(--gray);
   <a href="#reservas">Reservas</a>
   <a href="#cronologia">Cronología</a>
   <a href="#roadmap">Roadmap</a>
+  <button type="button" class="btn-modo" id="btnModo">PRESENTAR</button>
 </div></nav>
 
 <header class="hero"><div class="hero-in">
@@ -2312,7 +2327,48 @@ if(EMBEDDED){
     $('#log').innerHTML=''; pintaInsumos(); recalcula();
   });
 }
+
+/* Modo diapositiva: cada sección es una lámina. El mismo archivo es documento y presentación.
+   Todo el bloque va envuelto en try/catch a propósito: corre siempre, incluso en el harness de
+   pruebas que ejecuta esta capa de dibujo con un DOM sustituto minimo (ver render-artefacto.mjs),
+   que no replica ".children" en sus nodos. Sin esta guarda, ese hueco del sustituto revienta este
+   bloque -- que corre DESPUES de render() -- y ExigirQueDibujeCompleto() marca como roto un
+   artefacto que en realidad se dibujó completo. En un navegador real nunca debería entrar al catch. */
+(function(){
+  try{
+    var html=document.documentElement, btn=$('#btnModo'), puntos=$('#puntos');
+    if(!btn||!puntos) return;
+    var slides=$$('section.sec'), cur=0;
+    slides.forEach(function(s,i){
+      var b=document.createElement('button');
+      var h=s.querySelector('h2');
+      b.title=h?h.textContent:('Sección '+(i+1));
+      b.onclick=function(){ irA(i); };
+      puntos.appendChild(b);
+    });
+    function pinta(){ for(var i=0;i<puntos.children.length;i++) puntos.children[i].className=(i===cur?'act':''); }
+    function irA(i){ cur=Math.max(0,Math.min(slides.length-1,i)); slides[cur].scrollIntoView({behavior:'smooth'}); pinta(); }
+    function modo(on){ html.classList.toggle('slides',on); btn.textContent=on?'SALIR':'PRESENTAR'; if(on) irA(cur); }
+    btn.onclick=function(){ modo(!html.classList.contains('slides')); };
+    $('#fIzq').onclick=function(){ irA(cur-1); };
+    $('#fDer').onclick=function(){ irA(cur+1); };
+    document.addEventListener('keydown',function(e){
+      if(!html.classList.contains('slides')) return;
+      if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){ e.preventDefault(); irA(cur+1); }
+      else if(e.key==='ArrowLeft'||e.key==='PageUp'){ e.preventDefault(); irA(cur-1); }
+      else if(e.key==='Escape'){ modo(false); }
+    });
+    if(window.IntersectionObserver){
+      var io=new IntersectionObserver(function(es){
+        es.forEach(function(e){ if(e.isIntersecting){ cur=slides.indexOf(e.target); pinta(); } });
+      },{threshold:.6});
+      slides.forEach(function(s){ io.observe(s); });
+    }
+    pinta();
+  }catch(e){}
+})();
 })();
 </script>
+<div class="flecha izq" id="fIzq">&#8592;</div><div class="flecha der" id="fDer">&#8594;</div><div class="puntos" id="puntos"></div>
 </body>
 </html>

@@ -172,4 +172,24 @@ public sealed class PlantillaCapaDeDibujoTests
         Assert.DoesNotContain("`", kit, StringComparison.Ordinal);
         Assert.DoesNotMatch(@"\b(const|let)\s", kit);
     }
+
+    /// <summary>Tarea 8 de la entrega 7: el modo diapositiva existe y no depende de librerías —
+    /// la reunión se hace con el mismo archivo que se le entrega al cliente.</summary>
+    [Theory]
+    [InlineData("id=\"btnModo\"")]
+    [InlineData("classList.toggle('slides'")]
+    [InlineData("ArrowRight")]
+    public void La_plantilla_trae_el_modo_diapositiva(string marca)
+    {
+        Assert.Contains(marca, InformeValorHtmlExporter.Plantilla, StringComparison.Ordinal);
+    }
+
+    /// <summary>La impresión y el PDF siempre usan el flujo de documento, nunca el de láminas.</summary>
+    [Fact]
+    public void El_modo_diapositiva_no_afecta_la_impresion()
+    {
+        var css = InformeValorHtmlExporter.Plantilla;
+        Assert.Contains("@media print", css, StringComparison.Ordinal);
+        Assert.Contains("html.slides{scroll-snap-type:none}", css.Replace(" ", ""), StringComparison.Ordinal);
+    }
 }

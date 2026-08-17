@@ -34,6 +34,34 @@ public sealed class RenderDelArtefactoTests
     }
 
     // ================================================================================
+    // Modo diapositiva (Tarea 8, entrega 7)
+    // ================================================================================
+
+    /// <summary>
+    /// El modo diapositiva arma sus puntos de posición leyendo <c>$$('section.sec')</c> en cuanto el
+    /// script corre, DESPUÉS de que <c>render()</c> ya dibujó todo. Con el conjunto de secciones de
+    /// esta entrega (<c>resumen</c>, <c>ejecutado</c>, <c>cobertura</c>, <c>operacion</c>,
+    /// <c>proactiva</c>, <c>seguridad</c>, <c>advisor</c>, <c>eficiencia</c>, <c>reservas</c>,
+    /// <c>cronologia</c>, <c>roadmap</c> — <c>#carga</c> queda afuera porque no lleva
+    /// <c>class="sec"</c>) ese bloque tiene que correr sin tumbar el resto del dibujo. Antes de la
+    /// guarda de try/catch, <c>pinta()</c> reventaba con el DOM sustituto del arnés (no tiene
+    /// <c>.children</c> en sus nodos) y <c>ExigirQueDibujeCompleto()</c> marcaba como roto un
+    /// artefacto que en realidad quedó completo.
+    /// </summary>
+    [Fact]
+    public void El_modo_diapositiva_no_rompe_render_con_el_conjunto_de_secciones_actual()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Interna);
+        if (r is null) return;
+
+        r.ExigirQueDibujeCompleto();
+        // Control: si el error viniera de otra parte del script y no de este bloque, las secciones
+        // seguirían sin dibujarse -- confirma que el resto del documento sí quedó completo.
+        Assert.NotEqual("", r.Nodo("body-resumen").Html);
+        Assert.NotEqual("", r.Nodo("body-roadmap").Html);
+    }
+
+    // ================================================================================
     // Ningún caso con el SLA evaluado
     // ================================================================================
 
