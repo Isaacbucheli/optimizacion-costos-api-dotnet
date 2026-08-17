@@ -209,4 +209,36 @@ public sealed class PlantillaCapaDeDibujoTests
         Assert.Contains("@media print", css, StringComparison.Ordinal);
         Assert.Contains("html.slides{scroll-snap-type:none}", css.Replace(" ", ""), StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// Este es el test que ningún barrido de <c>render-artefacto.mjs</c> puede reemplazar (ver su
+    /// docstring, sección "puntos ciegos"): ese arnés resuelve ids buscando <c>id="..."</c> en el
+    /// TEXTO completo del archivo, sin árbol y sin orden. Un id declarado DESPUÉS del script inline
+    /// que lo busca con <c>$()</c> pasaba ese arnés sin problema y fallaba solo en un navegador real
+    /// -parsea y ejecuta en orden-, que es exactamente lo que le pasó a
+    /// <c>#fIzq</c>/<c>#fDer</c>/<c>#puntos</c>: nacían después de <c>&lt;/script&gt;</c>, el botón
+    /// "PRESENTAR" quedaba visible y no hacía nada. La única prueba que detecta esto es de ORDEN
+    /// TEXTUAL: los tres ids tienen que aparecer antes de que abra el script de dibujo.
+    /// </summary>
+    [Theory]
+    [InlineData("id=\"fIzq\"")]
+    [InlineData("id=\"fDer\"")]
+    [InlineData("id=\"puntos\"")]
+    public void Los_nodos_del_modo_diapositiva_existen_antes_del_script_que_los_busca(string marca)
+    {
+        var t = InformeValorHtmlExporter.Plantilla;
+        // "var D=null;" es la primera línea del bloque de datos/estado del script de dibujo: un
+        // marcador estable, muy anterior al bloque del modo diapositiva, que sirve de límite para
+        // afirmar "esto pasó ANTES de que el script empezara a ejecutarse".
+        var marcadorScript = "var D=null;";
+
+        var iMarca = t.IndexOf(marca, StringComparison.Ordinal);
+        var iScript = t.IndexOf(marcadorScript, StringComparison.Ordinal);
+
+        Assert.True(iMarca >= 0, $"no se encontró \"{marca}\" en la plantilla");
+        Assert.True(iScript >= 0, "no se encontró el marcador del script de dibujo");
+        Assert.True(iMarca < iScript,
+            $"\"{marca}\" aparece DESPUÉS del script que lo busca con $(): en un navegador real el " +
+            "script corre durante el parseo y el nodo todavía no existe, así que $() devuelve null.");
+    }
 }

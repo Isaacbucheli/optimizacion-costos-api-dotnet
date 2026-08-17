@@ -43,10 +43,11 @@ public sealed class RenderDelArtefactoTests
     /// esta entrega (<c>resumen</c>, <c>ejecutado</c>, <c>cobertura</c>, <c>operacion</c>,
     /// <c>proactiva</c>, <c>seguridad</c>, <c>advisor</c>, <c>eficiencia</c>, <c>reservas</c>,
     /// <c>cronologia</c>, <c>roadmap</c> — <c>#carga</c> queda afuera porque no lleva
-    /// <c>class="sec"</c>) ese bloque tiene que correr sin tumbar el resto del dibujo. Antes de la
-    /// guarda de try/catch, <c>pinta()</c> reventaba con el DOM sustituto del arnés (no tiene
-    /// <c>.children</c> en sus nodos) y <c>ExigirQueDibujeCompleto()</c> marcaba como roto un
-    /// artefacto que en realidad quedó completo.
+    /// <c>class="sec"</c>) ese bloque tiene que correr sin tumbar el resto del dibujo. <c>pinta()</c>
+    /// reventaba con el DOM sustituto del arnés porque leía <c>.children</c> de <c>puntos</c>, que
+    /// ese sustituto no replica; el fix (commit f5391a5) guarda los botones en su propio arreglo
+    /// (<c>puntosBtns</c>) en vez de leer <c>.children</c>, así que el bloque corre sin try/catch —
+    /// un fallo real acá tiene que romper el test, no esconderse.
     /// </summary>
     [Fact]
     public void El_modo_diapositiva_no_rompe_render_con_el_conjunto_de_secciones_actual()

@@ -35,6 +35,26 @@
  * Salida (JSON en una linea):
  *   { ok, error, stack, elementos: { <id>: { html, texto } } }
  * ok=false con error/stack es un render() que se cayo: el artefacto queda a medias.
+ *
+ * DOS PUNTOS CIEGOS DEL ARNES (no los confunda con cobertura real):
+ *
+ *   a) CONTENIDO SVG ARMADO CON appendChild. `nuevoElemento().appendChild` solo empuja al arreglo
+ *      `hijos` -- nunca reconstruye `innerHTML` a partir de los nodos hijos. Un grafico que se arma
+ *      con createElementNS + appendChild (como los SVG de la plantilla) queda invisible para
+ *      cualquier assertion sobre `.html`: el nodo padre reporta el innerHTML que tenia ANTES de que
+ *      le anexaran hijos, casi siempre vacio. Solo `innerHTML = "..."` de una sola vez es visible.
+ *
+ *   b) ORDEN EN EL DOM. `porId()` resuelve un id mirando si `id="..."` aparece en alguna parte del
+ *      TEXTO COMPLETO del archivo (`idsDelMarcado`), incluido el codigo fuente de los <script>. No
+ *      hay arbol real, asi que no hay forma de preguntarle a este arnes "que nodo aparece primero"
+ *      ni "este id existe antes o despues de este otro punto del documento". Un defecto de ORDEN --
+ *      un nodo que el HTML declara DESPUES del <script> que lo necesita, por ejemplo -- corre limpio
+ *      aca y revienta solo en un navegador real, que parsea en orden y ejecuta el script inline
+ *      apenas lo encuentra. El bug del modo diapositiva (los divs `#fIzq`/`#fDer`/`#puntos`
+ *      declarados despues del script que los busca con `$()`) vivio y murio exactamente en este
+ *      hueco: todas las pruebas de texto y de render via este arnes pasaban en verde porque a
+ *      ninguna le importa DONDE en el archivo esta el id, solo que este. Ese defecto solo se prueba
+ *      con un `IndexOf` sobre el texto crudo del archivo, no con este arnes.
  */
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
