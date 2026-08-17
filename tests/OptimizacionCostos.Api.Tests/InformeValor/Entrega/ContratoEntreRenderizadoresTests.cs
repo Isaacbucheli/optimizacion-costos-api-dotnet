@@ -318,15 +318,20 @@ public sealed class ContratoEntreRenderizadoresTests
         var react = Normalizar(fuentes.Texto);
         var inventario = Inventario();
 
-        // Prefijos de rama entera: cubren varios campos hoja con Lado real distinto entre sí (el
-        // propio array declara el mismo literal dos veces, con Lado.React para unos hijos y
-        // Lado.Ninguno para otros), así que no hay un único "esperado" que pedirle a la ruta del
-        // contenedor. Cada hijo que sí es hoja exacta (p. ej. ejecutado.filas.rg,
-        // meta.conciliacion.umbralTasa) sigue verificado por su cuenta más abajo en este mismo test.
+        // Exención por rama entera: solo para el literal de ruta que el propio array declara DOS
+        // veces con Lado distinto (una para unos hijos, otra para otros). Ahí no hay un único
+        // "esperado" que pedirle, porque una de las dos iteraciones fallaría siempre.
+        //
+        // Nada más entra acá, y la razón importa: este test existe para cazar la sobredeclaración
+        // que el test principal no puede ver (hace `continue` antes de consultar la tabla). Cada
+        // ruta que se exente es una entrada que puede envejecer en silencio, que es el defecto
+        // que ya apareció una vez en esta misma tabla. Rutas distintas —aunque una sea prefijo de
+        // la otra, como meta.conciliacion y meta.conciliacion.umbralTasa— NO necesitan exención:
+        // el emparejamiento es por igualdad exacta y el inventario agrupa por token, así que cada
+        // una tiene su propio "esperado" computable y se verifica sola.
         var exentosPorRamaEntera = new HashSet<string>(StringComparer.Ordinal)
         {
             "fact.variacionConsumo", // declarado dos veces (Lado.React y Lado.Ninguno) para hijos distintos
-            "meta.conciliacion",     // declarado Lado.Html arriba y Lado.Ninguno para meta.conciliacion.umbralTasa
         };
 
         foreach (var (ruta, ladoDeclarado, motivo) in Asimetrias)
