@@ -134,7 +134,21 @@ internal static class ModeloDePrueba
             // misma convención que CostoUnitario y las demás filas posicionales. "2026-02" ya es
             // parcial en SerieMensual de arriba, así que el flag va en 1 acá también.
             VariacionMoM: [["2026-02", 40m, 15m, 25m, 1]]),
-        Seguridad: null,
+        // Poblado (antes null) para que la Tarea 3 de la entrega 7 pueda probar que el detalle de
+        // RBAC sigue vivo en la sección de seguridad una vez que su tarjeta sale del resumen: sin
+        // datos acá la sección caía en el "pendiente de insumo" y el test no probaba nada.
+        Seguridad: new SeguridadModelo(
+            Total: 20, Usuarios: 15, ServicePrincipals: 5,
+            Identidades: 10, IdentidadesUsuarios: 7, IdentidadesServicePrincipals: 3,
+            Suscripciones: [[SuscripcionConAcentos, 15, 5]],
+            Roles: [["Reader", 10, 0], ["Contributor", 5, 1]],
+            RolesServicePrincipal: [["Contributor", 5, 1]],
+            Owner: 1, UserAccessAdministrator: 1, Contributor: 5, Privilegiados: 7,
+            SinActividadSesion: 2, UltimoLoginMedido: true,
+            SinNombreResuelto: 0, CuentasDeshabilitadas: 0, EstadoCuentaMedido: true,
+            SuscripcionTopServicePrincipal: null,
+            Hallazgos: [new SeguridadHallazgo("Alta", "Asignaciones Owner sin expiración", SuscripcionConAcentos, "Migrar a acceso PIM temporal", "Abierto")],
+            Criticos: 0),
         Postura: new PosturaModelo(
             Total: 8, TiposDeRecomendacion: 4,
             Pilares: [new PosturaPilar("Costo", 8, 3, 3, 2)],
@@ -189,5 +203,20 @@ internal static class ModeloDePrueba
                 SinLineaEnEvolucion: [], ConsumidoresNoLeidos: 0),
             Ejes: new RegistroEjes(
                 BarridoMedido: true, BarridoMotivo: null, ReservasMedidas: true, ReservasMotivo: null,
-                Indeterminadas: 0)));
+                Indeterminadas: 0)),
+        // Opex y Cronologia (entrega 7, Tarea 1): un score y una línea de tiempo no son montos, así
+        // que no entran a la lista de Montos de arriba (esa lista audita fugas de DINERO hacia los
+        // renderizadores; un porcentaje de Advisor y una bitácora de fechas no lo son).
+        Opex: new OpexModelo(
+            Actual: 62m, Fecha: "2026-02-01", Estado: null,
+            Serie: [["2026-01", 55m], ["2026-02", 62m]],
+            Medido: true, Motivo: null),
+        Cronologia: new CronologiaModelo(
+            Hitos:
+            [
+                new HitoModelo(
+                    Fecha: "2026-01-15", Campo: "completion_pct", Antes: "0", Despues: "50",
+                    Recomendacion: "Apagar VM ociosa", MatrixCode: "1.1", Pilar: 1),
+            ],
+            Omitidos: 1));
 }

@@ -315,6 +315,77 @@ public sealed class RenderDelArtefactoTests
     }
 
     // ================================================================================
+    // Las cuatro tarjetas del resumen (reunión del 2026-08-13)
+    // ================================================================================
+
+    /// <summary>Las cuatro tarjetas del resumen, en el orden que pidió la reunión del 2026-08-13:
+    /// optimización, opex, SLA en tercer lugar, avance de remediación. RBAC ya no está: su detalle
+    /// vive en la sección de seguridad.</summary>
+    [Fact]
+    public void El_hero_lleva_las_cuatro_tarjetas_en_el_orden_de_la_reunion()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        var hero = r.Nodo("hero-kpis").Todo;
+        var iOpt = hero.IndexOf("OPTIMIZACIÓN", StringComparison.Ordinal);
+        var iOpex = hero.IndexOf("OPEX", StringComparison.Ordinal);
+        var iSla = hero.IndexOf("OPERACIÓN", StringComparison.Ordinal);
+        var iEvo = hero.IndexOf("EVOLUCIÓN", StringComparison.Ordinal);
+        Assert.True(iOpt >= 0 && iOpex > iOpt && iSla > iOpex && iEvo > iSla,
+            "orden esperado optimización < opex < operación < evolución, salió: " + hero);
+        Assert.DoesNotContain("Asignaciones de acceso auditadas", hero, StringComparison.Ordinal);
+    }
+
+    /// <summary>La tarjeta de optimización habla en PORCENTAJE, no en dinero (decisión 2026-08-13):
+    /// así viaja siempre, incluso en la variante del cliente sin bloques aprobados.</summary>
+    [Fact]
+    public void La_tarjeta_de_optimizacion_publica_el_porcentaje_aun_sin_bloques()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Cliente, []);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        var hero = r.Nodo("hero-kpis").Todo;
+        Assert.Contains("OPTIMIZACIÓN", hero, StringComparison.Ordinal);
+        Assert.DoesNotContain("No publicado", hero.Substring(0, hero.IndexOf("OPEX", StringComparison.Ordinal)),
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>Sin snapshot de Advisor la tarjeta dice "sin medición" con su motivo, jamás 0%.</summary>
+    [Fact]
+    public void Sin_score_de_opex_la_tarjeta_declara_en_vez_de_publicar_cero()
+    {
+        var r = RenderDeArtefacto.Correr(SinOpexMedido(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        var hero = r.Nodo("hero-kpis").Todo;
+        Assert.Contains("Sin medición", hero, StringComparison.Ordinal);
+        Assert.DoesNotContain("0%", hero, StringComparison.Ordinal);
+    }
+
+    /// <summary>Regla de copy de la reunión: cada cifra aparece una sola vez. Con el denominador
+    /// completo y todos cumpliendo, el texto dice "todos", no repite el número tres veces.</summary>
+    [Fact]
+    public void El_sla_perfecto_dice_todos_en_vez_de_repetir_la_cifra()
+    {
+        var r = RenderDeArtefacto.Correr(ConSlaPerfecto(330), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        var hero = r.Nodo("hero-kpis").Todo;
+        Assert.Contains("330 casos registrados, todos con SLA evaluado y dentro del acuerdo", hero, StringComparison.Ordinal);
+    }
+
+    /// <summary>RBAC baja del resumen al detalle técnico (observación 2), no se elimina.</summary>
+    [Fact]
+    public void El_detalle_de_rbac_sigue_en_la_seccion_de_seguridad()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        Assert.Contains("Asignaciones RBAC directas", r.Nodo("body-seguridad").Todo, StringComparison.Ordinal);
+    }
+
+    // ================================================================================
     // Escenarios
     // ================================================================================
 
@@ -444,6 +515,37 @@ public sealed class RenderDelArtefactoTests
                 ],
                 Ambitos: [new RoadmapAmbito("Costo", 2, 6, 20), new RoadmapAmbito("Fiabilidad", 1, 1, 100)],
                 Cerrados: 1, EnCurso: 1, SinIniciar: 1, AvancePromedio: 46.7d, HorasPendientes: null),
+        };
+    }
+
+    /// <summary>Sin snapshot de Azure Advisor para el pilar de costos: la tarjeta OPEX tiene que
+    /// declarar el hueco, nunca publicar 0%.</summary>
+    private static ModeloInformeValor SinOpexMedido()
+    {
+        var modelo = ModeloDePrueba.Crear();
+        return modelo with
+        {
+            Opex = modelo.Opex! with
+            {
+                Medido = false, Motivo = "No hay snapshot de Azure Advisor para este cliente.",
+                Actual = null, Serie = [],
+            },
+        };
+    }
+
+    /// <summary>Todos los casos registrados quedaron con SLA evaluado y todos dentro del acuerdo:
+    /// el denominador completo coincide con el total y con los que cumplen.</summary>
+    private static ModeloInformeValor ConSlaPerfecto(int n)
+    {
+        var modelo = ModeloDePrueba.Crear();
+        return modelo with
+        {
+            Operacion = modelo.Operacion! with
+            {
+                Total = n, Cumple = n, NoCumple = 0, SinEvaluar = 0,
+                PctCumplimiento = 100d, DenominadorPctCumplimiento = n,
+                FueraDeSla = [],
+            },
         };
     }
 }

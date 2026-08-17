@@ -71,21 +71,39 @@ public sealed class ContratoEntreRenderizadoresTests
             "dibujarlos. Es la asimetría más grande del módulo y está abierta a propósito: la sección " +
             "necesita su propio interruptor de aprobación antes de poder viajar. Hasta entonces, el " +
             "consultor la revisa en la vista y el artefacto no la publica."),
-        ("ejecutado", Lado.React,
-            "Comparte tokens con fact.variacionConsumo.reservas (medido, motivo, reservas, " +
-            "reservationId, consumidoresNoLeidos): la Tarea 3 de esta entrega reusa esos nombres para " +
-            "la tabla de reservas contra la factura, y la vista React ya los lee para el bloque de la " +
-            "entrega 2d. El barrido por texto no distingue de qué padre viene cada token repetido " +
-            "(mismo límite de colisión que el docstring de esta clase declara para los nombres cortos), " +
-            "así que el mismo veredicto de esos tokens compartidos aplica acá aunque nadie dibuje " +
-            "ejecutado todavía."),
-        ("opex", Lado.React,
-            "Comparte tokens con ejecutado y fact.variacionConsumo.reservas (medido, motivo): la vista " +
-            "React ya los lee para esos dos bloques, y el barrido por texto no distingue de qué padre " +
-            "viene cada token repetido (mismo límite de colisión de la entrada de \"ejecutado\" de " +
-            "arriba). El mismo veredicto de esos dos tokens compartidos aplica acá aunque nadie dibuje " +
-            "opex todavía; el resto de sus campos (actual, fecha, estado, serie) no comparte token con " +
-            "ningún bloque que hoy lea un solo lado y queda cubierto por la entrada de Ninguno."),
+        ("ejecutado.reservas", Lado.React,
+            "Comparte tokens con fact.variacionConsumo.reservas (reservas, reservationId, " +
+            "consumidoresNoLeidos, nota): la vista React ya los lee para el bloque de la entrega 2d, y " +
+            "el barrido por texto no distingue de qué padre viene cada token repetido (mismo límite de " +
+            "colisión que el docstring de esta clase declara para los nombres cortos). medido/motivo ya " +
+            "NO están acá: la Tarea 3 de la entrega 7 los volvió simétricos al leerlos también del lado " +
+            "del artefacto (ejecutado.medido, ejecutado.motivo, opex.medido, opex.motivo)."),
+        ("ejecutado", Lado.Html,
+            "La tarjeta OPTIMIZACIÓN del resumen (Tarea 3 de la entrega 7, observación 1 de la reunión " +
+            "del 2026-08-13) lee D.ejecutado directamente: es la primera vez que la capa de dibujo toca " +
+            "esta clave de nivel superior. El consultor todavía no la revisa en la vista React; se " +
+            "cierra cuando esa vista dibuje la misma tarjeta."),
+        ("ejecutado.pctGasto", Lado.Html,
+            "El porcentaje del acumulado ejecutado sobre el gasto total del período: la tarjeta " +
+            "OPTIMIZACIÓN lo publica también en la variante del cliente (decisión 2026-08-13: es un " +
+            "porcentaje, nunca dinero, así que viaja siempre). La vista React no dibuja esta tarjeta " +
+            "todavía."),
+        ("opex", Lado.Html,
+            "La tarjeta OPEX del resumen (Tarea 3 de la entrega 7, observación 3 de la reunión) lee " +
+            "D.opex directamente por primera vez: cubre la clave de nivel superior y opex.actual, el " +
+            "único campo de este bloque sin colisión de nombre con otro. medido/motivo/serie ya eran " +
+            "simétricos por colisión de token con ejecutado y fact; opex.fecha queda declarado aparte " +
+            "junto con su colisión de texto con cronologia.hitos.fecha."),
+        ("opex.estado", Lado.Ninguno,
+            "El estado textual del score (por ejemplo \"en riesgo\"), sin usar todavía: la tarjeta del " +
+            "resumen (Tarea 3) y el gráfico de la sección Advisor (Tarea 5) leen actual/serie/medido/" +
+            "motivo, no este campo."),
+        ("cronologia.hitos.fecha", Lado.Html,
+            "Falso positivo del barrido por texto: \"ox.fecha\" (Tarea 3 de la entrega 7) colisiona con " +
+            "\"hitos[].fecha\" porque los dos campos se llaman igual y el barrido no distingue de qué " +
+            "padre viene cada token repetido. La cronología en sí no se dibuja todavía (Tarea 5): ver " +
+            "la entrada de \"cronologia\" con motivo Ninguno, que sigue vigente para el resto de sus " +
+            "campos."),
 
         // ---- lo que no lee ninguno de los dos ----
         ("fact.variacionConsumo", Lado.Ninguno,
@@ -93,9 +111,46 @@ public sealed class ContratoEntreRenderizadoresTests
             "que son insumo interno del backend (los recursos que explican cada balde, sus tarifas " +
             "antes y después, la utilización de cada reserva) y que ninguna de las dos vistas dibuja. " +
             "Se revisa cuando la sección tenga su interruptor y un renderizador que la publique."),
-        ("ejecutado", Lado.Ninguno,
-            "La sección titular del acumulado se dibuja en la entrega 7; el modelo se calcula y " +
-            "archiva desde la 6 para que las entregas ya emitidas lleven el dato."),
+        // "ejecutado" ya no es una excepción de bloque entero (Tarea 3 de la entrega 7 empieza a
+        // dibujarlo): lo que sigue sin dibujar ningún renderizador son estos campos puntuales, la
+        // composición y las series del acumulado, que son la sección TITULAR (Tarea 9), no la
+        // tarjeta del resumen.
+        ("ejecutado.filas", Lado.Ninguno,
+            "Las columnas de detalle de cada acción ejecutada (fuente, oportunidad, grupo de recursos, " +
+            "mes de ejecución, fuente del monto, motivo sin monto, autoría): la Tarea 3 dibuja el " +
+            "acumulado (pctGasto) y el conteo (filas.length), no la tabla fila por fila. cat/sub/rec/" +
+            "fin/monto ya son simétricos por colisión de token con otros bloques."),
+        ("ejecutado.sinMonto", Lado.Ninguno,
+            "El conteo de filas del acumulado sin monto atribuible: ningún renderizador lo dibuja " +
+            "todavía."),
+        ("ejecutado.tasaVigente", Lado.Ninguno,
+            "La tasa vigente de cierre, en dólares: la tarjeta del resumen (Tarea 3) publica el " +
+            "acumulado como porcentaje del gasto (pctGasto), no esta cifra."),
+        ("ejecutado.facturado", Lado.Ninguno,
+            "La composición declarada del acumulado entre monto facturado y estimado: se dibuja en la " +
+            "sección titular del acumulado (Tarea 9 de esta entrega), no en la tarjeta del resumen."),
+        ("ejecutado.estimado", Lado.Ninguno,
+            "Ver ejecutado.facturado: misma composición declarada del acumulado, mismo gráfico " +
+            "pendiente de la Tarea 9."),
+        ("ejecutado.proyeccion", Lado.Ninguno,
+            "La proyección mensual del acumulado a fin de año: se dibuja en la sección titular (Tarea " +
+            "9), no en la tarjeta del resumen."),
+        ("ejecutado.proyeccionFin", Lado.Ninguno,
+            "Ver ejecutado.proyeccion: el mismo gráfico de proyección, pendiente de la Tarea 9."),
+        ("ejecutado.catAcum", Lado.Ninguno,
+            "El apilado por categoría del acumulado ejecutado: gráfico de la sección titular (Tarea 9 " +
+            "de esta entrega), no de la tarjeta del resumen."),
+        ("ejecutado.porOportunidad", Lado.Ninguno,
+            "El ranking por oportunidad del acumulado ejecutado: gráfico de la sección titular (Tarea " +
+            "9 de esta entrega), no de la tarjeta del resumen."),
+        ("ejecutado.ejes", Lado.Ninguno,
+            "Qué ejes del registro se pudieron medir (barrido y reservas, con su motivo si faltan): " +
+            "ningún renderizador declara todavía por qué una fila quedó sin monto."),
+        ("ejecutado.reservas", Lado.Ninguno,
+            "Los totales y columnas propias de la tabla de reservas contra la factura (demanda, " +
+            "reserva mensual, vencimiento, sku, vm, compartida): comparten padre con reservationId/" +
+            "consumidoresNoLeidos/nota (ver la entrada de Lado.React de arriba), pero ningún " +
+            "renderizador dibuja estas columnas todavía."),
         ("meta.conciliacion", Lado.Ninguno,
             "La discrepancia declarada entre la tabla de hechos y el archivo de evolución (Tarea 8 " +
             "de la entrega 6). Ningún renderizador la dibuja todavía: el modelo se calcula y archiva " +
@@ -126,10 +181,10 @@ public sealed class ContratoEntreRenderizadoresTests
             "la reunión): el modelo entrega las dos series en positivo para que la entrega 7 las " +
             "dibuje arriba y abajo del eje, pero ese dibujo todavía no existe en ninguno de los dos " +
             "renderizadores."),
-        ("opex", Lado.Ninguno,
-            "El score del pilar de costos con su serie mensual. La tarjeta del resumen y el gráfico de " +
-            "la sección Advisor son de la tarea 3 y la 5 de esta misma entrega; el modelo se publica " +
-            "primero para que el dibujo tenga de dónde leer."),
+        // "opex" ya no es una excepción de bloque entero (Tarea 3 de la entrega 7 dibuja la tarjeta
+        // del resumen): lo que sigue sin lector es opex.estado (ver la entrada declarada arriba,
+        // junto a las de "opex" Lado.Html); el gráfico de la sección Advisor sigue pendiente de la
+        // Tarea 5.
         ("cronologia", Lado.Ninguno,
             "La línea de tiempo derivada de la bitácora de la matriz, ya filtrada por lista blanca de " +
             "campos. La sección que la dibuja es la tarea 5 de esta entrega; se publica antes para que " +

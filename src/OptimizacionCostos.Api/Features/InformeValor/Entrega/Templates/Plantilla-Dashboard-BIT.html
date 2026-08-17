@@ -30,6 +30,8 @@ nav{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.96);backdrop-f
 .hkpi .v.na{color:#9a9a98;font-size:22px}
 .hkpi .t{margin-top:6px;font-size:13.5px;color:#e8e8e6;font-weight:600}
 .hkpi .p{margin-top:8px;font-size:11.5px;font-weight:900;letter-spacing:.6px;text-transform:uppercase;color:var(--green)}
+.hkpi .spk{display:inline-block;vertical-align:middle;margin-left:10px;width:150px}
+.hkpi .dn{display:inline-block;vertical-align:middle;width:74px;height:74px}
 .sec{opacity:0;transform:translateY(26px);transition:opacity .7s ease,transform .7s ease}
 .sec.show{opacity:1;transform:none}
 section[id]{scroll-margin-top:86px}
@@ -1064,6 +1066,22 @@ function slaSinMedir(t){
     'cumplimiento de SLA no se pudo medir en este período. No es un cumplimiento de cero, es un '+
     'dato que el insumo no trajo.';
 }
+/* Prosa del score: el delta del período dice más que "vs mes anterior" en un informe semestral. */
+function opexProsa(ox){
+  if(!ox.serie||ox.serie.length<2) return 'Score al '+esc(ox.fecha||'corte')+'.';
+  var a=ox.serie[0][1], b=ox.serie[ox.serie.length-1][1];
+  if(a===b) return 'Se mantuvo en '+b+'% durante el período.';
+  return (b>a?'Subió':'Bajó')+' de '+a+'% a '+b+'% en el período.';
+}
+/* Regla de copy: cada cifra una sola vez. Con todo evaluado y todo cumpliendo, "todos". */
+function slaProsa(t){
+  var base;
+  if(t.denominadorPct===t.n && t.cumple===t.n)
+    base=num(t.n)+' casos registrados, todos con SLA evaluado y dentro del acuerdo.';
+  else
+    base=num(t.n)+' casos registrados; de los '+num(t.denominadorPct)+' con SLA evaluado, '+num(t.cumple)+' dentro del acuerdo'+(t.sinEvaluar?' y '+num(t.sinEvaluar)+' sin resultado registrado':'')+'.';
+  return base+' Mediana de atención de '+t.mediana.toFixed(2)+' horas.';
+}
 /* El porcentaje fuera del acuerdo sale de noCumple sobre el MISMO denominador que el cumplimiento,
    nunca de restarle pct a 100: esa resta era una segunda definicion del mismo concepto y heredaba
    el cero del denominador vacio para publicarlo como "100.00% de los casos con SLA evaluado". */
@@ -1136,34 +1154,41 @@ function render(){
   $('#h-sub').textContent=partes.join(' · ');
 
   /* ---- hero ---- */
-  var HK=[];
+  var HK=[], ej=D.ejecutado, ox=D.opex;
+
+  /* 1. Optimización — porcentaje, nunca dinero: viaja también en la variante del cliente. */
+  HK.push(!ej||!ej.medido
+    ? ['—','','na', ej&&ej.motivo ? ej.motivo : 'Falta el registro de acciones ejecutadas para medir la optimización.','OPTIMIZACIÓN']
+    : ej.pctGasto===null||ej.pctGasto===undefined
+      ? ['Sin medición','','na','El acumulado no se puede comparar contra el gasto del período porque el gasto no se midió.','OPTIMIZACIÓN']
+      : ['<span class="cnt" data-v="'+ej.pctGasto+'" data-d="1">0</span>','%','',
+         'El ahorro acumulado del período equivale al '+ej.pctGasto.toFixed(1)+'% del gasto total del mismo período. Viene de '+num(ej.filas.length)+' acciones de optimización ejecutadas; el detalle en dinero va en la sección Ahorro ejecutado.','OPTIMIZACIÓN']);
+
+  /* 2. Opex — score del pilar de costos, con su evolución al lado. */
+  HK.push(!ox||!ox.medido
+    ? ['Sin medición','','na', ox&&ox.motivo ? ox.motivo : 'No hay snapshot de Azure Advisor para este cliente.','OPEX']
+    : ['<span class="cnt" data-v="'+ox.actual+'" data-d="1">0</span><span id="spark-opex" class="spk"></span>','%','',
+       'Pilar de costos de Azure Advisor. '+opexProsa(ox),'OPEX']);
+
+  /* 3. SLA — tercer lugar (observación 1). Copy sin repetir la misma cifra (observación de Julián). */
   HK.push(!t
-    ? ['—','','na','Falta el export de la mesa de servicio para medir el cumplimiento de SLA.','Operación']
+    ? ['—','','na','Falta el export de la mesa de servicio para medir el cumplimiento de SLA.','OPERACIÓN']
     : slaMedido(t)
-      ? ['<span class="cnt" data-v="'+t.pct.toFixed(2)+'" data-d="2">0</span>','%','',
-         num(t.n)+' casos registrados. '+num(t.cumple)+' de los '+num(t.denominadorPct)+' con SLA evaluado quedaron dentro del acuerdo'+(t.sinEvaluar?'; '+num(t.sinEvaluar)+' no traen resultado registrado':'')+'. Mediana de atención de '+t.mediana.toFixed(2)+' horas.','Operación']
-      : ['Sin medir','','na',
-         slaSinMedir(t)+' Mediana de atención de '+t.mediana.toFixed(2)+' horas.','Operación']);
-  HK.push(rb
-    ? ['<span class="cnt" data-v="'+rb.n+'" data-d="0">0</span>','','',
-       'Asignaciones de acceso auditadas sobre '+rb.ids+' identidades y '+rb.subs.length+' suscripciones. '+rb.crit+' hallazgos críticos.','Seguridad']
-    : ['—','','na','Falta el reporte de RBAC para auditar la superficie de acceso.','Seguridad']);
-  HK.push(f&&f.ahorro&&f.ahorro.dif!=null
-    ? ['$<span class="cnt" data-v="'+f.ahorro.dif.toFixed(2)+'" data-d="2">0</span>','/mes','',
-       'Ahorro activo en '+f.ahorro.cat+', el '+pctTxt(f.ahorro.dif,gastoUltCompleto(f),2)+' del gasto del último mes completo.','Eficiencia']
-    : (f&&f.ahorro
-       ? [NOPUB,'','na','Hubo un ahorro activo y sostenido en '+f.ahorro.cat+'. Su tasa no se publica en esta versión del informe.','Eficiencia']
-       : (f ? [f.total==null?NOPUB:'$'+num(Math.round(f.total)),'',f.total==null?'na':'',
-               (f.total==null?'El gasto del período no se publica en esta versión del informe. ':'Gasto gobernado en el período. ')+'No se detectó una reducción sostenida atribuible al servicio.','Eficiencia']
-            : ['—','','na','Falta el export de facturación para gobernar el gasto.','Eficiencia'])));
-  HK.push(ad
-    ? ['<span class="cnt" data-v="'+ad.n+'" data-d="0">0</span>','','',
-       'Recomendaciones de Advisor priorizadas sobre '+num(ad.nRes)+' recursos. '+num(ad.high)+' son de impacto alto.','Evolución']
-    : (mz ? ['<span class="cnt" data-v="'+mz.n+'" data-d="0">0</span>','','','Hallazgos de la matriz de optimización, con '+mz.avance+'% de avance promedio.','Evolución']
-          : ['—','','na','Falta el export de Advisor o la matriz de optimización.','Evolución']));
+      ? ['<span class="cnt" data-v="'+t.pct.toFixed(2)+'" data-d="2">0</span>','%','',slaProsa(t),'OPERACIÓN']
+      : ['Sin medir','','na',slaSinMedir(t)+' Mediana de atención de '+t.mediana.toFixed(2)+' horas.','OPERACIÓN']);
+
+  /* 4. Evolución — la dona del avance de la matriz (observación 4). */
+  HK.push(!mz
+    ? ['—','','na','Falta la matriz de mejoras para medir el avance de remediación.','EVOLUCIÓN']
+    : ['<span id="dona-avance" class="dn"></span>','','',
+       'Avance promedio de remediación de la matriz de mejoras. '+num(mz.cerrados)+' de '+num(mz.n)+' recomendaciones cerradas al 100%.','EVOLUCIÓN']);
+
   $('#hero-kpis').innerHTML=HK.map(function(r){
     return '<div class="hkpi"><div class="v'+(r[2]?' '+r[2]:'')+'">'+r[0]+(r[1]?'<small>'+esc(r[1])+'</small>':'')+'</div>'+
      '<div class="t">'+esc(r[3])+'</div><div class="p">'+esc(r[4])+'</div></div>';}).join('');
+  if(ox&&ox.medido&&ox.serie&&ox.serie.length)
+    spark($('#spark-opex'),ox.serie.map(function(p){return {x:p[0],v:p[1],lbl:ymAb(p[0])+': '+p[1]+'%'};}),{W:150,H:30});
+  if(mz) dona($('#dona-avance'),mz.avance,{tam:74,grosor:9});
 
   /* ---- resumen ---- */
   var R=[];
