@@ -184,6 +184,23 @@ public sealed class PlantillaCapaDeDibujoTests
         Assert.Contains(marca, InformeValorHtmlExporter.Plantilla, StringComparison.Ordinal);
     }
 
+    /// <summary>ES5 estricto también en el bloque del modo diapositiva (Tarea 8 de la entrega 7):
+    /// vive después de "6. RENDER", así que el recorte de
+    /// <see cref="Las_primitivas_nuevas_no_usan_sintaxis_moderna"/> no lo cubre. El recorte va
+    /// desde el comentario que abre el bloque hasta el cierre de la etiqueta de script que lo
+    /// contiene.</summary>
+    [Fact]
+    public void El_modo_diapositiva_no_usa_sintaxis_moderna()
+    {
+        var bloque = Recorte(
+            InformeValorHtmlExporter.Plantilla,
+            "Modo diapositiva: cada sección es una lámina",
+            "</script>");
+        Assert.DoesNotContain("=>", bloque, StringComparison.Ordinal);
+        Assert.DoesNotContain("`", bloque, StringComparison.Ordinal);
+        Assert.DoesNotMatch(@"\b(const|let)\s", bloque);
+    }
+
     /// <summary>La impresión y el PDF siempre usan el flujo de documento, nunca el de láminas.</summary>
     [Fact]
     public void El_modo_diapositiva_no_afecta_la_impresion()

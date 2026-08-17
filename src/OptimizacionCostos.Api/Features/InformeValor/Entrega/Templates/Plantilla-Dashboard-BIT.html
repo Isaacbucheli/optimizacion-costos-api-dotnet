@@ -2329,43 +2329,41 @@ if(EMBEDDED){
 }
 
 /* Modo diapositiva: cada sección es una lámina. El mismo archivo es documento y presentación.
-   Todo el bloque va envuelto en try/catch a propósito: corre siempre, incluso en el harness de
-   pruebas que ejecuta esta capa de dibujo con un DOM sustituto minimo (ver render-artefacto.mjs),
-   que no replica ".children" en sus nodos. Sin esta guarda, ese hueco del sustituto revienta este
-   bloque -- que corre DESPUES de render() -- y ExigirQueDibujeCompleto() marca como roto un
-   artefacto que en realidad se dibujó completo. En un navegador real nunca debería entrar al catch. */
+   Este bloque no lee ninguna API de DOM que el harness de pruebas no tenga (ver render-artefacto.mjs):
+   guarda los botones de "puntos" en un arreglo propio (puntosBtns) en vez de leer
+   ".children" del nodo, que el DOM sustituto de las pruebas no replica. Por eso corre sin catch:
+   un fallo real acá debe romper el test, no esconderse. */
 (function(){
-  try{
-    var html=document.documentElement, btn=$('#btnModo'), puntos=$('#puntos');
-    if(!btn||!puntos) return;
-    var slides=$$('section.sec'), cur=0;
-    slides.forEach(function(s,i){
-      var b=document.createElement('button');
-      var h=s.querySelector('h2');
-      b.title=h?h.textContent:('Sección '+(i+1));
-      b.onclick=function(){ irA(i); };
-      puntos.appendChild(b);
-    });
-    function pinta(){ for(var i=0;i<puntos.children.length;i++) puntos.children[i].className=(i===cur?'act':''); }
-    function irA(i){ cur=Math.max(0,Math.min(slides.length-1,i)); slides[cur].scrollIntoView({behavior:'smooth'}); pinta(); }
-    function modo(on){ html.classList.toggle('slides',on); btn.textContent=on?'SALIR':'PRESENTAR'; if(on) irA(cur); }
-    btn.onclick=function(){ modo(!html.classList.contains('slides')); };
-    $('#fIzq').onclick=function(){ irA(cur-1); };
-    $('#fDer').onclick=function(){ irA(cur+1); };
-    document.addEventListener('keydown',function(e){
-      if(!html.classList.contains('slides')) return;
-      if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){ e.preventDefault(); irA(cur+1); }
-      else if(e.key==='ArrowLeft'||e.key==='PageUp'){ e.preventDefault(); irA(cur-1); }
-      else if(e.key==='Escape'){ modo(false); }
-    });
-    if(window.IntersectionObserver){
-      var io=new IntersectionObserver(function(es){
-        es.forEach(function(e){ if(e.isIntersecting){ cur=slides.indexOf(e.target); pinta(); } });
-      },{threshold:.6});
-      slides.forEach(function(s){ io.observe(s); });
-    }
-    pinta();
-  }catch(e){}
+  var html=document.documentElement, btn=$('#btnModo'), puntos=$('#puntos');
+  if(!btn||!puntos) return;
+  var slides=$$('section.sec'), cur=0, puntosBtns=[];
+  slides.forEach(function(s,i){
+    var b=document.createElement('button');
+    var h=s.querySelector('h2');
+    b.title=h?h.textContent:('Sección '+(i+1));
+    b.onclick=function(){ irA(i); };
+    puntos.appendChild(b);
+    puntosBtns.push(b);
+  });
+  function pinta(){ for(var i=0;i<puntosBtns.length;i++) puntosBtns[i].className=(i===cur?'act':''); }
+  function irA(i){ cur=Math.max(0,Math.min(slides.length-1,i)); slides[cur].scrollIntoView({behavior:'smooth'}); pinta(); }
+  function modo(on){ html.classList.toggle('slides',on); btn.textContent=on?'SALIR':'PRESENTAR'; if(on) irA(cur); }
+  btn.onclick=function(){ modo(!html.classList.contains('slides')); };
+  $('#fIzq').onclick=function(){ irA(cur-1); };
+  $('#fDer').onclick=function(){ irA(cur+1); };
+  document.addEventListener('keydown',function(e){
+    if(!html.classList.contains('slides')) return;
+    if(e.key==='ArrowRight'||e.key==='PageDown'||e.key===' '){ e.preventDefault(); irA(cur+1); }
+    else if(e.key==='ArrowLeft'||e.key==='PageUp'){ e.preventDefault(); irA(cur-1); }
+    else if(e.key==='Escape'){ modo(false); }
+  });
+  if(window.IntersectionObserver){
+    var io=new IntersectionObserver(function(es){
+      es.forEach(function(e){ if(e.isIntersecting){ cur=slides.indexOf(e.target); pinta(); } });
+    },{threshold:.6});
+    slides.forEach(function(s){ io.observe(s); });
+  }
+  pinta();
 })();
 })();
 </script>
