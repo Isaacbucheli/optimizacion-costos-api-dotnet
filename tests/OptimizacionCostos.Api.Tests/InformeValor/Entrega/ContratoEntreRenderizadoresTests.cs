@@ -142,9 +142,13 @@ public sealed class ContratoEntreRenderizadoresTests
             "Tarea 9 de esta entrega (la vista React) no incluye este panel en su alcance -ver la tabla " +
             "de archivos del plan de la entrega 7, que asigna meta.conciliacion a la Tarea 7 y no a la " +
             "9-: verificado contra innovacion-CDC (src/components/informe-valor/informe, " +
-            "src/lib/informeValor.ts, grep sin resultados para \"conciliacion\"/\"coincide\"/\"difs\", " +
-            "salvo en archivos de test) que la vista React todavía no lo lee. Queda declarada hasta que " +
-            "un renderizador React lo dibuje."),
+            "src/lib/informeValor.ts) que la vista React todavía no lo lee. `grep` para " +
+            "\"conciliacion\"/\"coincide\"/\"difs\" da dos coincidencias en esos dos lugares y ninguna " +
+            "es una lectura del modelo: \"conciliacion\" en un fixture de InformeVista.test.tsx (archivo " +
+            "de test, fuera del alcance de FuentesReact) y \"coincide\" en un comentario de " +
+            "informeValor.ts:24 que describe una lista sin relación con meta.conciliacion (Normalizar() " +
+            "descarta comentarios, así que tampoco lo ve el barrido). Queda declarada hasta que un " +
+            "renderizador React lo dibuje."),
         ("meta.conciliacion.umbralTasa", Lado.Ninguno,
             "La tasa del 0.5% que decide, mes a mes, qué filas entran a difs (InformeValorEnsamblador." +
             "CalcularConciliacion). El panel de la Tarea 7 publica el veredicto ya aplicado -coincide y " +
