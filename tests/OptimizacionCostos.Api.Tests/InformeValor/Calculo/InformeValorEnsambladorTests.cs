@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using OptimizacionCostos.Api.Features.InformeValor;
 using OptimizacionCostos.Api.Features.InformeValor.Calculo;
@@ -83,6 +84,35 @@ public sealed class InformeValorEnsambladorTests
             Corte: Fechas.ResolverFechaEnGuayaquil(corteInstante),
             MesesParcialesForzados: []);
     }
+
+    // ── Entrega 7, Tarea 1: opex y cronología llegan al modelo. Mismo patrón de builders que el
+    // resto de la clase, pero sobre fechas explícitas "aaaa-MM-dd" (los dos insumos nuevos son
+    // registros con DateOnly/DateTime, no año/mes sueltos como el resto del fixture). ──
+
+    /// <summary>Como <see cref="Contexto"/>, pero con el rango dado por fechas explícitas: los tres
+    /// tests de esta tarea necesitan controlar el corte exacto de una serie, no solo el mes.</summary>
+    private static ContextoInformeValor Ctx(string inicio, string fin) => new(
+        DateOnly.ParseExact(inicio, "yyyy-MM-dd", CultureInfo.InvariantCulture),
+        DateOnly.ParseExact(fin, "yyyy-MM-dd", CultureInfo.InvariantCulture),
+        DateOnly.ParseExact(fin, "yyyy-MM-dd", CultureInfo.InvariantCulture),
+        null);
+
+    /// <summary>Atajo sobre <see cref="InformeValorEnsamblador.Ensamblar"/> para los tests que solo
+    /// necesitan variar <see cref="InsumosBd"/> y el contexto: sin facturación ni casos, que no
+    /// pesan en ninguno de los tres tests de esta tarea.</summary>
+    private static ModeloInformeValor Ensamblar(InsumosBd insumosBd, ContextoInformeValor contexto) =>
+        InformeValorEnsamblador.Ensamblar([], 0, [], insumosBd, "Cliente", contexto);
+
+    private static InsumosBd ConOpex(OpexScore opex) => Insumos() with { Opex = opex };
+
+    private static InsumosBd ConHitos(IReadOnlyList<HitoFila> hitos) => Insumos() with { Hitos = hitos };
+
+    /// <summary>Una fila de la bitácora de tracking con autor/matrixCode/pilar fijos (no importan
+    /// para los tests de esta tarea, que solo varían fecha/campo/valores).</summary>
+    private static HitoFila Hito(string fecha, string campo, string? antes, string? despues) => new(
+        Fecha: DateTime.ParseExact(fecha, "yyyy-MM-dd", CultureInfo.InvariantCulture),
+        Campo: campo, ValorAnterior: antes, ValorNuevo: despues, Autor: "consultor@bit.com",
+        MatrixCode: "M-1", Recomendacion: "Recomendación de prueba", PillarNumber: 3);
 
     // ===================================================================================
     // 5a. Determinismo: mismo insumo, misma fecha de corte, dos corridas, modelos idénticos.
@@ -609,6 +639,49 @@ public sealed class InformeValorEnsambladorTests
         Assert.Equal(0m, filaJulio[1]);
         Assert.Equal(5000m, filaJulio[2]);
         Assert.Equal(-5000m, filaJulio[3]);
+    }
+
+    // ===================================================================================
+    // Entrega 7, Tarea 1: opex y cronología llegan al modelo publicado. Antes de esta tarea
+    // InsumosBd.Opex/.Hitos no llegaban a ninguna parte de ModeloInformeValor.
+    // ===================================================================================
+
+    /// <summary>La serie de Opex se recorta al rango: el recolector la trae completa (D0).</summary>
+    [Fact]
+    public void La_serie_de_opex_se_recorta_al_rango_del_informe()
+    {
+        var opex = new OpexScore(92m, new DateOnly(2026, 6, 30), "ok",
+            [new OpexPunto(new DateOnly(2025, 9, 1), 59m), new OpexPunto(new DateOnly(2026, 3, 1), 80m)],
+            Medido: true, Motivo: null);
+        var m = Ensamblar(ConOpex(opex), Ctx("2026-01-01", "2026-06-30"));
+        Assert.Single(m.Opex!.Serie);
+        Assert.Equal("2026-03", m.Opex.Serie[0][0]);
+    }
+
+    /// <summary>Las notas internas y la bitácora de ejecución jamás llegan al artefacto, y lo
+    /// omitido se cuenta para que una cronología corta no se lea como "no pasó nada".</summary>
+    [Fact]
+    public void La_cronologia_deja_fuera_los_campos_internos_y_los_cuenta()
+    {
+        var hitos = new[]
+        {
+            Hito("2026-03-10", "completion_pct", "0", "40"),
+            Hito("2026-03-11", "internal_notes", null, "acordado por teléfono con el cliente"),
+            Hito("2026-03-12", "execution_log", null, "corrida manual del script"),
+        };
+        var m = Ensamblar(ConHitos(hitos), Ctx("2026-01-01", "2026-06-30"));
+        Assert.Single(m.Cronologia!.Hitos);
+        Assert.Equal("completion_pct", m.Cronologia.Hitos[0].Campo);
+        Assert.Equal(2, m.Cronologia.Omitidos);
+    }
+
+    /// <summary>Sin insumos nuevos, las dos claves viajan null: bloque ausente ≠ bloque vacío.</summary>
+    [Fact]
+    public void Sin_opex_ni_hitos_las_dos_claves_son_null()
+    {
+        var m = Ensamblar(Insumos(), Ctx("2026-01-01", "2026-06-30"));
+        Assert.Null(m.Opex);
+        Assert.Null(m.Cronologia);
     }
 
     // ===================================================================================

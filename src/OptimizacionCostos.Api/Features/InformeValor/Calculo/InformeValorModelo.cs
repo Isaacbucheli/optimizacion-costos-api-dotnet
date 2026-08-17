@@ -48,6 +48,17 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// globales de la API</b> (D13: la política global transforma a snake_case tanto nombres de
 /// propiedad como claves de diccionario, y <c>render()</c> espera los nombres tal cual salen del
 /// JavaScript original).</para>
+///
+/// <para><b><see cref="Opex"/> y <see cref="Cronologia"/> son la novena y la décima clave de nivel
+/// superior (entrega 7, Tarea 1)</b>, publicadas antes de que ningún renderizador las dibuje (esa
+/// parte es de las tareas 3, 5 y 9 de la misma entrega): igual que <see cref="Ejecutado"/>, van
+/// arriba y no anidadas en ningún otro bloque, por la misma razón que ya deja escrita el
+/// comentario de clase de <see cref="OpexModelo"/> — <see cref="Postura"/> es null cuando el
+/// cliente no tiene recomendaciones activas, y un cliente puede tener score de Opex sin
+/// recomendaciones, así que meterlo dentro de <c>advisor</c> perdería el dato justo en el caso que
+/// la tarjeta existe para contar. <see cref="Cronologia"/> tampoco cuelga de <c>matriz</c> por el
+/// mismo motivo: es una vista propia sobre la misma bitácora, no una columna más de la tabla de
+/// hallazgos.</para>
 /// </summary>
 public sealed record ModeloInformeValor(
     [property: JsonPropertyName("meta")] InformeValorMeta Meta,
@@ -57,7 +68,9 @@ public sealed record ModeloInformeValor(
     [property: JsonPropertyName("advisor")] PosturaModelo? Postura,
     [property: JsonPropertyName("matriz")] RoadmapModelo? Roadmap,
     [property: JsonPropertyName("catSerie")] IReadOnlyDictionary<string, IReadOnlyDictionary<string, decimal>>? CatSerie,
-    [property: JsonPropertyName("ejecutado")] EjecutadoModelo? Ejecutado = null);
+    [property: JsonPropertyName("ejecutado")] EjecutadoModelo? Ejecutado = null,
+    [property: JsonPropertyName("opex")] OpexModelo? Opex = null,
+    [property: JsonPropertyName("cronologia")] CronologiaModelo? Cronologia = null);
 
 /// <summary>
 /// Encabezado del informe (<c>D.meta</c>). <see cref="Corte"/> es la fecha de corte tal como

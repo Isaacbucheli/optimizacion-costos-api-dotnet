@@ -148,7 +148,47 @@ public static class InformeValorEnsamblador
         return new ModeloInformeValor(
             meta, operacion, consumo, seguridad, postura, roadmap,
             CatSerie: CalcularCatSerie(facturacionEnRango),
-            Ejecutado: ejecutado);
+            Ejecutado: ejecutado,
+            Opex: MapearOpex(insumosBd.Opex, contexto),
+            Cronologia: MapearCronologia(insumosBd.Hitos, contexto));
+    }
+
+    /// <summary>Proyecta el score de Opex al modelo publicado. La serie se recorta al rango del
+    /// informe (D0: el recolector no filtra por fecha, la calculadora sí).</summary>
+    private static OpexModelo? MapearOpex(OpexScore? opex, ContextoInformeValor contexto)
+    {
+        if (opex is null) return null;
+        var serie = new List<IReadOnlyList<object?>>();
+        foreach (var p in opex.Serie)
+            if (p.Fecha >= contexto.PeriodStart && p.Fecha <= contexto.PeriodEnd)
+                serie.Add([ConsumoCalculador.Ym((short)p.Fecha.Year, (byte)p.Fecha.Month), Redondeo.ComoJs(p.Score, 1)]);
+        return new OpexModelo(
+            Actual: opex.Actual is null ? null : Redondeo.ComoJs(opex.Actual.Value, 1),
+            Fecha: opex.SnapshotDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            Estado: opex.Status,
+            Serie: serie,
+            Medido: opex.Medido,
+            Motivo: opex.Motivo);
+    }
+
+    /// <summary>Proyecta la bitácora al modelo publicado, filtrando por la lista blanca de campos
+    /// y por el rango del informe. Lo omitido se cuenta, nunca se descarta en silencio.</summary>
+    private static CronologiaModelo? MapearCronologia(IReadOnlyList<HitoFila>? hitos, ContextoInformeValor contexto)
+    {
+        if (hitos is null) return null;
+        var publicables = new List<HitoModelo>();
+        var omitidos = 0;
+        foreach (var h in hitos)
+        {
+            var fecha = DateOnly.FromDateTime(h.Fecha);
+            if (fecha < contexto.PeriodStart || fecha > contexto.PeriodEnd) { omitidos++; continue; }
+            if (!CronologiaModelo.CamposPublicables.Contains(h.Campo)) { omitidos++; continue; }
+            publicables.Add(new HitoModelo(
+                Fecha: fecha.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                Campo: h.Campo, Antes: h.ValorAnterior, Despues: h.ValorNuevo,
+                Recomendacion: h.Recomendacion, MatrixCode: h.MatrixCode, Pilar: h.PillarNumber));
+        }
+        return new CronologiaModelo(publicables, omitidos);
     }
 
     /// <summary>

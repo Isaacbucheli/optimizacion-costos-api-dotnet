@@ -79,6 +79,13 @@ public sealed class ContratoEntreRenderizadoresTests
             "(mismo límite de colisión que el docstring de esta clase declara para los nombres cortos), " +
             "así que el mismo veredicto de esos tokens compartidos aplica acá aunque nadie dibuje " +
             "ejecutado todavía."),
+        ("opex", Lado.React,
+            "Comparte tokens con ejecutado y fact.variacionConsumo.reservas (medido, motivo): la vista " +
+            "React ya los lee para esos dos bloques, y el barrido por texto no distingue de qué padre " +
+            "viene cada token repetido (mismo límite de colisión de la entrada de \"ejecutado\" de " +
+            "arriba). El mismo veredicto de esos dos tokens compartidos aplica acá aunque nadie dibuje " +
+            "opex todavía; el resto de sus campos (actual, fecha, estado, serie) no comparte token con " +
+            "ningún bloque que hoy lea un solo lado y queda cubierto por la entrada de Ninguno."),
 
         // ---- lo que no lee ninguno de los dos ----
         ("fact.variacionConsumo", Lado.Ninguno,
@@ -119,6 +126,14 @@ public sealed class ContratoEntreRenderizadoresTests
             "la reunión): el modelo entrega las dos series en positivo para que la entrega 7 las " +
             "dibuje arriba y abajo del eje, pero ese dibujo todavía no existe en ninguno de los dos " +
             "renderizadores."),
+        ("opex", Lado.Ninguno,
+            "El score del pilar de costos con su serie mensual. La tarjeta del resumen y el gráfico de " +
+            "la sección Advisor son de la tarea 3 y la 5 de esta misma entrega; el modelo se publica " +
+            "primero para que el dibujo tenga de dónde leer."),
+        ("cronologia", Lado.Ninguno,
+            "La línea de tiempo derivada de la bitácora de la matriz, ya filtrada por lista blanca de " +
+            "campos. La sección que la dibuja es la tarea 5 de esta entrega; se publica antes para que " +
+            "el recorte por campos quede probado sin depender del dibujo."),
     ];
 
     public enum Lado { Html, React, Ninguno }
