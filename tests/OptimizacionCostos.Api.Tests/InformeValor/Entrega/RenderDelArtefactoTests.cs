@@ -816,7 +816,10 @@ public sealed class RenderDelArtefactoTests
         r.ExigirQueDibujeCompleto();
 
         var s = r.Nodo("body-cobertura").Todo;
-        Assert.DoesNotContain("35001", s, StringComparison.Ordinal);
+        // fmt() agrupa de a miles ("$35,001.10"): la cifra completa, con su coma, es la que tiene
+        // que estar ausente -- "35001" sin coma nunca aparece en el HTML real, así que afirmarlo no
+        // prueba nada.
+        Assert.DoesNotContain("$35,001.10", s, StringComparison.Ordinal);
         // La sección igual dice que hay discrepancia: lo que se apaga es el monto, no el aviso.
         Assert.Contains("depende de los bloques de gasto total y serie mensual", s, StringComparison.Ordinal);
     }

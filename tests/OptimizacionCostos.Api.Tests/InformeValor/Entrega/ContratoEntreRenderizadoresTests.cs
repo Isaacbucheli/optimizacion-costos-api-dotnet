@@ -89,15 +89,6 @@ public sealed class ContratoEntreRenderizadoresTests
             "`mecanismos: {...; nota: string}[]` y `r.nota`), una etiqueta de presentación de los " +
             "baldes de atribución sin relación con el modelo ni con la tabla de reservas por VM. La " +
             "Tarea 5 de esta entrega no dibuja la nota de la reserva en esa tabla."),
-        ("ejecutado.reservas", Lado.Html,
-            "La tabla de reservas del acumulado ejecutado (Tarea 5 de la entrega 7): una fila por VM " +
-            "con vm/sku/demanda/reserva/ahorro/compartida/vence/porVencer, más los totales " +
-            "(totalDemanda, totalReserva, totalAhorro, ahorroAnualizado) y sinLineaEnEvolucion. La " +
-            "Tarea 9 de esta entrega (la vista React) no incluye una sección de reservas del acumulado " +
-            "en su alcance -ver la tabla de archivos del plan de la entrega 7, que asigna esta tabla a " +
-            "la Tarea 5 y no a la 9-: verificado que SeccionEjecutado.tsx no lee ej.reservas (grep para " +
-            "\"reservas\" en ese archivo: solo aparece en ejes.reservasMedidas/reservasMotivo, campos " +
-            "distintos). Queda declarada para cuando una sección de Reservas propia la dibuje."),
         ("opex.estado", Lado.Ninguno,
             "El estado textual del score (por ejemplo \"en riesgo\"), sin usar todavía: la tarjeta del " +
             "resumen (Tarea 3) y el gráfico de la sección Advisor (Tarea 5) leen actual/serie/medido/" +
@@ -115,8 +106,10 @@ public sealed class ContratoEntreRenderizadoresTests
         // Lo único que sigue sin lector de los dos lados es la SERIE de la proyección mensual
         // (ejecutado.proyeccion, ver más abajo): la sección titular publica el total proyectado a fin
         // de año (proyeccionFin) pero no dibuja esa curva mes a mes. El apilado por categoría
-        // (ejecutado.catAcum) y la tabla de reservas (ejecutado.reservas) siguen solo en el HTML: ver
-        // sus entradas propias, arriba.
+        // (ejecutado.catAcum) sigue solo en el HTML: ver su entrada propia, abajo. "ejecutado.reservas"
+        // dejó de ser una excepción con el commit f10b5ad del front (SeccionEjecutado.tsx ya dibuja
+        // <SeccionReservas reservas={ej.reservas} />): sus tres columnas colisionadas siguen
+        // declaradas por su cuenta (reservationId, nota), pero la tabla en sí ya la leen los dos lados.
         ("ejecutado.filas.rg", Lado.Ninguno,
             "El grupo de recursos de cada acción ejecutada: la tabla de la sección titular (Tarea 4 de " +
             "la entrega 7) identifica el recurso por su nombre (rec), no por su grupo. Ninguno de los " +
@@ -295,6 +288,72 @@ public sealed class ContratoEntreRenderizadoresTests
     {
         Assert.True(Inventario().Count > 50, "el inventario del modelo salió sospechosamente corto");
         Assert.Contains("D.meta", CapaDeDibujoHtml(), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// I4 de la revisión final de la entrega 7: <see cref="Los_dos_renderizadores_consumen_el_mismo_conjunto_de_campos"/>
+    /// no puede detectar SOBREDECLARACIÓN. Ese test hace <c>if (esperado is null) continue;</c> ANTES
+    /// de consultar <see cref="Asimetrias"/>: un campo que los dos lados ya leen simplemente no se
+    /// visita, así que una entrada que dejó de ser cierta -como <c>ejecutado.reservas</c>, falsa desde
+    /// el commit f10b5ad del front, un commit entero antes de este fix- queda ahí para siempre,
+    /// pasando en verde. Este test recorre <see cref="Asimetrias"/> AL REVÉS: para cada entrada
+    /// declarada como un campo hoja exacto, recalcula la asimetría real con el mismo <c>Lee()</c>/
+    /// <c>esperado</c> del test de arriba y exige que siga existiendo y del mismo lado.
+    ///
+    /// <para><b>Por qué algunas entradas quedan exentas.</b> Varias filas de <see cref="Asimetrias"/>
+    /// no son un campo hoja: son el PREFIJO de una rama entera (mismo mecanismo de colapso de nombres
+    /// cortos que <see cref="Lee"/> ya documenta), y hasta declaran el MISMO literal de ruta dos veces
+    /// con Lado distinto (<c>fact.variacionConsumo</c>: una vez React, una vez Ninguno) porque cada
+    /// hijo de esa rama tiene su propio Lado real. Preguntarle a la ruta del contenedor "¿cuál es TU
+    /// esperado?" no tiene una única respuesta verificable ahí: se exime con el motivo puntual, nunca
+    /// en silencio.</para>
+    /// </summary>
+    [Fact]
+    public void Toda_asimetria_declarada_sigue_siendo_una_asimetria_real()
+    {
+        var fuentes = FuentesReact.Resolver();
+        if (fuentes.Texto is null) return; // mismo guardia que el F0: necesita los dos repos.
+
+        var html = Normalizar(CapaDeDibujoHtml());
+        var react = Normalizar(fuentes.Texto);
+        var inventario = Inventario();
+
+        // Prefijos de rama entera: cubren varios campos hoja con Lado real distinto entre sí (el
+        // propio array declara el mismo literal dos veces, con Lado.React para unos hijos y
+        // Lado.Ninguno para otros), así que no hay un único "esperado" que pedirle a la ruta del
+        // contenedor. Cada hijo que sí es hoja exacta (p. ej. ejecutado.filas.rg,
+        // meta.conciliacion.umbralTasa) sigue verificado por su cuenta más abajo en este mismo test.
+        var exentosPorRamaEntera = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "fact.variacionConsumo", // declarado dos veces (Lado.React y Lado.Ninguno) para hijos distintos
+            "meta.conciliacion",     // declarado Lado.Html arriba y Lado.Ninguno para meta.conciliacion.umbralTasa
+        };
+
+        foreach (var (ruta, ladoDeclarado, motivo) in Asimetrias)
+        {
+            if (exentosPorRamaEntera.Contains(ruta)) continue;
+
+            // Solo entradas cuya ruta es EXACTAMENTE una de las rutas de algún campo (no un prefijo
+            // que solo cubra hijos): esas sí tienen un token propio con un esperado computable.
+            var campo = inventario.FirstOrDefault(c => c.Rutas.Split(", ").Contains(ruta));
+            Assert.True(campo is not null,
+                $"'{ruta}' no es un campo hoja exacto del inventario (Toda_asimetria_declarada_apunta_a_" +
+                "un_campo_del_modelo ya cubre el caso de una ruta mal escrita). Si es a propósito el " +
+                "prefijo de una rama con Lado heterogéneo entre sus hijos, agregalo a " +
+                "exentosPorRamaEntera con el motivo -- no lo dejes caer en silencio.");
+
+            var enHtml = Lee(html, campo!.Token);
+            var enReact = Lee(react, campo.Token);
+            var esperado = enHtml == enReact
+                ? (enHtml ? (Lado?)null : Lado.Ninguno)
+                : (enHtml ? Lado.Html : Lado.React);
+
+            Assert.True(esperado == ladoDeclarado,
+                $"'{ruta}' está declarada como {ladoDeclarado} en Asimetrias, pero la asimetría real de " +
+                $"hoy es {(esperado is null ? "ninguna: los dos renderizadores ya lo leen" : esperado.Value.ToString())}. " +
+                $"El motivo que la declaró (\"{motivo}\") describía otra realidad: si los dos lados ya " +
+                "lo leen, borrá la entrada; si cambió de lado, corregí el Lado.");
+        }
     }
 
     // ================== inventario del modelo ==================
