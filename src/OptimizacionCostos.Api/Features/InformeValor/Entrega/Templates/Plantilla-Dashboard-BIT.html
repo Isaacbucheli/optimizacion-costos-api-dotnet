@@ -1156,13 +1156,18 @@ function render(){
   /* ---- hero ---- */
   var HK=[], ej=D.ejecutado, ox=D.opex;
 
-  /* 1. Optimización — porcentaje, nunca dinero: viaja también en la variante del cliente. */
-  HK.push(!ej||!ej.medido
-    ? ['—','','na', ej&&ej.motivo ? ej.motivo : 'Falta el registro de acciones ejecutadas para medir la optimización.','OPTIMIZACIÓN']
-    : ej.pctGasto===null||ej.pctGasto===undefined
-      ? ['Sin medición','','na','El acumulado no se puede comparar contra el gasto del período porque el gasto no se midió.','OPTIMIZACIÓN']
-      : ['<span class="cnt" data-v="'+ej.pctGasto+'" data-d="1">0</span>','%','',
-         'El ahorro acumulado del período equivale al '+ej.pctGasto.toFixed(1)+'% del gasto total del mismo período. Viene de '+num(ej.filas.length)+' acciones de optimización ejecutadas; el detalle en dinero va en la sección Ahorro ejecutado.','OPTIMIZACIÓN']);
+  /* 1. Optimización — porcentaje, nunca dinero: viaja también en la variante del cliente.
+     Tres estados, no dos: sin insumo (ej null, "—") es distinto de insumo sin medir (ej.medido
+     false, "Sin medición" con su motivo real) -- confundirlos le mostraba "—" a un cliente cuyo
+     barrido o reservas SÍ declaró por qué no pudo medir (AcumuladoCalculador.CombinarMotivos). */
+  HK.push(!ej
+    ? ['—','','na','Falta el registro de acciones ejecutadas para medir la optimización.','OPTIMIZACIÓN']
+    : !ej.medido
+      ? ['Sin medición','','na', ej.motivo || 'El registro de acciones ejecutadas no se pudo medir.','OPTIMIZACIÓN']
+      : ej.pctGasto===null||ej.pctGasto===undefined
+        ? ['Sin medición','','na','El acumulado no se puede comparar contra el gasto del período porque el gasto no se midió.','OPTIMIZACIÓN']
+        : ['<span class="cnt" data-v="'+ej.pctGasto+'" data-d="1">0</span>','%','',
+           'El ahorro acumulado del período equivale al '+ej.pctGasto.toFixed(1)+'% del gasto total del mismo período. Viene de '+num(ej.filas.length)+' acciones de optimización ejecutadas; el detalle en dinero va en la sección Ahorro ejecutado.','OPTIMIZACIÓN']);
 
   /* 2. Opex — score del pilar de costos, con su evolución al lado. */
   HK.push(!ox||!ox.medido

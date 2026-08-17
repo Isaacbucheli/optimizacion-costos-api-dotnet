@@ -73,10 +73,14 @@ public sealed class ContratoEntreRenderizadoresTests
             "consultor la revisa en la vista y el artefacto no la publica."),
         ("ejecutado.reservas", Lado.React,
             "Comparte tokens con fact.variacionConsumo.reservas (reservas, reservationId, " +
-            "consumidoresNoLeidos, nota): la vista React ya los lee para el bloque de la entrega 2d, y " +
-            "el barrido por texto no distingue de qué padre viene cada token repetido (mismo límite de " +
-            "colisión que el docstring de esta clase declara para los nombres cortos). medido/motivo ya " +
-            "NO están acá: la Tarea 3 de la entrega 7 los volvió simétricos al leerlos también del lado " +
+            "consumidoresNoLeidos): la vista React ya los lee para el bloque de la entrega 2d, y el " +
+            "barrido por texto no distingue de qué padre viene cada token repetido (mismo límite de " +
+            "colisión que el docstring de esta clase declara para los nombres cortos). \"nota\" NO es " +
+            "uno de esos tokens compartidos, aunque el barrido la agrupe acá: en VariacionConsumo.tsx " +
+            "nace de un arreglo local `mecanismos` dentro de PanelAtribucion (líneas ~193-223), una " +
+            "etiqueta de presentación de los baldes de atribución sin relación con el modelo ni con " +
+            "PanelReservas -- coincidencia de nombre corto, no dato compartido. medido/motivo ya NO " +
+            "están acá: la Tarea 3 de la entrega 7 los volvió simétricos al leerlos también del lado " +
             "del artefacto (ejecutado.medido, ejecutado.motivo, opex.medido, opex.motivo)."),
         ("ejecutado", Lado.Html,
             "La tarjeta OPTIMIZACIÓN del resumen (Tarea 3 de la entrega 7, observación 1 de la reunión " +

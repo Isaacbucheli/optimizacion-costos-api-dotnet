@@ -363,6 +363,40 @@ public sealed class RenderDelArtefactoTests
         Assert.DoesNotContain("0%", hero, StringComparison.Ordinal);
     }
 
+    /// <summary>Fix del review de la Tarea 3 (entrega 7): sin ningún registro de acciones ejecutadas
+    /// la tarjeta OPTIMIZACIÓN declara la ausencia total del insumo con "—", el mismo signo que las
+    /// otras tarjetas del hero cuando falta el archivo por completo.</summary>
+    [Fact]
+    public void Sin_ejecutado_la_tarjeta_de_optimizacion_declara_que_falta_el_insumo()
+    {
+        var r = RenderDeArtefacto.Correr(SinEjecutado(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        var hero = r.Nodo("hero-kpis").Todo;
+        var tarjetaOptimizacion = hero.Substring(0, hero.IndexOf("OPEX", StringComparison.Ordinal));
+        Assert.Contains("—", tarjetaOptimizacion, StringComparison.Ordinal);
+        Assert.Contains("Falta el registro de acciones ejecutadas para medir la optimización.",
+            tarjetaOptimizacion, StringComparison.Ordinal);
+    }
+
+    /// <summary>La otra mitad del mismo defecto: con el registro PRESENTE pero sin medir -- el
+    /// barrido o las reservas sin leer, con motivo propio de
+    /// <c>AcumuladoCalculador.CombinarMotivos</c> -- la tarjeta tiene que decir "Sin medición" y
+    /// publicar ESE motivo, nunca el "—" genérico de la ausencia total de insumo. Antes de este fix
+    /// el guardia <c>!ej||!ej.medido</c> trataba los dos casos igual y siempre mostraba "—".</summary>
+    [Fact]
+    public void Con_ejecutado_sin_medir_la_tarjeta_de_optimizacion_publica_el_motivo_en_vez_del_guion()
+    {
+        var r = RenderDeArtefacto.Correr(SinEjecutadoMedido(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        var hero = r.Nodo("hero-kpis").Todo;
+        var tarjetaOptimizacion = hero.Substring(0, hero.IndexOf("OPEX", StringComparison.Ordinal));
+        Assert.Contains("Sin medición", tarjetaOptimizacion, StringComparison.Ordinal);
+        Assert.Contains("El barrido no se pudo leer en esta corrida.", tarjetaOptimizacion, StringComparison.Ordinal);
+        Assert.DoesNotContain("—", tarjetaOptimizacion, StringComparison.Ordinal);
+    }
+
     /// <summary>Regla de copy de la reunión: cada cifra aparece una sola vez. Con el denominador
     /// completo y todos cumpliendo, el texto dice "todos", no repite el número tres veces.</summary>
     [Fact]
@@ -529,6 +563,31 @@ public sealed class RenderDelArtefactoTests
             {
                 Medido = false, Motivo = "No hay snapshot de Azure Advisor para este cliente.",
                 Actual = null, Serie = [],
+            },
+        };
+    }
+
+    /// <summary>Sin ningún registro de acciones ejecutadas: la tarjeta OPTIMIZACIÓN tiene que
+    /// declarar la ausencia total del insumo ("—"), nunca "Sin medición" -- ese estado es para
+    /// cuando el insumo SÍ llegó pero algún eje no se pudo leer (ver <see cref="SinEjecutadoMedido"/>).</summary>
+    private static ModeloInformeValor SinEjecutado()
+    {
+        var modelo = ModeloDePrueba.Crear();
+        return modelo with { Ejecutado = null };
+    }
+
+    /// <summary>El registro SÍ llegó, pero el barrido no se pudo leer en esta corrida, con motivo
+    /// propio: el estado que <c>AcumuladoCalculador.CombinarMotivos</c> declara cuando un eje falla
+    /// aunque el conjunto sí produzca cifra (I1 del review final de la entrega 6). La tarjeta tiene
+    /// que publicar ESE motivo, no el "—" de la ausencia total de insumo.</summary>
+    private static ModeloInformeValor SinEjecutadoMedido()
+    {
+        var modelo = ModeloDePrueba.Crear();
+        return modelo with
+        {
+            Ejecutado = modelo.Ejecutado! with
+            {
+                Medido = false, Motivo = "El barrido no se pudo leer en esta corrida.",
             },
         };
     }
