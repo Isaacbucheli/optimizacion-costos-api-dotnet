@@ -949,6 +949,82 @@ function barras(cont,datos,opts){
   });
   cont.innerHTML='';cont.appendChild(s);
 }
+/* dona: anillo de progreso con el porcentaje al centro. Para el avance de remediación. */
+function dona(cont,pctv,o){
+  if(!cont) return; o=o||{};
+  var tam=o.tam||120, gr=o.grosor||14, col=o.color||GREEN, fon=o.fondo||'#D8DFC9';
+  var r=(tam-gr)/2, cx=tam/2, cy=tam/2, circ=2*Math.PI*r;
+  var v=Math.max(0,Math.min(100,pctv||0));
+  var s=SVGE(tam,tam);
+  s.appendChild(EE('circle',{cx:cx,cy:cy,r:r,fill:'none',stroke:fon,'stroke-width':gr}));
+  s.appendChild(EE('circle',{cx:cx,cy:cy,r:r,fill:'none',stroke:col,'stroke-width':gr,
+    'stroke-linecap':'round','stroke-dasharray':(circ*v/100)+' '+circ,
+    transform:'rotate(-90 '+cx+' '+cy+')'}));
+  s.appendChild(TT(cx,cy+6,(o.txt!==undefined?o.txt:Math.round(v)+'%'),
+    {'text-anchor':'middle','font-size':tam*0.22,'font-weight':'800',fill:col}));
+  cont.innerHTML=''; cont.appendChild(s);
+}
+
+/* spark: microlínea para una tarjeta KPI. puntos=[{x,v,lbl}] */
+function spark(cont,pts,o){
+  if(!cont||!pts||!pts.length) return; o=o||{};
+  var W=o.W||150,H=o.H||30,col=o.color||GREEND,pad=3;
+  var vs=pts.map(function(p){return p.v;});
+  var mn=Math.min.apply(null,vs), mx=Math.max.apply(null,vs);
+  if(mx===mn){ mx=mn+1; }
+  var dx=pts.length>1?(W-pad*2)/(pts.length-1):0;
+  function py(v){ return H-pad-((v-mn)/(mx-mn))*(H-pad*2); }
+  var d=pts.map(function(p,i){ return (pad+i*dx)+','+py(p.v); }).join(' ');
+  var s=SVGE(W,H);
+  s.appendChild(EE('polyline',{fill:'none',stroke:col,'stroke-width':2,points:d}));
+  s.appendChild(EE('circle',{cx:pad+(pts.length-1)*dx,cy:py(pts[pts.length-1].v),r:3,fill:col}));
+  pts.forEach(function(p,i){
+    var h=EE('rect',{x:pad+i*dx-dx/2,y:0,width:dx||W,height:H,fill:'transparent'});
+    hov(h,'<b>'+esc(p.lbl||p.x)+'</b><br>'+esc(String(p.v)));
+    s.appendChild(h);
+  });
+  cont.innerHTML=''; cont.appendChild(s);
+}
+
+/* linea: una o varias series sobre grilla. Para el score en el tiempo y el costo unitario. */
+function linea(cont,labels,series,o){
+  if(!cont) return; o=o||{};
+  var W=o.W||1100,h=o.h||260,padL=o.padL||52,padR=24,padT=16,padB=34;
+  var all=[]; series.forEach(function(s){ s.v.forEach(function(v){ if(v!==null&&v!==undefined) all.push(v); }); });
+  var mn=o.dom?o.dom[0]:Math.min.apply(null,all.concat([0]));
+  var mx=o.dom?o.dom[1]:Math.max.apply(null,all);
+  if(mx===mn){ mx=mn+1; }
+  var iw=W-padL-padR, ih=h-padT-padB;
+  var dx=labels.length>1?iw/(labels.length-1):0;
+  function py(v){ return padT+ih-((v-mn)/(mx-mn))*ih; }
+  var s=SVGE(W,h),i;
+  for(i=0;i<=4;i++){
+    var gy=padT+ih*i/4, gv=mx-(mx-mn)*i/4;
+    s.appendChild(EE('line',{x1:padL,y1:gy,x2:W-padR,y2:gy,stroke:'#eeeeeb','stroke-width':1}));
+    s.appendChild(TT(padL-8,gy+4,(o.fy?o.fy(gv):Math.round(gv)),{'text-anchor':'end','font-size':11,fill:'#8b8b8b'}));
+  }
+  series.forEach(function(se){
+    var pts=[];
+    se.v.forEach(function(v,j){ if(v!==null&&v!==undefined) pts.push((padL+j*dx)+','+py(v)); });
+    if(pts.length) s.appendChild(EE('polyline',{fill:'none',stroke:se.c,'stroke-width':2.5,points:pts.join(' ')}));
+  });
+  labels.forEach(function(lb,j){
+    s.appendChild(TT(padL+j*dx,h-10,lb,{'text-anchor':'middle','font-size':11,fill:'#8b8b8b'}));
+    var tip='<b>'+esc(o.tl?o.tl(j):lb)+'</b>';
+    series.forEach(function(se){
+      var v=se.v[j];
+      tip+='<br>'+esc(se.n)+': '+esc(v===null||v===undefined?'sin dato':(o.tv?o.tv(v,se):String(v)));
+    });
+    var hit=EE('rect',{x:padL+j*dx-(dx||iw)/2,y:padT,width:(dx||iw),height:ih,fill:'transparent'});
+    hov(hit,tip); s.appendChild(hit);
+  });
+  if(o.marca!==undefined&&o.marca!==null){
+    var mxp=padL+o.marca*dx;
+    s.appendChild(EE('line',{x1:mxp,y1:padT,x2:mxp,y2:padT+ih,stroke:GRAY,'stroke-width':1,'stroke-dasharray':'4 4'}));
+    if(o.marcaTxt) s.appendChild(TT(mxp+4,padT+12,o.marcaTxt,{'font-size':10,fill:GRAY}));
+  }
+  cont.innerHTML=''; cont.appendChild(s);
+}
 function corta(s,n){s=String(s);return s.length>n?s.slice(0,n)+'…':s;}
 function tarjetas(arr){
   return '<div class="cards">'+arr.map(function(r){

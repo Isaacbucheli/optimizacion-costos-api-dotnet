@@ -128,4 +128,42 @@ public sealed class PlantillaCapaDeDibujoTests
         Assert.Contains("if(EMBEDDED){", t, StringComparison.Ordinal);
         Assert.Contains("D=EMBEDDED; render();", t, StringComparison.Ordinal);
     }
+
+    /// <summary>Substring de <paramref name="texto"/> entre las dos marcas (la de "hasta" no se
+    /// incluye). Helper local para acotar el barrido a la región que interesa.</summary>
+    private static string Recorte(string texto, string desde, string hasta)
+    {
+        var i = texto.IndexOf(desde, StringComparison.Ordinal);
+        Assert.True(i >= 0, $"no se encontró la marca de inicio \"{desde}\"");
+        var j = texto.IndexOf(hasta, i, StringComparison.Ordinal);
+        Assert.True(j > i, $"no se encontró la marca de fin \"{hasta}\"");
+        return texto.Substring(i, j - i);
+    }
+
+    /// <summary>Las tres primitivas nuevas existen: la plantilla no tenía dona, sparkline ni línea,
+    /// y las secciones de esta entrega las necesitan.</summary>
+    [Theory]
+    [InlineData("function dona(")]
+    [InlineData("function spark(")]
+    [InlineData("function linea(")]
+    public void La_plantilla_declara_las_primitivas_nuevas(string firma)
+    {
+        Assert.Contains(firma, InformeValorHtmlExporter.Plantilla, StringComparison.Ordinal);
+    }
+
+    /// <summary>ES5 estricto: la plantilla corre en navegadores viejos y dentro de un IIFE sin
+    /// transpilar. Un arrow function o un template literal la rompen en silencio.
+    ///
+    /// <para>La plantilla no tiene una marca literal "/* ---- 6." — la sección de gráficos
+    /// (5) cierra donde empieza "6. RENDER" (el mismo encabezado que usa <see cref="CapaDeDibujo"/>
+    /// más arriba en este archivo, sin el bloque de asteriscos), así que se usa esa cadena como fin
+    /// del recorte.</para></summary>
+    [Fact]
+    public void Las_primitivas_nuevas_no_usan_sintaxis_moderna()
+    {
+        var kit = Recorte(InformeValorHtmlExporter.Plantilla, "function dona(", "6. RENDER");
+        Assert.DoesNotContain("=>", kit, StringComparison.Ordinal);
+        Assert.DoesNotContain("`", kit, StringComparison.Ordinal);
+        Assert.DoesNotMatch(@"\b(const|let)\s", kit);
+    }
 }
