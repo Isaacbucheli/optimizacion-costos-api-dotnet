@@ -166,6 +166,8 @@ footer{margin-top:64px;border-top:5px solid var(--green);background:var(--gray);
   <a href="#seguridad">Seguridad</a>
   <a href="#advisor">Advisor</a>
   <a href="#eficiencia">Eficiencia</a>
+  <a href="#reservas">Reservas</a>
+  <a href="#cronologia">Cronología</a>
   <a href="#roadmap">Roadmap</a>
 </div></nav>
 
@@ -222,6 +224,8 @@ footer{margin-top:64px;border-top:5px solid var(--green);background:var(--gray);
 <section class="sec" id="seguridad"><h2 id="h2-seguridad">Seguridad bajo gobierno</h2><p class="sub" id="sub-seguridad"></p><div id="body-seguridad"></div></section>
 <section class="sec" id="advisor"><h2>Postura Well-Architected: Azure Advisor</h2><p class="sub" id="sub-advisor"></p><div id="body-advisor"></div></section>
 <section class="sec" id="eficiencia"><h2 id="h2-eficiencia">Eficiencia financiera</h2><p class="sub" id="sub-eficiencia"></p><div id="body-eficiencia"></div></section>
+<section class="sec" id="reservas"><h2>Reservas contra la factura</h2><p class="sub" id="sub-reservas"></p><div id="body-reservas"></div></section>
+<section class="sec" id="cronologia"><h2>Cronología del servicio</h2><p class="sub" id="sub-cronologia"></p><div id="body-cronologia"></div></section>
 <section class="sec" id="roadmap"><h2>Mejora continua y roadmap</h2><p class="sub" id="sub-roadmap"></p><div id="body-roadmap"></div></section>
 
 </div>
@@ -1597,7 +1601,8 @@ function render(){
         '<span class="n" id="aCnt"></span></div>'+
         '<div class="note" style="margin:0 0 12px">Las '+num(ad.n)+' recomendaciones desagregadas en '+ad.det.length+' filas de recomendación por suscripción. Los totales de cada filtro suman siempre contra la fuente original.</div>'+
         '<div class="tbl scroll"><table><thead><tr><th>Recomendación</th><th>Pilar</th><th style="width:1%">Impacto</th><th>Suscripción</th><th class="num">Recursos</th></tr></thead><tbody id="tb-adv"></tbody></table></div></div>':'')+
-      '<div class="ok-box"><b>Lo que este informe no puede declarar todavía.</b> La sincronización de Advisor trae el detalle de recomendaciones, no la puntuación por pilar. Sin dos capturas del Overview, corte inicial y corte actual, no es posible publicar una variación de score, y este informe no publica cifras que no pueda sustentar.</div>';
+      '<div class="ok-box"><b>Lo que este informe no puede declarar todavía.</b> La sincronización de Advisor trae el detalle de recomendaciones, no la puntuación por pilar. Sin dos capturas del Overview, corte inicial y corte actual, no es posible publicar una variación de score, y este informe no publica cifras que no pueda sustentar.</div>'+
+      '<div class="panel" style="margin-top:16px"><h3>Evolución del pilar de costos (Opex)</h3><div id="c-opex"></div></div>';
     barras($('#c-adv-cat'),ad.cats.map(function(c){
       return {k:c.n,v:c.c,lbl:num(c.c)+'  ('+pct(c.c,ad.n).toFixed(1)+'%)',
         seg:[{n:'Impacto alto',v:c.h,c:RED},{n:'Impacto medio',v:c.m,c:AMBER},{n:'Impacto bajo',v:c.l,c:PALE}]};
@@ -1611,6 +1616,13 @@ function render(){
         tip:esc(tp.n)+'<br>'+num(tp.c)+' recomendaciones'};
     }),{W:560,rowH:28,padL:210,padR:160,fs:11});
     tablaAdvisor(ad);
+    if(ox&&ox.medido&&ox.serie&&ox.serie.length>1)
+      linea($('#c-opex'),ox.serie.map(function(p){return ymAb(p[0]);}),
+        [{n:'Pilar de costos',c:GREEN,v:ox.serie.map(function(p){return p[1];})}],
+        {h:240,dom:[0,100],fy:function(v){return Math.round(v)+'%';},
+         tl:function(i){return ymAb(ox.serie[i][0]);},tv:function(v){return v+'%';}});
+    else if($('#c-opex'))
+      $('#c-opex').innerHTML=pendiente(ox&&ox.motivo?ox.motivo:'No hay serie histórica del pilar de costos para este período.');
   }
 
   /* ---- eficiencia ---- */
@@ -1718,6 +1730,57 @@ function render(){
       else $('#c-cc').innerHTML=noPub('El reparto del gasto entre las áreas del cliente no se aprobó para esta versión del informe.');
     }
     tablaAB(f);
+  }
+
+  /* ---- reservas ---- */
+  var rs=ej?ej.reservas:null;
+  if(!rs||!rs.medido){
+    $('#body-reservas').innerHTML=pendiente(rs&&rs.motivo?rs.motivo:'No se pudieron leer las reservas del cliente.');
+    $('#sub-reservas').textContent='';
+  } else {
+    var pubRs=pub('reservasFacturadas');
+    $('#sub-reservas').textContent=num(rs.filas.length)+' máquinas cubiertas por instancias reservadas. Por cada una: lo que costaba a tarifa por demanda antes de la compra contra lo que factura la reserva cada mes.';
+    var tb='<table><thead><tr><th>VM</th><th>SKU</th><th class="num">Por demanda</th><th class="num">Reserva facturada</th><th class="num">Ahorro</th><th>Vence</th></tr></thead><tbody>';
+    rs.filas.forEach(function(f){
+      tb+='<tr'+(f.porVencer?' class="warn"':'')+'><td>'+esc(f.vm)+(f.compartida?' <span class="tags"><span>compartida</span></span>':'')+'</td>'+
+        '<td>'+esc(f.sku||'—')+'</td>'+
+        '<td class="num">'+(pubRs?esc(fmt(f.demanda)):NOPUB)+'</td>'+
+        '<td class="num">'+(pubRs?esc(fmt(f.reserva)):NOPUB)+'</td>'+
+        '<td class="num">'+(pubRs?esc(fmt(f.ahorro)):NOPUB)+'</td>'+
+        '<td>'+esc(f.vence||'—')+(f.porVencer?' <b>próxima a vencer</b>':'')+'</td></tr>';
+    });
+    tb+='<tr class="tot"><td colspan="2">Total '+num(rs.filas.length)+' VM</td>'+
+      '<td class="num">'+(pubRs?esc(fmt(rs.totalDemanda)):NOPUB)+'</td>'+
+      '<td class="num">'+(pubRs?esc(fmt(rs.totalReserva)):NOPUB)+'</td>'+
+      '<td class="num">'+(pubRs?esc(fmt(rs.totalAhorro)):NOPUB)+'</td><td></td></tr></tbody></table>';
+    $('#body-reservas').innerHTML=
+      tarjetas([
+        [pubRs?fmt(rs.totalAhorro):NOPUB,'/mes','','Ahorro mensual por reservas','Diferencia entre la tarifa por demanda anterior y el cargo de la reserva, según la propia factura.'],
+        [pubRs?fmt(rs.ahorroAnualizado):NOPUB,'/año','','Ahorro anualizado','El mensual por doce; la reserva se factura igual todos los meses de su término.'],
+      ])+
+      '<div class="panel" style="margin-top:16px"><div class="tbl">'+tb+'</div>'+
+      (rs.sinLineaEnEvolucion&&rs.sinLineaEnEvolucion.length
+        ? '<div class="note" style="margin-top:12px"><b>Reservas sin línea en el archivo de evolución.</b> '+esc(rs.sinLineaEnEvolucion.join(', '))+'. No se les puede calcular el ahorro contra la factura, así que quedan fuera de los totales.</div>'
+        : '')+
+      (rs.consumidoresNoLeidos?'<div class="note" style="margin-top:12px">'+num(rs.consumidoresNoLeidos)+' reservas no devolvieron su lista de consumidores; su cobertura puede estar incompleta.</div>':'')+
+      '</div>';
+  }
+
+  /* ---- cronología ---- */
+  var cr=D.cronologia;
+  if(!cr||!cr.hitos.length){
+    $('#body-cronologia').innerHTML=pendiente('La bitácora de la matriz de mejoras no registra hitos en este período.');
+    $('#sub-cronologia').textContent='';
+  } else {
+    $('#sub-cronologia').textContent='Hitos fechados de la bitácora de la matriz de mejoras. Solo se publican los cambios de avance y las fechas de remediación: las notas internas quedan fuera del informe.';
+    var ev='<div class="tl">';
+    cr.hitos.forEach(function(h){
+      ev+='<div class="ev"><div class="f">'+esc(h.fecha)+(h.codigo?' · '+esc(h.codigo):'')+'</div>'+
+        '<div class="q">'+esc(tituloHito(h))+'<div class="who">'+esc(h.rec)+'</div></div></div>';
+    });
+    ev+='</div>';
+    $('#body-cronologia').innerHTML=ev+
+      (cr.omitidos?'<div class="note" style="margin-top:14px">'+num(cr.omitidos)+' entradas de la bitácora quedaron fuera: son notas internas, registros de ejecución o cambios fuera del período. La línea de tiempo publica el avance comprometido y las fechas de remediación.</div>':'');
   }
 
   /* ---- roadmap ---- */
@@ -1886,6 +1949,16 @@ function ejesDeclarados(x){
   if(!x.reservasMedidas) av.push('Reservas: '+(x.reservasMotivo||'no se midieron.'));
   if(x.indeterminadas) av.push(num(x.indeterminadas)+' acciones tienen autoría indeterminada: se resolvieron antes de que el barrido registrara quién las cerró.');
   return av.length?'<div class="note" style="margin-top:14px"><b>Alcance de esta sección.</b> '+esc(av.join(' '))+'</div>':'';
+}
+/* Traduce el campo trackeado de la bitácora a lenguaje de informe. Los tres son los únicos que
+   CronologiaModelo.CamposPublicables deja pasar (completion_pct, remediation_start_date,
+   remediation_end_date); cualquier otro valor es un campo nuevo que la lista blanca del lado del
+   modelo todavía no traduce, así que se muestra tal cual en vez de fallar en silencio. */
+function tituloHito(h){
+  if(h.campo==='completion_pct') return 'Avance al '+(h.despues||'?')+'%'+(h.antes?' (venía de '+h.antes+'%)':'');
+  if(h.campo==='remediation_start_date') return 'Inicio de remediación comprometido para el '+(h.despues||'?');
+  if(h.campo==='remediation_end_date') return 'Cierre de remediación comprometido para el '+(h.despues||'?');
+  return h.campo;
 }
 
 /* ---- tablas interactivas ---- */

@@ -71,17 +71,24 @@ public sealed class ContratoEntreRenderizadoresTests
             "dibujarlos. Es la asimetría más grande del módulo y está abierta a propósito: la sección " +
             "necesita su propio interruptor de aprobación antes de poder viajar. Hasta entonces, el " +
             "consultor la revisa en la vista y el artefacto no la publica."),
-        ("ejecutado.reservas", Lado.React,
-            "Comparte tokens con fact.variacionConsumo.reservas (reservas, reservationId, " +
-            "consumidoresNoLeidos): la vista React ya los lee para el bloque de la entrega 2d, y el " +
-            "barrido por texto no distingue de qué padre viene cada token repetido (mismo límite de " +
-            "colisión que el docstring de esta clase declara para los nombres cortos). \"nota\" NO es " +
-            "uno de esos tokens compartidos, aunque el barrido la agrupe acá: en VariacionConsumo.tsx " +
-            "nace de un arreglo local `mecanismos` dentro de PanelAtribucion (líneas ~193-223), una " +
-            "etiqueta de presentación de los baldes de atribución sin relación con el modelo ni con " +
-            "PanelReservas -- coincidencia de nombre corto, no dato compartido. medido/motivo ya NO " +
-            "están acá: la Tarea 3 de la entrega 7 los volvió simétricos al leerlos también del lado " +
-            "del artefacto (ejecutado.medido, ejecutado.motivo, opex.medido, opex.motivo)."),
+        ("ejecutado.reservas.filas.reservationId", Lado.React,
+            "La ReservaActiva que originó la fila. Colisiona con \"reservationId\" bajo " +
+            "fact.variacionConsumo.reservas (AhorroPorRecurso/EstimadoPorReserva/DiscrepanciaCobertura, " +
+            "verificado en VariacionConsumo.tsx líneas 111 y 162: PanelReservas y la tabla de " +
+            "estimadas lo leen los dos); la tabla por VM de la Tarea 5 de esta entrega (sección " +
+            "Reservas) no muestra esta columna, solo vm/sku/demanda/reserva/ahorro/vence. \"reservas\" " +
+            "(la clave) y \"consumidoresNoLeidos\" ya no necesitan esta entrada -colisionaban por el " +
+            "mismo límite de nombres cortos que el docstring de esta clase declara- porque la Tarea 5 " +
+            "los volvió simétricos al leerlos también del lado del artefacto (ej.reservas, " +
+            "rs.consumidoresNoLeidos, verificado con `grep -c reservationId` sobre la plantilla: cero " +
+            "coincidencias). \"nota\" tiene su propia entrada más abajo: no es uno de esos tokens " +
+            "compartidos, aunque el barrido la agrupe con esta ruta."),
+        ("ejecutado.reservas.filas.nota", Lado.React,
+            "Falso positivo del barrido por texto: en VariacionConsumo.tsx \"nota\" nace de un arreglo " +
+            "local `mecanismos` dentro de PanelAtribucion (verificado en líneas 193 y 223: " +
+            "`mecanismos: {...; nota: string}[]` y `r.nota`), una etiqueta de presentación de los " +
+            "baldes de atribución sin relación con el modelo ni con la tabla de reservas por VM. La " +
+            "Tarea 5 de esta entrega no dibuja la nota de la reserva en esa tabla."),
         ("ejecutado", Lado.Html,
             "La tarjeta OPTIMIZACIÓN del resumen (Tarea 3 de la entrega 7, observación 1 de la reunión " +
             "del 2026-08-13) lee D.ejecutado directamente: es la primera vez que la capa de dibujo toca " +
@@ -105,9 +112,19 @@ public sealed class ContratoEntreRenderizadoresTests
         ("cronologia.hitos.fecha", Lado.Html,
             "Falso positivo del barrido por texto: \"ox.fecha\" (Tarea 3 de la entrega 7) colisiona con " +
             "\"hitos[].fecha\" porque los dos campos se llaman igual y el barrido no distingue de qué " +
-            "padre viene cada token repetido. La cronología en sí no se dibuja todavía (Tarea 5): ver " +
-            "la entrada de \"cronologia\" con motivo Ninguno, que sigue vigente para el resto de sus " +
-            "campos."),
+            "padre viene cada token repetido. Con la cronología ya dibujada (Tarea 5, ver la entrada de " +
+            "\"cronologia\" más abajo) el resultado es el mismo -Lado.Html-, así que la colisión ya no " +
+            "cambia nada, pero se deja declarada porque sigue siendo la explicación correcta de POR QUÉ " +
+            "el barrido la marca."),
+        ("cronologia", Lado.Html,
+            "La sección Cronología (Tarea 5 de la entrega 7) dibuja los hitos de la bitácora de la " +
+            "matriz de mejoras -fecha, código de la matriz, el título en prosa que tituloHito() arma " +
+            "desde el campo trackeado, antes/después y la recomendación asociada- y declara cuántos " +
+            "quedaron fuera de la lista blanca (omitidos). Es la primera vez que la capa de dibujo toca " +
+            "esta clave de nivel superior: verificado contra innovacion-CDC " +
+            "(src/components/informe-valor/informe, grep sin resultados para \"cronologia\"/\"hitos\") " +
+            "que la vista React todavía no tiene una sección de cronología. Se cierra cuando la Tarea 9 " +
+            "de esta entrega la dibuje ahí."),
 
         // ---- lo que no lee ninguno de los dos ----
         ("fact.variacionConsumo", Lado.Ninguno,
@@ -172,11 +189,6 @@ public sealed class ContratoEntreRenderizadoresTests
             "Qué ejes del registro se pudieron medir (barrido y reservas, con su motivo si faltan): la " +
             "sección titular (Tarea 4 de la entrega 7) los declara en la nota \"Alcance de esta " +
             "sección\" cuando alguno no se midió. La vista React no dibuja esta sección todavía."),
-        ("ejecutado.reservas", Lado.Ninguno,
-            "Los totales y columnas propias de la tabla de reservas contra la factura (demanda, " +
-            "reserva mensual, vencimiento, sku, vm, compartida): comparten padre con reservationId/" +
-            "consumidoresNoLeidos/nota (ver la entrada de Lado.React de arriba), pero ningún " +
-            "renderizador dibuja estas columnas todavía."),
         ("meta.conciliacion", Lado.Ninguno,
             "La discrepancia declarada entre la tabla de hechos y el archivo de evolución (Tarea 8 " +
             "de la entrega 6). Ningún renderizador la dibuja todavía: el modelo se calcula y archiva " +
@@ -209,12 +221,13 @@ public sealed class ContratoEntreRenderizadoresTests
             "renderizadores."),
         // "opex" ya no es una excepción de bloque entero (Tarea 3 de la entrega 7 dibuja la tarjeta
         // del resumen): lo que sigue sin lector es opex.estado (ver la entrada declarada arriba,
-        // junto a las de "opex" Lado.Html); el gráfico de la sección Advisor sigue pendiente de la
-        // Tarea 5.
-        ("cronologia", Lado.Ninguno,
-            "La línea de tiempo derivada de la bitácora de la matriz, ya filtrada por lista blanca de " +
-            "campos. La sección que la dibuja es la tarea 5 de esta entrega; se publica antes para que " +
-            "el recorte por campos quede probado sin depender del dibujo."),
+        // junto a las de "opex" Lado.Html); el gráfico de la sección Advisor lo agrega la Tarea 5 (ver
+        // la entrada de "cronologia" con motivo Html, arriba: "cronologia" ya no es una excepción de
+        // bloque entero tampoco).
+        ("cronologia.hitos.pilar", Lado.Ninguno,
+            "El pilar WAF del hallazgo asociado al hito. La línea de tiempo de la Tarea 5 agrupa por " +
+            "fecha, no por pilar, así que no lo dibuja; la vista React tampoco, porque ni siquiera " +
+            "tiene sección de cronología todavía (ver \"cronologia\" arriba)."),
     ];
 
     public enum Lado { Html, React, Ninguno }

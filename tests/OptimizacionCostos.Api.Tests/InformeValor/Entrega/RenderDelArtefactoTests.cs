@@ -473,6 +473,55 @@ public sealed class RenderDelArtefactoTests
     }
 
     // ================================================================================
+    // Reservas por VM, cronología y la evolución del pilar Opex (Tarea 5 de la entrega 7)
+    // ================================================================================
+
+    /// <summary>La tabla por VM: lo que costaba por demanda contra lo que factura la reserva.</summary>
+    [Fact]
+    public void La_seccion_de_reservas_dibuja_la_tabla_por_vm()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        var s = r.Nodo("body-reservas").Todo;
+        Assert.Contains("Por demanda", s, StringComparison.Ordinal);
+        Assert.Contains("Reserva facturada", s, StringComparison.Ordinal);
+    }
+
+    /// <summary>Una reserva de la foto sin línea en el archivo de evolución se declara, no se
+    /// inventa un cargo ni se omite.</summary>
+    [Fact]
+    public void Las_reservas_sin_linea_en_evolucion_se_declaran()
+    {
+        var r = RenderDeArtefacto.Correr(ConReservaSinLinea(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        Assert.Contains("sin línea", r.Nodo("body-reservas").Todo, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>La cronología dibuja los hitos y, si la lista blanca dejó entradas afuera, lo dice:
+    /// una línea de tiempo corta no puede leerse como "no pasó nada".</summary>
+    [Fact]
+    public void La_cronologia_dibuja_los_hitos_y_declara_los_omitidos()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        var s = r.Nodo("body-cronologia").Todo;
+        Assert.Contains("avance", s, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>El score del pilar de costos en el tiempo, dentro de la sección Advisor.</summary>
+    [Fact]
+    public void La_seccion_advisor_dibuja_la_evolucion_del_pilar_de_costos()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        Assert.Contains("c-opex", r.Nodo("body-advisor").Todo, StringComparison.Ordinal);
+    }
+
+    // ================================================================================
     // Escenarios
     // ================================================================================
 
@@ -660,6 +709,24 @@ public sealed class RenderDelArtefactoTests
                 {
                     BarridoMedido = false,
                     BarridoMotivo = "El barrido no tiene permisos para leerse en esta corrida.",
+                },
+            },
+        };
+    }
+
+    /// <summary>Una reserva de la foto (vm-2) que la evolución no trae en ninguna línea de
+    /// facturación: el modelo la deja fuera de los totales y la declara en
+    /// <c>sinLineaEnEvolucion</c> en vez de inventarle un cargo o callarla.</summary>
+    private static ModeloInformeValor ConReservaSinLinea()
+    {
+        var modelo = ModeloDePrueba.Crear();
+        return modelo with
+        {
+            Ejecutado = modelo.Ejecutado! with
+            {
+                Reservas = modelo.Ejecutado!.Reservas with
+                {
+                    SinLineaEnEvolucion = ["vm-2"],
                 },
             },
         };
