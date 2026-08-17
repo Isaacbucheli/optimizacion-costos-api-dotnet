@@ -1,6 +1,6 @@
 namespace OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 
-/// <summary>Las categorías del gráfico apilado del acumulado (las cinco de la PPT de MERCANTIL
+/// <summary>Las categorías del gráfico apilado del acumulado (las cinco de la PPT de referencia
 /// más el residual explícito de D1). Precedencia de <see cref="Resolver"/>: una reserva SIEMPRE
 /// es "Reservas"; un hallazgo del barrido mapea por su check; si no hay mapeo, cae a la
 /// categoría BITCOST del recurso; y lo que nada clasifica va al residual, visible, nunca

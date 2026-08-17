@@ -125,7 +125,7 @@ public sealed class ContratoEntreRenderizadoresTests
             "dibuja esta curva mensual. Pendiente de un renderizador que la grafique."),
         ("ejecutado.catAcum", Lado.Html,
             "El apilado por categoría del acumulado ejecutado: el segundo gráfico de la sección " +
-            "titular (Tarea 4 de la entrega 7, la PPT de MERCANTIL). La Tarea 9 de esta entrega (la " +
+            "titular (Tarea 4 de la entrega 7, la PPT de referencia). La Tarea 9 de esta entrega (la " +
             "vista React) solo agregó el acumulado mes a mes y el ranking por oportunidad a " +
             "SeccionEjecutado.tsx -no este apilado por categoría-: verificado con grep para \"catAcum\" " +
             "en ese archivo, sin resultados."),
