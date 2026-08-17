@@ -116,40 +116,62 @@ public sealed class ContratoEntreRenderizadoresTests
             "antes y después, la utilización de cada reserva) y que ninguna de las dos vistas dibuja. " +
             "Se revisa cuando la sección tenga su interruptor y un renderizador que la publique."),
         // "ejecutado" ya no es una excepción de bloque entero (Tarea 3 de la entrega 7 empieza a
-        // dibujarlo): lo que sigue sin dibujar ningún renderizador son estos campos puntuales, la
-        // composición y las series del acumulado, que son la sección TITULAR (Tarea 9), no la
-        // tarjeta del resumen.
-        ("ejecutado.filas", Lado.Ninguno,
-            "Las columnas de detalle de cada acción ejecutada (fuente, oportunidad, grupo de recursos, " +
-            "mes de ejecución, fuente del monto, motivo sin monto, autoría): la Tarea 3 dibuja el " +
-            "acumulado (pctGasto) y el conteo (filas.length), no la tabla fila por fila. cat/sub/rec/" +
-            "fin/monto ya son simétricos por colisión de token con otros bloques."),
-        ("ejecutado.sinMonto", Lado.Ninguno,
-            "El conteo de filas del acumulado sin monto atribuible: ningún renderizador lo dibuja " +
+        // dibujarlo): la Tarea 4 (la sección TITULAR: los tres gráficos de la PPT de MERCANTIL más su
+        // tabla) dibuja casi todos los campos puntuales del acumulado que quedaban pendientes -- de
+        // Lado.Ninguno pasan a Lado.Html. Lo único que sigue sin lector de los dos lados es la SERIE
+        // de la proyección mensual (ejecutado.proyeccion, ver más abajo): la sección titular publica
+        // el total proyectado a fin de año (proyeccionFin) pero no dibuja esa curva mes a mes.
+        ("ejecutado.filas", Lado.Html,
+            "Las columnas de detalle de cada acción ejecutada que SÍ dibuja la tabla de Acciones " +
+            "ejecutadas de la sección titular (Tarea 4 de la entrega 7): oportunidad, mes de " +
+            "ejecución, fuente del monto y motivo sin monto. cat/rec/monto ya eran simétricos por " +
+            "colisión de token con otros bloques; la vista React no dibuja esta sección todavía. El " +
+            "grupo de recursos (rg) y la autoría quedan fuera de esa tabla: ver sus entradas propias " +
+            "más abajo."),
+        ("ejecutado.filas.rg", Lado.Ninguno,
+            "El grupo de recursos de cada acción ejecutada: la tabla de la sección titular (Tarea 4 de " +
+            "la entrega 7) identifica el recurso por su nombre (rec), no por su grupo. Ninguno de los " +
+            "dos renderizadores lo publica."),
+        ("ejecutado.filas.autoria", Lado.Ninguno,
+            "Si la acción quedó con autoría declarada, automática o indeterminada: la tabla de la " +
+            "sección titular (Tarea 4 de la entrega 7) no dibuja esta columna. El conteo de " +
+            "indeterminadas sí se declara, pero por ejecutado.ejes.indeterminadas, no por esta " +
+            "columna fila por fila."),
+        ("ejecutado.sinMonto", Lado.Html,
+            "El conteo de filas del acumulado sin monto atribuible: la sección titular (Tarea 4 de la " +
+            "entrega 7) lo publica en la bajada de la sección. La vista React no dibuja esta sección " +
             "todavía."),
-        ("ejecutado.tasaVigente", Lado.Ninguno,
-            "La tasa vigente de cierre, en dólares: la tarjeta del resumen (Tarea 3) publica el " +
-            "acumulado como porcentaje del gasto (pctGasto), no esta cifra."),
-        ("ejecutado.facturado", Lado.Ninguno,
-            "La composición declarada del acumulado entre monto facturado y estimado: se dibuja en la " +
-            "sección titular del acumulado (Tarea 9 de esta entrega), no en la tarjeta del resumen."),
-        ("ejecutado.estimado", Lado.Ninguno,
-            "Ver ejecutado.facturado: misma composición declarada del acumulado, mismo gráfico " +
-            "pendiente de la Tarea 9."),
+        ("ejecutado.tasaVigente", Lado.Html,
+            "La tasa vigente de cierre, en dólares: la tarjeta \"Tasa vigente al cierre\" de la sección " +
+            "titular (Tarea 4 de la entrega 7) la publica directamente. La vista React no dibuja esta " +
+            "sección todavía."),
+        ("ejecutado.facturado", Lado.Html,
+            "La composición declarada del acumulado entre monto facturado y estimado: la sección " +
+            "titular del acumulado (Tarea 4 de la entrega 7) la publica en la tarjeta de Acciones " +
+            "ejecutadas. La vista React no dibuja esta sección todavía."),
+        ("ejecutado.estimado", Lado.Html,
+            "Ver ejecutado.facturado: misma composición declarada del acumulado, misma tarjeta de la " +
+            "sección titular (Tarea 4 de la entrega 7)."),
         ("ejecutado.proyeccion", Lado.Ninguno,
-            "La proyección mensual del acumulado a fin de año: se dibuja en la sección titular (Tarea " +
-            "9), no en la tarjeta del resumen."),
-        ("ejecutado.proyeccionFin", Lado.Ninguno,
-            "Ver ejecutado.proyeccion: el mismo gráfico de proyección, pendiente de la Tarea 9."),
-        ("ejecutado.catAcum", Lado.Ninguno,
-            "El apilado por categoría del acumulado ejecutado: gráfico de la sección titular (Tarea 9 " +
-            "de esta entrega), no de la tarjeta del resumen."),
-        ("ejecutado.porOportunidad", Lado.Ninguno,
-            "El ranking por oportunidad del acumulado ejecutado: gráfico de la sección titular (Tarea " +
-            "9 de esta entrega), no de la tarjeta del resumen."),
-        ("ejecutado.ejes", Lado.Ninguno,
-            "Qué ejes del registro se pudieron medir (barrido y reservas, con su motivo si faltan): " +
-            "ningún renderizador declara todavía por qué una fila quedó sin monto."),
+            "La proyección mensual del acumulado a fin de año, mes a mes: la sección titular (Tarea 4 " +
+            "de la entrega 7) publica el TOTAL proyectado (proyeccionFin) en una tarjeta, pero no " +
+            "dibuja esta curva mensual. Pendiente de un renderizador que la grafique."),
+        ("ejecutado.proyeccionFin", Lado.Html,
+            "El total del acumulado proyectado a fin de año: la tarjeta \"Proyectado a fin de año\" de " +
+            "la sección titular (Tarea 4 de la entrega 7) la publica. Ver ejecutado.proyeccion para la " +
+            "curva mensual, que sigue sin dibujarse. La vista React no dibuja esta sección todavía."),
+        ("ejecutado.catAcum", Lado.Html,
+            "El apilado por categoría del acumulado ejecutado: el segundo gráfico de la sección " +
+            "titular (Tarea 4 de la entrega 7, la PPT de MERCANTIL). La vista React no dibuja esta " +
+            "sección todavía."),
+        ("ejecutado.porOportunidad", Lado.Html,
+            "El ranking por oportunidad del acumulado ejecutado: el tercer gráfico de la sección " +
+            "titular (Tarea 4 de la entrega 7, la PPT de MERCANTIL). La vista React no dibuja esta " +
+            "sección todavía."),
+        ("ejecutado.ejes", Lado.Html,
+            "Qué ejes del registro se pudieron medir (barrido y reservas, con su motivo si faltan): la " +
+            "sección titular (Tarea 4 de la entrega 7) los declara en la nota \"Alcance de esta " +
+            "sección\" cuando alguno no se midió. La vista React no dibuja esta sección todavía."),
         ("ejecutado.reservas", Lado.Ninguno,
             "Los totales y columnas propias de la tabla de reservas contra la factura (demanda, " +
             "reserva mensual, vencimiento, sku, vm, compartida): comparten padre con reservationId/" +

@@ -420,6 +420,59 @@ public sealed class RenderDelArtefactoTests
     }
 
     // ================================================================================
+    // La sección titular: el acumulado de lo ejecutado (Tarea 4 de la entrega 7)
+    // ================================================================================
+
+    /// <summary>La sección titular dibuja los tres gráficos de la PPT y su tabla.</summary>
+    [Fact]
+    public void La_seccion_de_lo_ejecutado_dibuja_sus_cuatro_paneles()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        var s = r.Nodo("body-ejecutado").Todo;
+        Assert.Contains("c-ej-acum", s, StringComparison.Ordinal);
+        Assert.Contains("c-ej-cat", s, StringComparison.Ordinal);
+        Assert.Contains("c-ej-opor", s, StringComparison.Ordinal);
+        Assert.Contains("Acciones ejecutadas", s, StringComparison.Ordinal);
+    }
+
+    /// <summary>Sin el bloque aprobado, la sección conserva su relato y sus conteos pero cada monto
+    /// dice "No publicado": un bloque apagado no es un cero (F1).</summary>
+    [Fact]
+    public void Sin_el_bloque_aprobado_la_seccion_no_publica_montos()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Cliente, []);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        var s = r.Nodo("body-ejecutado").Todo;
+        Assert.Contains("No publicado", s, StringComparison.Ordinal);
+        Assert.DoesNotContain("$0.00", s, StringComparison.Ordinal);
+    }
+
+    /// <summary>Con el registro no medido, la sección declara el motivo del eje en vez de dibujar
+    /// una serie de ceros bajo un título que afirma que hubo ahorro (D9).</summary>
+    [Fact]
+    public void Sin_registro_medido_la_seccion_declara_el_motivo()
+    {
+        var r = RenderDeArtefacto.Correr(SinEjecutadoMedido(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        Assert.Contains("Pendiente de insumo", r.Nodo("body-ejecutado").Todo, StringComparison.Ordinal);
+    }
+
+    /// <summary>Los ejes que no se midieron se declaran aunque la sección sí tenga datos: sin
+    /// permisos del barrido, el informe lo dice en vez de contar solo lo que vio.</summary>
+    [Fact]
+    public void El_eje_del_barrido_sin_permisos_queda_declarado_en_la_seccion()
+    {
+        var r = RenderDeArtefacto.Correr(SinPermisoDeBarrido(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+        Assert.Contains("barrido", r.Nodo("body-ejecutado").Todo, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ================================================================================
     // Escenarios
     // ================================================================================
 
@@ -588,6 +641,26 @@ public sealed class RenderDelArtefactoTests
             Ejecutado = modelo.Ejecutado! with
             {
                 Medido = false, Motivo = "El barrido no se pudo leer en esta corrida.",
+            },
+        };
+    }
+
+    /// <summary>El registro SÍ se pudo medir en conjunto (hay filas, serie, total), pero el eje del
+    /// barrido específicamente no tuvo permisos para leerse esta corrida: la sección titular tiene
+    /// que declarar ese hueco en vez de contar solo lo que sí vio, aunque el resto de la sección
+    /// tenga datos completos.</summary>
+    private static ModeloInformeValor SinPermisoDeBarrido()
+    {
+        var modelo = ModeloDePrueba.Crear();
+        return modelo with
+        {
+            Ejecutado = modelo.Ejecutado! with
+            {
+                Ejes = modelo.Ejecutado!.Ejes with
+                {
+                    BarridoMedido = false,
+                    BarridoMotivo = "El barrido no tiene permisos para leerse en esta corrida.",
+                },
             },
         };
     }
