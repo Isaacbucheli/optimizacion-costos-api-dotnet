@@ -7,7 +7,7 @@ namespace OptimizacionCostos.Api.Tests.InformeValor.Calculo;
 /// <summary>
 /// Tarea 5 del plan de la entrega 6: el acumulado de lo ejecutado, titular del informe. Pura y sin
 /// reloj (ver <c>SinRelojDelSistemaTests</c>, que escanea <c>Calculo/</c> completo). El fixture
-/// central reconstruye la PPT de MERCANTIL al centavo — ver el comentario de
+/// central reconstruye la PPT de referencia al centavo — ver el comentario de
 /// <see cref="AcumuladoCalculador"/>.
 /// </summary>
 public sealed class AcumuladoCalculadorTests
@@ -48,13 +48,14 @@ public sealed class AcumuladoCalculadorTests
             DateOnly.ParseExact(corte, "yyyy-MM-dd", CultureInfo.InvariantCulture),
             null);
 
-    // ── La PPT de MERCANTIL ──
+    // ── La PPT de referencia ──
 
-    /// <summary>El registro reconstruido de la PPT de MERCANTIL, verificado al centavo contra sus
-    /// gráficos embebidos (docs/2026-08-13-analisis-ppt-mercantil-informe-valor.md). La calculadora
-    /// tiene que reproducir la serie acumulada, la tasa de junio y la proyección corregida.</summary>
+    /// <summary>El registro reconstruido de la PPT de referencia, verificado al centavo contra los
+    /// gráficos embebidos en ella (el análisis vive en los docs internos del proyecto, 2026-08-13).
+    /// La calculadora tiene que reproducir la serie acumulada, la tasa de junio y la proyección
+    /// corregida. Los montos son reales pero van sin cliente: acá son solo la serie.</summary>
     [Fact]
-    public void La_ppt_de_mercantil_se_reproduce_al_centavo()
+    public void La_ppt_de_referencia_se_reproduce_al_centavo()
     {
         var filas = new List<AccionEjecutada>
         {

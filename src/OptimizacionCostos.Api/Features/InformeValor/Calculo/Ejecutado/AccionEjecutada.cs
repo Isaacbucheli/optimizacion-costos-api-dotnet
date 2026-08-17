@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 
-/// <summary>Una acción de optimización ejecutada: la unidad de la PPT de MERCANTIL. El monto
+/// <summary>Una acción de optimización ejecutada: la unidad de la PPT de referencia. El monto
 /// lleva su fuente rotulada (decisión 2026-08-13): "facturado" = el delta real del recurso en
 /// BITCOST; "estimado" = estimated_monthly_savings del barrido; null = sin monto, con motivo,
 /// fuera de la aritmética pero visible en la tabla.

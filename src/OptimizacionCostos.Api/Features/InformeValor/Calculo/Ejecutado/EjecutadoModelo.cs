@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 namespace OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 
 /// <summary>El titular del informe (decisión 2026-08-13): el acumulado de lo ejecutado, el
-/// modelo de la PPT de MERCANTIL. Aritmética verificada contra la PPT al centavo:
+/// modelo de la PPT de referencia. Aritmética verificada contra la PPT al centavo:
 /// tasaVigente(m) = suma de filas con monto ejecutadas hasta m y aún vigentes (una reserva
 /// deja de sumar después de su MesFin); acumulado(m) = acumulado(m-1) + tasaVigente(m).
 /// La ventana es la del informe: las series cubren los meses del rango; una acción anterior

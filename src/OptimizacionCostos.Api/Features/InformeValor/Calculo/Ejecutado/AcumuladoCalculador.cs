@@ -4,8 +4,8 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 
 /// <summary>
 /// Tarea 5 del plan de la entrega 6: el acumulado de lo ejecutado, titular del informe (decisión
-/// 2026-08-13). Reproduce al centavo la serie de la PPT de MERCANTIL (ver
-/// <c>docs/2026-08-13-analisis-ppt-mercantil-informe-valor.md</c> y el fixture homónimo en
+/// 2026-08-13). Reproduce al centavo la serie de la PPT que le sirve de referencia al módulo (su
+/// análisis está en los docs internos del proyecto, 2026-08-13; el fixture de paridad, en
 /// <c>AcumuladoCalculadorTests</c>). Pura y sin reloj (ver <c>SinRelojDelSistemaTests</c>, que
 /// escanea <c>Calculo/</c> completo): el corte llega en <see cref="ContextoInformeValor.Corte"/>.
 ///
@@ -15,7 +15,7 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 /// <see cref="AccionEjecutada.MesFin"/>, o con <c>m &lt;= MesFin</c>, INCLUSIVE: una reserva deja
 /// de sumar recién el mes siguiente a su vencimiento). El acumulado de la PPT vuelve a sumar esa
 /// tasa vigente mes a mes (<c>acumulado(m) = acumulado(m-1) + tasaVigente(m)</c>): no es "tasa ×
-/// meses restantes", es la doble acumulación que efectivamente dibuja la diapositiva 2 de MERCANTIL
+/// meses restantes", es la doble acumulación que efectivamente dibuja la diapositiva 2 de esa PPT
 /// — reproducirla tal cual es el contrato de esta tarea, no corregirla.</para>
 ///
 /// <para><b>La ventana es la del informe, no la historia de cada acción.</b> Una acción ejecutada

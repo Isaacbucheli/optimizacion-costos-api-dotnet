@@ -6,7 +6,7 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 
 /// <summary>
 /// Tarea 4 del plan de la entrega 6: las filas del registro de lo ejecutado (la unidad de la PPT
-/// de MERCANTIL), a partir de tres fuentes independientes — el barrido de optimización (Tarea
+/// de referencia), a partir de tres fuentes independientes — el barrido de optimización (Tarea
 /// previa de la entrega 5, <see cref="BarridoResueltoRecolector"/>), la matriz WAF
 /// (<see cref="HallazgoResueltoRecolector"/>) y las reservas activas (Tareas 1 y 3 de esta
 /// entrega, <see cref="FotoReservas"/>/<see cref="ReservasFacturadasModelo"/>). Pura, sin IO ni
