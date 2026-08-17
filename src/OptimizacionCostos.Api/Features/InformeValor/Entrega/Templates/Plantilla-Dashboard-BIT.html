@@ -286,6 +286,11 @@ var GREEN='#A3C243',GREEND='#7d9a2e',GRAY='#606161',LIGHT='#c9cac6',PALE='#d5e2a
    ultimo momento: aunque alguna guarda de bloque se olvide, ningun monto ausente puede salir
    impreso como "$0.00". */
 var NOPUB='No publicado';
+/* NOPUB gris, para celdas de tabla que alternan con un motivo de "hueco de medición" (también gris,
+   inline, ver tablaEjecutado): sin este estilo compartido, una decisión editorial de no publicar
+   (NOPUB, texto plano) se leía distinta a un hueco de medición (motivo, gris) en la misma columna,
+   como si una fuera un hecho más firme que la otra. Las dos son igual de "no hay cifra que mostrar". */
+var NOPUB_TD='<span style="color:#8b8b8b">'+NOPUB+'</span>';
 function fmt(n,d){ if(n===null||n===undefined||n==='') return NOPUB;
   return '$'+(+n).toLocaleString('en-US',{minimumFractionDigits:d===undefined?2:d,maximumFractionDigits:d===undefined?2:d});}
 /* Porcentaje sobre dos montos: si a cualquiera de los dos le falta el valor, no hay porcentaje
@@ -1230,7 +1235,7 @@ function render(){
       : ej.pctGasto===null||ej.pctGasto===undefined
         ? ['Sin medición','','na','El acumulado no se puede comparar contra el gasto del período porque el gasto no se midió.','OPTIMIZACIÓN']
         : ['<span class="cnt" data-v="'+ej.pctGasto+'" data-d="1">0</span>','%','',
-           'El ahorro acumulado del período equivale al '+ej.pctGasto.toFixed(1)+'% del gasto total del mismo período. Viene de '+plu(ej.filas.length,'acción de optimización ejecutada','acciones de optimización ejecutadas')+'; el detalle en dinero va en la sección Ahorro ejecutado.','OPTIMIZACIÓN']);
+           'El ahorro acumulado del período equivale al '+ej.pctGasto.toFixed(1)+'% del gasto total del mismo período. Viene de '+plu(ej.filas.length,'acción de optimización ejecutada','acciones de optimización ejecutadas')+'; el detalle en dinero va en la sección Ejecutado.','OPTIMIZACIÓN']);
 
   /* 2. Opex — score del pilar de costos, con su evolución al lado. */
   HK.push(!ox||!ox.medido
@@ -1363,9 +1368,12 @@ function render(){
      hechos y el archivo de evolución (meta.conciliacion, Tarea 8 de la entrega 6). Sus filas
      llevan los mismos totales mensuales que protegen los bloques GastoTotal/SerieMensual, así que
      el exportador la anula entera sin los dos aprobados (InformeValorHtmlExporter.Recortar) y acá
-     se dibuja el aviso de "no publicado" en vez del panel. */
+     se dibuja el aviso de "no publicado" en vez del panel. M3 de la revisión final de la entrega 7:
+     este era el único panel monetario nuevo que dependía SOLO de que el exportador anulara el nodo
+     -- todos los demás bloques económicos, además, se protegen ellos mismos acá con pub(). La
+     guarda de abajo es esa misma red de seguridad, no una segunda fuente de verdad. */
   var cc=M.conciliacion;
-  if(cc){
+  if(cc&&pub('gastoTotal')&&pub('serieMensual')){
     $('#body-cobertura').innerHTML+=
       '<div class="panel" style="margin-top:16px"><h3>Los dos archivos de facturación</h3>'+
       (cc.coincide
@@ -1565,7 +1573,12 @@ function render(){
            '<td style="font-size:13.5px">'+esc(h.r)+'</td><td style="font-size:13px;white-space:nowrap">'+esc(h.e)+'</td></tr>';
         }).join('')+'</tbody></table></div></div>'+
       (rb.owner||rb.uaa?'<div class="bad-box"><b>Prioridad uno: '+plu(rb.owner+rb.uaa,'camino hacia el control total del tenant.','caminos hacia el control total del tenant.')+'</b> '+
-        plu(rb.uaa,'asignación de User Access Administrator permite concederse','asignaciones de User Access Administrator permiten concederse')+' a sí mismo cualquier otro permiso, lo que anula el efecto de todo control de mínimo privilegio aplicado aguas abajo. '+(rb.owner===1?'Sumada a la ':'Sumadas a las ')+plu(rb.owner,'asignación Owner activa','asignaciones Owner activas')+', la remediación no requiere compra ni ventana de indisponibilidad.</div>':'');
+        plu(rb.uaa,'asignación de User Access Administrator permite concederse','asignaciones de User Access Administrator permiten concederse')+' a sí mismo cualquier otro permiso, lo que anula el efecto de todo control de mínimo privilegio aplicado aguas abajo. '+
+        // M5 de la revisión final de la entrega 7: plu() siempre antepone el número ("1 asignación"),
+        // así que con exactamente una no se puede anteponer TAMBIÉN el artículo singular ("la 1
+        // asignación" no existe en español) -- con owner===1 se dice sin numeral.
+        (rb.owner===1?'Sumada a la asignación Owner activa':'Sumadas a las '+plu(rb.owner,'asignación Owner activa','asignaciones Owner activas'))+
+        ', la remediación no requiere compra ni ventana de indisponibilidad.</div>':'');
     barras($('#c-amb'),rb.subs.map(function(a){
       return {k:corta(a[0],24),v:a[1]+a[2],lbl:(a[1]+a[2])+' asignaciones',
         seg:[{n:'Usuarios',v:a[1],c:GRAY},{n:'Service principals',v:a[2],c:GREEN}]};
@@ -1859,25 +1872,48 @@ function render(){
 
   /* ---- reservas ---- */
   var rs=ej?ej.reservas:null;
-  if(!rs||!rs.medido){
+  /* M8 de la revisión final de la entrega 7: sin ejecutado (ej null) la causa es que no hay bloque
+     titular que leer, no que las reservas puntualmente fallaron -- son dos hechos distintos, mismo
+     criterio que ya separa React (SeccionEjecutado corta con su propio motivo antes de llegar a
+     SeccionReservas). Confundirlos hacía que un cliente sin ningún insumo de ejecutado leyera "No se
+     pudieron leer las reservas del cliente", que apunta al eje equivocado. */
+  if(!ej){
+    $('#body-reservas').innerHTML=pendiente('No hay registro de acciones ejecutadas para este período: sin ese bloque no hay reservas contra la factura que mostrar.');
+    $('#sub-reservas').textContent='';
+  } else if(!rs||!rs.medido){
     $('#body-reservas').innerHTML=pendiente(rs&&rs.motivo?rs.motivo:'No se pudieron leer las reservas del cliente.');
     $('#sub-reservas').textContent='';
   } else {
     var pubRs=pub('reservasFacturadas');
     $('#sub-reservas').textContent=plu(rs.filas.length,'máquina cubierta','máquinas cubiertas')+' por instancias reservadas. Por cada una: lo que costaba a tarifa por demanda antes de la compra contra lo que factura la reserva cada mes.';
     var tb='<table><thead><tr><th>VM</th><th>SKU</th><th class="num">Por demanda</th><th class="num">Reserva facturada</th><th class="num">Ahorro</th><th>Vence</th></tr></thead><tbody>';
+    /* Mismo patrón bloque-antes-que-motivo de tablaEjecutado: primero el bloque (decisión editorial
+       de no publicar), después el hueco de medición. f.demanda/f.ahorro llegan null cuando este
+       recurso no tiene un mes de facturación por demanda anterior al inicio de su reserva (nada
+       contra qué comparar) -- no es que el bloque se haya apagado. Confundir las dos cosas bajo el
+       mismo "No publicado" le hace leer al cliente una decisión editorial donde solo hay un hueco de
+       dato (Global Constraint: las dos no son intercambiables). f.reserva (ReservaMes) nunca es
+       null -- siempre hay un cargo de reserva facturado -- así que esa columna no necesita la rama
+       de motivo. */
     rs.filas.forEach(function(f){
+      var celdaDemanda = !pubRs ? NOPUB_TD
+        : (f.demanda==null ? '<span style="color:#8b8b8b">sin mes base en la facturación anterior al inicio de la reserva</span>' : esc(fmt(f.demanda)));
+      var celdaAhorro = !pubRs ? NOPUB_TD
+        : (f.ahorro==null ? '<span style="color:#8b8b8b">sin el mes base no hay contra qué medir el ahorro</span>' : esc(fmt(f.ahorro)));
       tb+='<tr'+(f.porVencer?' class="warn"':'')+'><td>'+esc(f.vm)+(f.compartida?' <span class="tags"><span>compartida</span></span>':'')+'</td>'+
         '<td>'+esc(f.sku||'—')+'</td>'+
-        '<td class="num">'+(pubRs?esc(fmt(f.demanda)):NOPUB)+'</td>'+
-        '<td class="num">'+(pubRs?esc(fmt(f.reserva)):NOPUB)+'</td>'+
-        '<td class="num">'+(pubRs?esc(fmt(f.ahorro)):NOPUB)+'</td>'+
+        '<td class="num">'+celdaDemanda+'</td>'+
+        '<td class="num">'+(pubRs?esc(fmt(f.reserva)):NOPUB_TD)+'</td>'+
+        '<td class="num">'+celdaAhorro+'</td>'+
         '<td>'+esc(f.vence||'—')+(f.porVencer?' <b>próxima a vencer</b>':'')+'</td></tr>';
     });
+    /* Los totales SÍ pueden ir en cero-real cuando ninguna fila tiene ahorro calculable (Regla 6 de
+       ReservasFacturadasCalculador: solo suma filas con AhorroMes no nulo) -- son decimal, nunca
+       decimal?, así que nunca llegan null y no necesitan la rama de motivo. */
     tb+='<tr class="tot"><td colspan="2">Total '+num(rs.filas.length)+' VM</td>'+
-      '<td class="num">'+(pubRs?esc(fmt(rs.totalDemanda)):NOPUB)+'</td>'+
-      '<td class="num">'+(pubRs?esc(fmt(rs.totalReserva)):NOPUB)+'</td>'+
-      '<td class="num">'+(pubRs?esc(fmt(rs.totalAhorro)):NOPUB)+'</td><td></td></tr></tbody></table>';
+      '<td class="num">'+(pubRs?esc(fmt(rs.totalDemanda)):NOPUB_TD)+'</td>'+
+      '<td class="num">'+(pubRs?esc(fmt(rs.totalReserva)):NOPUB_TD)+'</td>'+
+      '<td class="num">'+(pubRs?esc(fmt(rs.totalAhorro)):NOPUB_TD)+'</td><td></td></tr></tbody></table>';
     $('#body-reservas').innerHTML=
       tarjetas([
         [pubRs?fmt(rs.totalAhorro):NOPUB,'/mes','','Ahorro mensual por reservas','Diferencia entre la tarifa por demanda anterior y el cargo de la reserva, según la propia factura.'],
@@ -1893,19 +1929,31 @@ function render(){
 
   /* ---- cronología ---- */
   var cr=D.cronologia;
-  if(!cr||!cr.hitos.length){
+  /* I2 de la revisión final de la entrega 7: un período con hitos.length===0 no es lo mismo que un
+     período sin bitácora. omitidos existe justo para el caso en que TODO lo que llegó era ruido
+     (internal_notes, execution_log, cambios fuera de rango): "no registra hitos" sin más le afirma
+     al cliente que no pasó nada, cuando en realidad la bitácora sí tenía entradas y el contador de
+     omitidos -- que ya existe para prevenir exactamente esto -- nunca llegaba a dibujarse. */
+  if(!cr||(!cr.hitos.length&&!cr.omitidos)){
     $('#body-cronologia').innerHTML=pendiente('La bitácora de la matriz de mejoras no registra hitos en este período.');
     $('#sub-cronologia').textContent='';
   } else {
-    $('#sub-cronologia').textContent='Hitos fechados de la bitácora de la matriz de mejoras. Solo se publican los cambios de avance y las fechas de remediación: las notas internas quedan fuera del informe.';
-    var ev='<div class="tl">';
-    cr.hitos.forEach(function(h){
-      ev+='<div class="ev"><div class="f">'+esc(h.fecha)+(h.codigo?' · '+esc(h.codigo):'')+'</div>'+
-        '<div class="q">'+esc(tituloHito(h))+'<div class="who">'+esc(h.rec)+'</div></div></div>';
-    });
-    ev+='</div>';
-    $('#body-cronologia').innerHTML=ev+
-      (cr.omitidos?'<div class="note" style="margin-top:14px">'+plu(cr.omitidos,'entrada de la bitácora quedó fuera','entradas de la bitácora quedaron fuera')+': son notas internas, registros de ejecución o cambios fuera del período. La línea de tiempo publica el avance comprometido y las fechas de remediación.</div>':'');
+    var omitidosNota=cr.omitidos
+      ?'<div class="note" style="margin-top:14px">'+plu(cr.omitidos,'entrada de la bitácora quedó fuera','entradas de la bitácora quedaron fuera')+': son notas internas, registros de ejecución o cambios fuera del período. La línea de tiempo publica el avance comprometido y las fechas de remediación.</div>'
+      :'';
+    if(!cr.hitos.length){
+      $('#sub-cronologia').textContent='';
+      $('#body-cronologia').innerHTML=pendiente('La bitácora de la matriz de mejoras no registra hitos publicables en este período.')+omitidosNota;
+    } else {
+      $('#sub-cronologia').textContent='Hitos fechados de la bitácora de la matriz de mejoras. Solo se publican los cambios de avance y las fechas de remediación: las notas internas quedan fuera del informe.';
+      var ev='<div class="tl">';
+      cr.hitos.forEach(function(h){
+        ev+='<div class="ev"><div class="f">'+esc(h.fecha)+(h.codigo?' · '+esc(h.codigo):'')+'</div>'+
+          '<div class="q">'+esc(tituloHito(h))+'<div class="who">'+esc(h.rec)+'</div></div></div>';
+      });
+      ev+='</div>';
+      $('#body-cronologia').innerHTML=ev+omitidosNota;
+    }
   }
 
   /* ---- roadmap ---- */
@@ -2057,7 +2105,7 @@ function tablaEjecutado(ej,pubEj){
   var h='<table><thead><tr><th>Acción</th><th>Categoría</th><th>Recurso</th><th>Mes</th><th class="num">Ahorro mensual</th><th>Fuente</th></tr></thead><tbody>';
   ej.filas.forEach(function(f){
     var monto = !pubEj
-      ? NOPUB
+      ? NOPUB_TD
       : (f.monto===null||f.monto===undefined
           ? '<span style="color:#8b8b8b">'+esc(f.sinMonto||'sin monto medible')+'</span>'
           : esc(fmt(f.monto)));

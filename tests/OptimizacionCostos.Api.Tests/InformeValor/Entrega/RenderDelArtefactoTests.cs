@@ -679,9 +679,33 @@ public sealed class RenderDelArtefactoTests
         var s = r.Nodo("body-reservas").Todo;
         Assert.Contains("No publicado", s, StringComparison.Ordinal);
         // 34005/34006/34007/34001/34002/34003/34004 son los montos de ModeloDePrueba.Crear(): no
-        // pueden aparecer ni por fila ni por el total.
-        Assert.DoesNotContain("34005", s, StringComparison.Ordinal);
-        Assert.DoesNotContain("34003", s, StringComparison.Ordinal);
+        // pueden aparecer ni por fila ni por el total. fmt() agrupa de a miles, así que la cifra
+        // completa (con su coma) es la forma en que realmente aparecería si se hubiera colado.
+        Assert.DoesNotContain("$34,005.00", s, StringComparison.Ordinal);
+        Assert.DoesNotContain("$34,003.00", s, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// I1 de la revisión final de la entrega 7: <c>demanda</c>/<c>ahorro</c> nulos son un HUECO DE
+    /// MEDICIÓN (sin mes base en la facturación anterior al inicio de la reserva -- ver
+    /// <c>ReservasFacturadasCalculador.PorDemandaDelMesBase</c>), no una decisión editorial de no
+    /// publicar (F1, "No publicado"). Antes del fix, la plantilla preguntaba primero por el valor y
+    /// nunca por el bloque, así que <c>fmt(null)</c> devolvía "No publicado" con el bloque APROBADO:
+    /// el cliente leía una decisión del consultor donde en realidad había un dato que faltaba, la
+    /// misma confusión que el Global Constraint del módulo declara no intercambiable.
+    /// </summary>
+    [Fact]
+    public void Una_fila_sin_mes_base_no_se_confunde_con_una_decision_editorial()
+    {
+        var r = RenderDeArtefacto.Correr(ConReservaSinMesBase(), VarianteInforme.Cliente,
+            [BloqueEconomico.ReservasFacturadas]);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        var s = r.Nodo("body-reservas").Todo;
+        Assert.Contains("sin mes base en la facturación anterior al inicio de la reserva", s, StringComparison.Ordinal);
+        Assert.Contains("sin el mes base no hay contra qué medir el ahorro", s, StringComparison.Ordinal);
+        Assert.DoesNotContain("No publicado", s, StringComparison.Ordinal);
     }
 
     /// <summary>Una reserva de la foto sin línea en el archivo de evolución se declara, no se
@@ -705,6 +729,26 @@ public sealed class RenderDelArtefactoTests
         r.ExigirQueDibujeCompleto();
         var s = r.Nodo("body-cronologia").Todo;
         Assert.Contains("avance", s, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// I2 de la revisión final de la entrega 7: con <c>hitos.length===0</c> pero
+    /// <c>omitidos&gt;0</c> (un período cuya bitácora solo tuvo <c>internal_notes</c>/
+    /// <c>execution_log</c>, el campo MÁS tocado del tracking), el artefacto afirmaba "no registra
+    /// hitos en este período" y nunca dibujaba el contador -- exactamente lo que
+    /// <see cref="CronologiaModelo.Omitidos"/> existe para prevenir, según su propio docstring. La
+    /// vista React ya lo hacía bien.
+    /// </summary>
+    [Fact]
+    public void Con_cronologia_vacia_pero_con_omitidos_no_se_afirma_que_no_paso_nada()
+    {
+        var r = RenderDeArtefacto.Correr(ConCronologiaSoloOmitidos(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        var s = r.Nodo("body-cronologia").Todo;
+        Assert.DoesNotContain("no registra hitos en este período", s, StringComparison.Ordinal);
+        Assert.Contains("entradas de la bitácora quedaron fuera", s, StringComparison.Ordinal);
     }
 
     /// <summary>El score del pilar de costos en el tiempo, en su propio contenedor hermano de
@@ -851,6 +895,16 @@ public sealed class RenderDelArtefactoTests
     {
         var modelo = ModeloDePrueba.Crear();
         return modelo with { Postura = null };
+    }
+
+    /// <summary>I2: una bitácora cuyas entradas EXISTEN pero ninguna pasó la lista blanca de
+    /// <see cref="CronologiaModelo.CamposPublicables"/> ni cayó dentro del rango del informe --
+    /// <c>hitos</c> vacío, <c>omitidos</c> mayor a cero. Distinto de "no hay bitácora"
+    /// (<c>Cronologia = null</c>), que sí sigue siendo un caso legítimo de "Pendiente de insumo".</summary>
+    private static ModeloInformeValor ConCronologiaSoloOmitidos()
+    {
+        var modelo = ModeloDePrueba.Crear();
+        return modelo with { Cronologia = new CronologiaModelo(Hitos: [], Omitidos: 2) };
     }
 
     /// <summary>Período que cruza dos años calendario y promedio mensual que subió de uno al otro:
@@ -1014,6 +1068,26 @@ public sealed class RenderDelArtefactoTests
                 Reservas = modelo.Ejecutado!.Reservas with
                 {
                     SinLineaEnEvolucion = ["vm-2"],
+                },
+            },
+        };
+    }
+
+    /// <summary>I1: una fila de reservas sin mes base en la facturación (demanda/ahorro null por
+    /// diseño -- ver <c>ReservasFacturadasCalculador.PorDemandaDelMesBase</c>), distinta del caso por
+    /// defecto de <c>ModeloDePrueba.Crear()</c>, que sí trae los tres montos de la fila (34005/34006/
+    /// 34007) para que otros tests puedan auditar que no se filtran cuando el bloque está apagado.</summary>
+    private static ModeloInformeValor ConReservaSinMesBase()
+    {
+        var modelo = ModeloDePrueba.Crear();
+        var reservas = modelo.Ejecutado!.Reservas;
+        return modelo with
+        {
+            Ejecutado = modelo.Ejecutado! with
+            {
+                Reservas = reservas with
+                {
+                    Filas = [reservas.Filas[0] with { PorDemandaMes = null, AhorroMes = null }],
                 },
             },
         };

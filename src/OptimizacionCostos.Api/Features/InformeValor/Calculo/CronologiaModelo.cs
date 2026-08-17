@@ -15,8 +15,12 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// </summary>
 public sealed record CronologiaModelo(
     [property: JsonPropertyName("hitos")] IReadOnlyList<HitoModelo> Hitos,
-    /// <summary>Cuántas entradas de la bitácora quedaron fuera por no estar en la lista blanca.
-    /// Se publica para que nadie lea una cronología corta como "no pasó nada".</summary>
+    /// <summary>Cuántas entradas de la bitácora quedaron fuera, por dos causas distintas que el
+    /// mapeador (<c>InformeValorEnsamblador.MapearCronologia</c>) cuenta juntas: no estar en la lista
+    /// blanca de <see cref="CamposPublicables"/> (notas internas, bitácora de ejecución, esfuerzo,
+    /// prioridad), o caer fuera de la ventana del informe. Se publica para que nadie lea una
+    /// cronología corta -o vacía- como "no pasó nada" (ver el fix del artefacto: hitos.length===0 con
+    /// omitidos&gt;0 nunca dibuja el mensaje de "sin hitos" sin más).</summary>
     [property: JsonPropertyName("omitidos")] int Omitidos)
 {
     /// <summary>Los campos de <c>waf_tracking_history</c> que cuentan una historia publicable: el
