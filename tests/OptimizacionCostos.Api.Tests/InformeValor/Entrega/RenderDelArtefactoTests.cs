@@ -643,6 +643,57 @@ public sealed class RenderDelArtefactoTests
     }
 
     // ================================================================================
+    // La conciliación entre los dos archivos de BITCOST (Tarea 7 de la entrega 7)
+    // ================================================================================
+
+    /// <summary>La conciliación se dibuja cuando los dos archivos discrepan: es el aviso de que
+    /// una de las dos fuentes está desactualizada, no un error del informe.</summary>
+    [Fact]
+    public void La_conciliacion_publica_los_meses_que_discrepan()
+    {
+        var r = RenderDeArtefacto.Correr(ConDiscrepanciaDeArchivos(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        var s = r.Nodo("body-cobertura").Todo;
+        Assert.Contains("no coinciden", s, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Sus filas llevan los totales mensuales de facturación: sin los bloques que protegen
+    /// esas cifras, la sección dice que hay discrepancia pero no publica los montos.</summary>
+    [Fact]
+    public void Sin_los_bloques_de_gasto_la_conciliacion_no_publica_sus_montos()
+    {
+        var r = RenderDeArtefacto.Correr(ConDiscrepanciaDeArchivos(), VarianteInforme.Cliente, []);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        var s = r.Nodo("body-cobertura").Todo;
+        Assert.DoesNotContain("35001", s, StringComparison.Ordinal);
+        // La sección igual dice que hay discrepancia: lo que se apaga es el monto, no el aviso.
+        Assert.Contains("depende de los bloques de gasto total y serie mensual", s, StringComparison.Ordinal);
+    }
+
+    /// <summary>El control positivo del test de arriba: con los dos bloques que protegen esas
+    /// cifras aprobados, los montos SÍ se publican. Sin este test, la ausencia de "35001" de arriba
+    /// podría deberse a que la sección nunca llegó a dibujarse.</summary>
+    [Fact]
+    public void Con_los_bloques_de_gasto_aprobados_la_conciliacion_publica_sus_montos()
+    {
+        var r = RenderDeArtefacto.Correr(ConDiscrepanciaDeArchivos(), VarianteInforme.Cliente,
+            [BloqueEconomico.GastoTotal, BloqueEconomico.SerieMensual]);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        var s = r.Nodo("body-cobertura").Todo;
+        Assert.Contains("no coinciden", s, StringComparison.OrdinalIgnoreCase);
+        // fmt() agrupa de a miles ("$35,001.10"): la cifra completa, con su coma, es la que tiene
+        // que aparecer con los dos bloques aprobados.
+        Assert.Contains("35,001.10", s, StringComparison.Ordinal);
+        Assert.DoesNotContain("depende de los bloques de gasto total y serie mensual", s, StringComparison.Ordinal);
+    }
+
+    // ================================================================================
     // Escenarios
     // ================================================================================
 
@@ -877,6 +928,25 @@ public sealed class RenderDelArtefactoTests
                 Total = n, Cumple = n, NoCumple = 0, SinEvaluar = 0,
                 PctCumplimiento = 100d, DenominadorPctCumplimiento = n,
                 FueraDeSla = [],
+            },
+        };
+    }
+
+    /// <summary>Los dos archivos de BITCOST no coinciden en enero, más allá del umbral. Reafirma
+    /// los marcadores 35001.10/35002.10/35003.10 de <c>ModeloDePrueba.Montos</c> en vez de heredar
+    /// el default de <c>ModeloDePrueba.Crear()</c> sin declararlo: si ese default cambia el día de
+    /// mañana, este escenario no se entera y sigue probando la discrepancia a propósito.</summary>
+    private static ModeloInformeValor ConDiscrepanciaDeArchivos()
+    {
+        var modelo = ModeloDePrueba.Crear();
+        return modelo with
+        {
+            Meta = modelo.Meta with
+            {
+                Conciliacion = new ConciliacionArchivos(
+                    Coincide: false,
+                    Diferencias: [["2026-01", 35001.10m, 35002.10m, 35003.10m]],
+                    Umbral: 0.005m),
             },
         };
     }

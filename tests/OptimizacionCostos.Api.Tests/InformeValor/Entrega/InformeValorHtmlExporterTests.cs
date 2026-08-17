@@ -419,27 +419,50 @@ public sealed class InformeValorHtmlExporterTests
     }
 
     /// <summary>
-    /// C1 del review final de la entrega 6: <c>meta.conciliacion</c> lleva los totales MENSUALES de
-    /// BITCOST y del archivo de evolución — la misma clase de cifra que <c>SerieMensual</c>/
-    /// <c>GastoTotal</c> protegen detrás de su propio bloque — pero no tiene interruptor propio ni
-    /// lo cubre ninguno de los ocho. Se recorta ENTERO en la variante del cliente, incluso con los
-    /// ocho bloques aprobados: no es cuestión de qué se aprobó, es que la sección todavía no tiene
-    /// dónde aprobarse. La variante interna sigue viéndolo completo.
+    /// C1 del review final de la entrega 6, revisado por la Tarea 7 de la entrega 7: <c>meta.conciliacion</c>
+    /// lleva los totales MENSUALES de BITCOST y del archivo de evolución — la misma clase de cifra
+    /// que <c>SerieMensual</c>/<c>GastoTotal</c> protegen detrás de su propio bloque. Ahora que la
+    /// sección se dibuja, el recorte deja de ser incondicional: el nodo entero sobrevive SOLO
+    /// cuando los dos bloques que protegen esas cifras están aprobados; si falta cualquiera de los
+    /// dos —aunque los otros seis sí lo estén—, se anula entero (no campo por campo, mismo criterio
+    /// que <c>fact.variacionConsumo</c>). La variante interna sigue viéndolo completo siempre, sin
+    /// mirar bloques.
     /// </summary>
     [Fact]
-    public void La_conciliacion_de_meta_desaparece_en_la_variante_del_cliente_y_viaja_intacta_en_la_interna()
+    public void La_conciliacion_de_meta_sobrevive_solo_con_gastoTotal_y_serieMensual_aprobados()
     {
         var modelo = ModeloDePrueba.Crear();
 
-        var cliente = Exportar(modelo, VarianteInforme.Cliente, BloqueEconomicoExtensions.Todos);
-        var (embeddedCliente, _) = DatosDe(cliente);
-        Assert.Equal(JsonValueKind.Null, embeddedCliente.GetProperty("meta").GetProperty("conciliacion").ValueKind);
+        var conLosDos = Exportar(modelo, VarianteInforme.Cliente,
+            [BloqueEconomico.GastoTotal, BloqueEconomico.SerieMensual]);
+        var (embeddedConLosDos, _) = DatosDe(conLosDos);
+        var conciliacion = embeddedConLosDos.GetProperty("meta").GetProperty("conciliacion");
+        Assert.False(conciliacion.GetProperty("coincide").GetBoolean());
+        Assert.Equal(35001.10m, conciliacion.GetProperty("difs")[0][1].GetDecimal());
+
+        var sinGastoTotal = Exportar(modelo, VarianteInforme.Cliente, [BloqueEconomico.SerieMensual]);
+        var (embeddedSinGastoTotal, _) = DatosDe(sinGastoTotal);
+        Assert.Equal(JsonValueKind.Null,
+            embeddedSinGastoTotal.GetProperty("meta").GetProperty("conciliacion").ValueKind);
+
+        var sinSerieMensual = Exportar(modelo, VarianteInforme.Cliente, [BloqueEconomico.GastoTotal]);
+        var (embeddedSinSerieMensual, _) = DatosDe(sinSerieMensual);
+        Assert.Equal(JsonValueKind.Null,
+            embeddedSinSerieMensual.GetProperty("meta").GetProperty("conciliacion").ValueKind);
+
+        // Con los otros seis bloques aprobados pero sin GastoTotal: no alcanza con "casi todos".
+        var todosMenosGastoTotal = BloqueEconomicoExtensions.Todos
+            .Where(b => b != BloqueEconomico.GastoTotal).ToList();
+        var sinGastoTotalDeOcho = Exportar(modelo, VarianteInforme.Cliente, todosMenosGastoTotal);
+        var (embeddedSinGastoTotalDeOcho, _) = DatosDe(sinGastoTotalDeOcho);
+        Assert.Equal(JsonValueKind.Null,
+            embeddedSinGastoTotalDeOcho.GetProperty("meta").GetProperty("conciliacion").ValueKind);
 
         var interna = Exportar(modelo, VarianteInforme.Interna);
         var (embeddedInterna, _) = DatosDe(interna);
-        var conciliacion = embeddedInterna.GetProperty("meta").GetProperty("conciliacion");
-        Assert.False(conciliacion.GetProperty("coincide").GetBoolean());
-        Assert.Equal(35001.10m, conciliacion.GetProperty("difs")[0][1].GetDecimal());
+        var conciliacionInterna = embeddedInterna.GetProperty("meta").GetProperty("conciliacion");
+        Assert.False(conciliacionInterna.GetProperty("coincide").GetBoolean());
+        Assert.Equal(35001.10m, conciliacionInterna.GetProperty("difs")[0][1].GetDecimal());
     }
 
     /// <summary>La huella de la plantilla es estable entre corridas (si no, cada entrega quedaría

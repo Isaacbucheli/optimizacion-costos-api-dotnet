@@ -185,16 +185,14 @@ public static class InformeValorHtmlExporter
         // cliente, necesita su propio interruptor de aprobación.
         Anular(fact, "variacionConsumo");
 
-        // meta.conciliacion (Tarea 8 de la entrega 6) lleva los totales MENSUALES de BITCOST y del
-        // archivo de evolución, exactamente la clase de cifra que SerieMensual/GastoTotal protegen
-        // detrás de su propio interruptor — pero conciliacion no tiene interruptor propio ni lo
-        // cubre ninguno de los ocho bloques (ContratoEntreRenderizadoresTests ya la declara
-        // Lado.Ninguno: ningún renderizador la lee todavía). Sin este recorte viajaba intacta en la
-        // variante del cliente y filtraba esos montos mensuales a quien nadie se los aprobó — el
-        // mismo hallazgo (C1) que motivó cerrar fact.variacionConsumo arriba. Se anula entero, no
-        // campo por campo, por el mismo motivo que esa otra rama: nulear a medias simularía una
-        // sección que el consultor nunca eligió publicar.
-        Anular(raiz["meta"] as JsonObject, "conciliacion");
+        // meta.conciliacion (Tarea 8 de la entrega 6, dibujado por la Tarea 7 de la entrega 7) lleva
+        // los totales MENSUALES de BITCOST y del archivo de evolución: exactamente la clase de
+        // cifra que SerieMensual/GastoTotal protegen detrás de su propio interruptor. La sección
+        // publica sus montos SOLO cuando los dos están aprobados; si falta cualquiera de los dos,
+        // el nodo entero se anula (no campo por campo, mismo criterio que
+        // fact.variacionConsumo arriba) y el dibujo escribe su propia nota de "no publicado".
+        if (!publicados.Contains(BloqueEconomico.GastoTotal) || !publicados.Contains(BloqueEconomico.SerieMensual))
+            Anular(raiz["meta"] as JsonObject, "conciliacion");
 
         // ejecutado (Tarea 9 de la entrega 6): el titular del informe (decisión 2026-08-13), octava
         // clave de nivel superior desde la Tarea 6. Sin recorte propio viajaría intacto en la

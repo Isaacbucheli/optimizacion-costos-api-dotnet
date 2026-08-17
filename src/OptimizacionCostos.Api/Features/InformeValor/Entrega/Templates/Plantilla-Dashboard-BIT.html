@@ -1339,6 +1339,28 @@ function render(){
   }
   $('#body-cobertura').innerHTML=C.length?tarjetas(C):pendiente('La cobertura se construye con el export de facturación, el reporte de RBAC y el export de la mesa de servicio.');
 
+  /* Los dos archivos de BITCOST (Tarea 7 de la entrega 7): la conciliación entre la tabla de
+     hechos y el archivo de evolución (meta.conciliacion, Tarea 8 de la entrega 6). Sus filas
+     llevan los mismos totales mensuales que protegen los bloques GastoTotal/SerieMensual, así que
+     el exportador la anula entera sin los dos aprobados (InformeValorHtmlExporter.Recortar) y acá
+     se dibuja el aviso de "no publicado" en vez del panel. */
+  var cc=M.conciliacion;
+  if(cc){
+    $('#body-cobertura').innerHTML+=
+      '<div class="panel" style="margin-top:16px"><h3>Los dos archivos de facturación</h3>'+
+      (cc.coincide
+        ? '<p class="note">La tabla de hechos y el archivo de evolución por recurso coinciden mes a mes dentro del margen de redondeo. Las cifras de este informe salen de las dos sin contradicción.</p>'
+        : '<p class="note"><b>Los dos archivos no coinciden en '+num(cc.difs.length)+' meses.</b> La tabla de hechos manda para identidad y agrupaciones; el archivo de evolución, para el precio de las reservas. La diferencia se publica para que se pueda resolver, no se promedia ni se elige en silencio.</p>'+
+          '<div class="tbl"><table><thead><tr><th>Mes</th><th class="num">Tabla de hechos</th><th class="num">Evolución por recurso</th><th class="num">Diferencia</th></tr></thead><tbody>'+
+          cc.difs.map(function(d){
+            return '<tr><td>'+esc(ymAb(d[0]))+'</td><td class="num">'+esc(fmt(d[1]))+'</td><td class="num">'+esc(fmt(d[2]))+'</td><td class="num">'+esc(fmt(d[3]))+'</td></tr>';
+          }).join('')+
+          '</tbody></table></div>')+
+      '</div>';
+  } else if(f){
+    $('#body-cobertura').innerHTML+='<div class="panel" style="margin-top:16px"><h3>Los dos archivos de facturación</h3>'+noPub('La conciliación entre los dos archivos depende de los bloques de gasto total y serie mensual.')+'</div>';
+  }
+
   /* ---- operación ---- */
   if(!t){ $('#body-operacion').innerHTML=pendiente('Adjunta el Excel de requerimientos e incidentes de la mesa de servicio. Debe traer al menos Caso, Fecha de Registro, SLA horas, Duración, Cumple SLA, Categoría y Subcategoría.'); $('#sub-operacion').textContent=''; }
   else {

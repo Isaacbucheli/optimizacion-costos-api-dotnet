@@ -205,10 +205,18 @@ public sealed class ContratoEntreRenderizadoresTests
             "Qué ejes del registro se pudieron medir (barrido y reservas, con su motivo si faltan): la " +
             "sección titular (Tarea 4 de la entrega 7) los declara en la nota \"Alcance de esta " +
             "sección\" cuando alguno no se midió. La vista React no dibuja esta sección todavía."),
-        ("meta.conciliacion", Lado.Ninguno,
-            "La discrepancia declarada entre la tabla de hechos y el archivo de evolución (Tarea 8 " +
-            "de la entrega 6). Ningún renderizador la dibuja todavía: el modelo se calcula y archiva " +
-            "desde esta entrega para que la 7, que sí la dibuja, no dependa de recalcularla."),
+        ("meta.conciliacion", Lado.Html,
+            "El panel \"Los dos archivos de facturación\" (Tarea 7 de la entrega 7) lee M.conciliacion " +
+            "(M=D.meta) directamente y, cuando el nodo llega poblado, sus campos coincide y difs. Es la " +
+            "primera vez que la capa de dibujo toca esta clave: verificado contra innovacion-CDC " +
+            "(src/components/informe-valor/informe, src/lib/informeValor.ts, grep sin resultados para " +
+            "\"conciliacion\"/\"coincide\"/\"difs\") que la vista React todavía no la lee. Se cierra cuando " +
+            "la Tarea 9 de esta entrega agregue el renderizador ahí."),
+        ("meta.conciliacion.umbralTasa", Lado.Ninguno,
+            "La tasa del 0.5% que decide, mes a mes, qué filas entran a difs (InformeValorEnsamblador." +
+            "CalcularConciliacion). El panel de la Tarea 7 publica el veredicto ya aplicado -coincide y " +
+            "difs, con la cifra de cada fuente- y no necesita reconstruir el cálculo mostrando la tasa " +
+            "que lo produjo; ninguna de las dos vistas la dibuja."),
         ("meta.cobertura.suscripciones.id", Lado.Ninguno,
             "El identificador con el que D12 normaliza y concilia las tres fuentes. Es la clave del " +
             "cruce, no una columna: la tabla publica el nombre, y cuando ninguna fuente trajo nombre " +
