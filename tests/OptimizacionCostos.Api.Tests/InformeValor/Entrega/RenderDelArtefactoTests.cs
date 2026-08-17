@@ -218,15 +218,47 @@ public sealed class RenderDelArtefactoTests
     }
 
     /// <summary>El costo unitario deriva del monto mensual: sin el bloque de la serie aprobado,
-    /// no puede publicarse.</summary>
+    /// el panel específico del unitario no puede publicarse.</summary>
     [Fact]
-    public void Sin_serie_mensual_aprobada_el_costo_unitario_no_se_publica()
+    public void Sin_serie_mensual_aprobada_el_panel_unitario_declara_no_publicado()
     {
-        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Cliente, []);
+        var bloques = BloqueEconomicoExtensions.Todos
+            .Where(b => b != BloqueEconomico.SerieMensual)
+            .ToList();
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Cliente, bloques);
         if (r is null) return;
         r.ExigirQueDibujeCompleto();
 
-        Assert.Contains("No publicado", r.Nodo("body-eficiencia").Todo, StringComparison.Ordinal);
+        Assert.Contains("No publicado", r.Nodo("c-unitario").Todo, StringComparison.Ordinal);
+    }
+
+    /// <summary>La variación mes a mes del consumo sin la composición aprobada: el panel específico
+    /// del mom no puede publicarse.</summary>
+    [Fact]
+    public void Sin_composicion_servicio_aprobada_el_panel_mom_declara_no_publicado()
+    {
+        var bloques = BloqueEconomicoExtensions.Todos
+            .Where(b => b != BloqueEconomico.ComposicionServicio)
+            .ToList();
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Cliente, bloques);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        Assert.Contains("No publicado", r.Nodo("c-mom").Todo, StringComparison.Ordinal);
+    }
+
+    /// <summary>Con todos los bloques aprobados, ni el unitario ni el mom dicen "No publicado": la
+    /// guarda no puede convertir cero apagado en un mensaje universalmente.</summary>
+    [Fact]
+    public void Con_todos_los_bloques_aprobados_el_unitario_y_el_mom_se_publican()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Cliente,
+            BloqueEconomicoExtensions.Todos);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        Assert.DoesNotContain("No publicado", r.Nodo("c-unitario").Todo, StringComparison.Ordinal);
+        Assert.DoesNotContain("No publicado", r.Nodo("c-mom").Todo, StringComparison.Ordinal);
     }
 
     // ================================================================================

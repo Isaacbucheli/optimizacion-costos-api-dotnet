@@ -127,12 +127,12 @@ public sealed class ContratoEntreRenderizadoresTests
             "de esta entrega la dibuje ahí."),
         ("fact.unitario", Lado.Html,
             "El panel \"Costo por recurso: el entorno crece y el unitario baja\" (Tarea 6 de la entrega " +
-            "7) dibuja recursos activos y costo por recurso con linea(), releyendo fact.serie por sus " +
-            "índices 1 y 4 (ver el docstring de ConsumoCalculador.CalcularCostoUnitario). Es la primera " +
-            "vez que la capa de dibujo toca esta clave: verificado contra innovacion-CDC " +
-            "(src/components/informe-valor/informe, src/lib/informeValor.ts, grep sin resultados para " +
-            "\"unitario\") que la vista React todavía no la lee. Se cierra cuando la Tarea 9 de esta " +
-            "entrega agregue el renderizador ahí."),
+            "7) dibuja recursos activos y costo por recurso con linea(), leyendo f.unitario en sus " +
+            "posiciones [1] recursos, [3] costo, [4] parcial. El backend ConsumoCalculador.CalcularCostoUnitario " +
+            "construye fact.unitario desde fact.serie[1] y fact.serie[4]. Es la primera vez que la capa " +
+            "de dibujo toca esta clave: verificado contra innovacion-CDC (src/components/informe-valor/informe, " +
+            "src/lib/informeValor.ts, grep sin resultados para \"unitario\") que la vista React todavía no " +
+            "la lee. Se cierra cuando la Tarea 9 de esta entrega agregue el renderizador ahí."),
         ("fact.mom", Lado.Html,
             "El panel \"Variación del consumo mes a mes\" (Tarea 6 de la entrega 7, Observación 6 de la " +
             "reunión) dibuja reducciones e incrementos con colsBidir(), la primitiva nueva que reparte " +
