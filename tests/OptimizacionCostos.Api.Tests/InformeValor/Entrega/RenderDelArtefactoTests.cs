@@ -488,6 +488,26 @@ public sealed class RenderDelArtefactoTests
         Assert.Contains("Reserva facturada", s, StringComparison.Ordinal);
     }
 
+    /// <summary>Minor de la revisión: sin el bloque de reservas aprobado, la tabla por VM declara
+    /// "No publicado" en cada monto -- mismo criterio que los otros siete bloques económicos (F1),
+    /// aplicado acá a la tabla de la Tarea 5. El JSON ya llega con esos campos anulados
+    /// (<c>InformeValorHtmlExporter</c>), así que este test cubre además el camino de la plantilla:
+    /// <c>pub('reservasFacturadas')</c> en falso.</summary>
+    [Fact]
+    public void Sin_el_bloque_de_reservas_aprobado_la_tabla_no_publica_montos()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Cliente, []);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        var s = r.Nodo("body-reservas").Todo;
+        Assert.Contains("No publicado", s, StringComparison.Ordinal);
+        // 34005/34006/34007/34001/34002/34003/34004 son los montos de ModeloDePrueba.Crear(): no
+        // pueden aparecer ni por fila ni por el total.
+        Assert.DoesNotContain("34005", s, StringComparison.Ordinal);
+        Assert.DoesNotContain("34003", s, StringComparison.Ordinal);
+    }
+
     /// <summary>Una reserva de la foto sin línea en el archivo de evolución se declara, no se
     /// inventa un cargo ni se omite.</summary>
     [Fact]
@@ -511,14 +531,42 @@ public sealed class RenderDelArtefactoTests
         Assert.Contains("avance", s, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>El score del pilar de costos en el tiempo, dentro de la sección Advisor.</summary>
+    /// <summary>El score del pilar de costos en el tiempo, en su propio contenedor hermano de
+    /// <c>#body-advisor</c> dentro de la misma sección (ver el siguiente bloque de tests: ese
+    /// contenedor propio es justo lo que permite que el gráfico sobreviva sin Postura).</summary>
     [Fact]
     public void La_seccion_advisor_dibuja_la_evolucion_del_pilar_de_costos()
     {
         var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Interna);
         if (r is null) return;
         r.ExigirQueDibujeCompleto();
-        Assert.Contains("c-opex", r.Nodo("body-advisor").Todo, StringComparison.Ordinal);
+        Assert.Contains("c-opex", r.Nodo("body-opex").Todo, StringComparison.Ordinal);
+    }
+
+    // ================================================================================
+    // El grafico de Opex sobrevive sin Postura (fix del review de la Tarea 5)
+    // ================================================================================
+
+    /// <summary>
+    /// <c>OpexModelo</c> es la novena clave de nivel superior justamente PORQUE <c>Postura</c> puede
+    /// ser null sin que el score de Opex lo sea (ver el comentario de clase de
+    /// <c>ModeloInformeValor</c>: "un cliente puede tener score de Opex sin recomendaciones"). La
+    /// plantilla dibujaba el panel del gráfico dentro del <c>innerHTML</c> de la rama <c>else</c> de
+    /// <c>advisor</c>: sin Postura, esa rama nunca corría, <c>#c-opex</c> no existía en el documento y
+    /// la llamada a <c>linea()</c> no tenía dónde dibujar, aunque <c>D.opex</c> trajera la serie
+    /// completa. La tarjeta OPEX del resumen sí la lee de forma independiente, así que el mismo
+    /// artefacto mostraba el score arriba y el gráfico de abajo desaparecía en silencio.
+    /// </summary>
+    [Fact]
+    public void Sin_postura_el_grafico_de_opex_igual_se_dibuja()
+    {
+        var r = RenderDeArtefacto.Correr(SinPostura(), VarianteInforme.Interna);
+        if (r is null) return;
+        r.ExigirQueDibujeCompleto();
+
+        Assert.Contains("c-opex", r.Nodo("body-opex").Todo, StringComparison.Ordinal);
+        Assert.Contains("Adjunta el CSV de export de Azure Advisor",
+            r.Nodo("body-advisor").Todo, StringComparison.Ordinal);
     }
 
     // ================================================================================
@@ -564,6 +612,18 @@ public sealed class RenderDelArtefactoTests
                 CompromisoPorSuscripcion = new Dictionary<string, PosturaCompromisoSuscripcion>(),
             },
         };
+    }
+
+    /// <summary>El caso central de este fix: <c>Postura</c> null (sin recomendaciones activas de
+    /// Advisor y sin ninguna corrida del Boletín) con el score de Opex igual presente -- el caso que
+    /// el comentario de clase de <c>ModeloInformeValor</c> declara posible ("un cliente puede tener
+    /// score de Opex sin recomendaciones") y que <c>#body-opex</c>, como contenedor propio fuera del
+    /// <c>innerHTML</c> de <c>#body-advisor</c>, existe justamente para cubrir. <c>Opex</c> se queda
+    /// con los valores de <c>ModeloDePrueba.Crear()</c> (medido, con serie de dos puntos).</summary>
+    private static ModeloInformeValor SinPostura()
+    {
+        var modelo = ModeloDePrueba.Crear();
+        return modelo with { Postura = null };
     }
 
     /// <summary>Período que cruza dos años calendario y promedio mensual que subió de uno al otro:

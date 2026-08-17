@@ -222,7 +222,7 @@ footer{margin-top:64px;border-top:5px solid var(--green);background:var(--gray);
 <section class="sec" id="operacion"><h2 id="h2-operacion">Operación y respuesta</h2><p class="sub" id="sub-operacion"></p><div id="body-operacion"></div></section>
 <section class="sec" id="proactiva"><h2 id="h2-proactiva">Gestión proactiva</h2><p class="sub" id="sub-proactiva"></p><div id="body-proactiva"></div></section>
 <section class="sec" id="seguridad"><h2 id="h2-seguridad">Seguridad bajo gobierno</h2><p class="sub" id="sub-seguridad"></p><div id="body-seguridad"></div></section>
-<section class="sec" id="advisor"><h2>Postura Well-Architected: Azure Advisor</h2><p class="sub" id="sub-advisor"></p><div id="body-advisor"></div></section>
+<section class="sec" id="advisor"><h2>Postura Well-Architected: Azure Advisor</h2><p class="sub" id="sub-advisor"></p><div id="body-advisor"></div><div id="body-opex"></div></section>
 <section class="sec" id="eficiencia"><h2 id="h2-eficiencia">Eficiencia financiera</h2><p class="sub" id="sub-eficiencia"></p><div id="body-eficiencia"></div></section>
 <section class="sec" id="reservas"><h2>Reservas contra la factura</h2><p class="sub" id="sub-reservas"></p><div id="body-reservas"></div></section>
 <section class="sec" id="cronologia"><h2>Cronología del servicio</h2><p class="sub" id="sub-cronologia"></p><div id="body-cronologia"></div></section>
@@ -1601,8 +1601,7 @@ function render(){
         '<span class="n" id="aCnt"></span></div>'+
         '<div class="note" style="margin:0 0 12px">Las '+num(ad.n)+' recomendaciones desagregadas en '+ad.det.length+' filas de recomendación por suscripción. Los totales de cada filtro suman siempre contra la fuente original.</div>'+
         '<div class="tbl scroll"><table><thead><tr><th>Recomendación</th><th>Pilar</th><th style="width:1%">Impacto</th><th>Suscripción</th><th class="num">Recursos</th></tr></thead><tbody id="tb-adv"></tbody></table></div></div>':'')+
-      '<div class="ok-box"><b>Lo que este informe no puede declarar todavía.</b> La sincronización de Advisor trae el detalle de recomendaciones, no la puntuación por pilar. Sin dos capturas del Overview, corte inicial y corte actual, no es posible publicar una variación de score, y este informe no publica cifras que no pueda sustentar.</div>'+
-      '<div class="panel" style="margin-top:16px"><h3>Evolución del pilar de costos (Opex)</h3><div id="c-opex"></div></div>';
+      '<div class="ok-box"><b>Lo que este informe no puede declarar todavía.</b> La sincronización de Advisor trae el detalle de recomendaciones, no la puntuación por pilar. Sin dos capturas del Overview, corte inicial y corte actual, no es posible publicar una variación de score, y este informe no publica cifras que no pueda sustentar.</div>';
     barras($('#c-adv-cat'),ad.cats.map(function(c){
       return {k:c.n,v:c.c,lbl:num(c.c)+'  ('+pct(c.c,ad.n).toFixed(1)+'%)',
         seg:[{n:'Impacto alto',v:c.h,c:RED},{n:'Impacto medio',v:c.m,c:AMBER},{n:'Impacto bajo',v:c.l,c:PALE}]};
@@ -1616,13 +1615,26 @@ function render(){
         tip:esc(tp.n)+'<br>'+num(tp.c)+' recomendaciones'};
     }),{W:560,rowH:28,padL:210,padR:160,fs:11});
     tablaAdvisor(ad);
-    if(ox&&ox.medido&&ox.serie&&ox.serie.length>1)
+  }
+
+  /* ---- opex ----
+     Fuera de la guarda de advisor A PROPOSITO (ver el comentario de clase de OpexModelo en
+     InformeValorModelo.cs): Postura es null cuando el cliente no tiene recomendaciones activas,
+     y un cliente puede tener score de Opex sin recomendaciones, asi que colgar este panel del
+     innerHTML de #body-advisor perdia el grafico justo en el caso que la tarjeta OPEX del resumen
+     -que lee D.opex de forma independiente- existe para contar. #body-opex es su propio
+     contenedor auto-gateado, hermano de #body-advisor, con el mismo patron de #body-reservas y
+     #body-cronologia. */
+  if(ox){
+    $('#body-opex').innerHTML=
+      '<div class="panel"><h3>Evolución del pilar de costos (Opex)</h3><div id="c-opex"></div></div>';
+    if(ox.medido&&ox.serie&&ox.serie.length>1)
       linea($('#c-opex'),ox.serie.map(function(p){return ymAb(p[0]);}),
         [{n:'Pilar de costos',c:GREEN,v:ox.serie.map(function(p){return p[1];})}],
         {h:240,dom:[0,100],fy:function(v){return Math.round(v)+'%';},
          tl:function(i){return ymAb(ox.serie[i][0]);},tv:function(v){return v+'%';}});
-    else if($('#c-opex'))
-      $('#c-opex').innerHTML=pendiente(ox&&ox.motivo?ox.motivo:'No hay serie histórica del pilar de costos para este período.');
+    else
+      $('#c-opex').innerHTML=pendiente(ox.motivo?ox.motivo:'No hay serie histórica del pilar de costos para este período.');
   }
 
   /* ---- eficiencia ---- */
