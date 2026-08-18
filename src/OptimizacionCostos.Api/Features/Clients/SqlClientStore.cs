@@ -191,6 +191,28 @@ public sealed class SqlClientStore(ISqlConnectionFactory factory) : IClientStore
     private static async Task PurgeCoreAsync(SqlConnection conn, SqlTransaction tx, int clientId, Dictionary<string, int> counts, CancellationToken ct)
     {
         // -------- WAF --------
+        // Primero, que canonicas del catalogo usaba este cliente: el barrido de huerfanas de mas
+        // abajo se acota a esta lista, y una vez borradas sus recomendaciones ya no hay manera de
+        // reconstruirla.
+        //
+        // El recorte no es un detalle. El catalogo es GLOBAL y curado a mano (textos en espanol,
+        // revision IA, y las ~770 filas de la matriz historica). Sin acotar, el barrido recogia las
+        // huerfanas de TODA la base: borrar un cliente cualquiera se llevaba por delante 124
+        // canonicas curadas que no tenian nada que ver con el, y recuperarlas significaba volverlas
+        // a curar a mano.
+        // El CREATE va en su propia sentencia SIN parametros, y no junto con el INSERT, por una
+        // trampa del driver: en cuanto un SqlCommand lleva parametros viaja como sp_executesql, y una
+        // tabla temporal creada ahi adentro vive y muere con esa llamada. El resto del metodo la veria
+        // como "Invalid object name". Creada en un lote pelado queda en el alcance de la sesion, y
+        // desde ahi el INSERT parametrizado y los barridos de abajo si la alcanzan.
+        await ExecAsync(conn, tx, """
+            IF OBJECT_ID('tempdb..#canon_del_cliente') IS NOT NULL DROP TABLE #canon_del_cliente;
+            CREATE TABLE #canon_del_cliente (canonical_id INT NOT NULL PRIMARY KEY);
+            """, null, ct);
+        await ExecAsync(conn, tx, """
+            INSERT INTO #canon_del_cliente (canonical_id)
+            SELECT DISTINCT canonical_id FROM dbo.waf_recommendation WHERE client_id = @id;
+            """, clientId, ct);
         await CountedDeleteAsync(conn, tx, counts, "waf_resource_finding", """
             DELETE f FROM dbo.waf_resource_finding f
             INNER JOIN dbo.waf_recommendation r ON r.recommendation_id = f.recommendation_id
@@ -203,14 +225,71 @@ public sealed class SqlClientStore(ISqlConnectionFactory factory) : IClientStore
         await CountedDeleteAsync(conn, tx, counts, "waf_ingestion_run", "DELETE FROM dbo.waf_ingestion_run WHERE client_id = @id", clientId, ct);
         await CountedDeleteAsync(conn, tx, counts, "waf_advisor_score_snapshot",
             "IF OBJECT_ID('dbo.waf_advisor_score_snapshot','U') IS NOT NULL DELETE FROM dbo.waf_advisor_score_snapshot WHERE client_id = @id;", clientId, ct);
+        // Un alias se va solo si su canonica tambien se va, asi que lleva las MISMAS guardas que el
+        // barrido de abajo (todas menos la de alias, que seria contra si misma). Con una sola guarda
+        // quedaba una asimetria que pierde datos: una canonica retenida por estar referenciada se
+        // quedaba igual sin sus alias, y los alias son el mecanismo con el que el sync vuelve a
+        // emparejar un nombre de Advisor con su canonica. Eso no se reconstruye a mano.
         await CountedDeleteAsync(conn, tx, counts, "waf_canonical_alias", """
             DELETE a FROM dbo.waf_canonical_alias a
-            WHERE NOT EXISTS (SELECT 1 FROM dbo.waf_recommendation r WHERE r.canonical_id = a.canonical_id)
+            WHERE a.canonical_id IN (SELECT canonical_id FROM #canon_del_cliente)
+              AND NOT EXISTS (SELECT 1 FROM dbo.waf_recommendation r
+                              WHERE r.canonical_id = a.canonical_id)
+              AND NOT EXISTS (SELECT 1 FROM dbo.waf_recommendation_comment m
+                              WHERE m.canonical_id = a.canonical_id)
+              AND NOT EXISTS (SELECT 1 FROM dbo.waf_recommendation_tracking t
+                              WHERE t.canonical_id = a.canonical_id)
+              AND NOT EXISTS (SELECT 1 FROM dbo.waf_tracking_history h
+                              WHERE h.canonical_id = a.canonical_id)
+              AND NOT EXISTS (SELECT 1 FROM dbo.waf_recommendation_canonical p
+                              WHERE p.consolidates_to_id = a.canonical_id)
             """, null, ct);
+        // El barrido de huerfanas: canonicas que quedaron sin ninguna recomendacion. Acotado a las
+        // que usaba este cliente, no a toda la base (ver #canon_del_cliente arriba).
+        //
+        // Las seis guardas estan por una razon concreta, y conviene no sacarlas: el error 547 no es
+        // local, aborta la transaccion completa, asi que una sola fila conflictiva deja el borrado de
+        // CUALQUIER cliente inservible. Es lo que pasaba en la base de produccion por
+        // FK_waf_canonical_consolidates, la FK autorreferente del catalogo (consolidates_to_id
+        // apunta a otra canonica): habia tres huerfanas apuntadas por otras filas y nadie podia
+        // eliminar un cliente desde la app.
+        //
+        // Ojo con la lista: son las seis FKs que hoy apuntan a waf_recommendation_canonical, pero
+        // solo tres estan declaradas en WafSchema.cs (alias, recommendation y la autorreferente).
+        // Las de comment, tracking e history existen en la base y vienen del esquema viejo, asi que
+        // leer WafSchema.cs no alcanza para saber quien referencia esta tabla. Por eso
+        // WafCanonicalPurgeDbTests las contrasta contra sys.foreign_keys y avisa si aparece una
+        // septima.
+        //
+        // Y preferir no borrar lo referenciado antes que poner los punteros en NULL: asi nunca puede
+        // fallar por FK (no importa la profundidad de la cadena ni si hay ciclos, porque jamas borra
+        // algo que alguien apunte) y no destruye el grafo de auditoria de la consolidacion de una
+        // fila que sigue viva.
+        //
+        // Ojo con lo que queda atras, que cambio al acotar el barrido: una canonica retenida NO se
+        // recoge sola en el borrado siguiente, porque ese barrido solo mira las canonicas del cliente
+        // que se este borrando. Se queda hasta que se borre otro cliente que la usara. Es inerte (todo
+        // lo que se le muestra al cliente pasa por join a waf_recommendation) y es la misma clase de
+        // fila que decidimos conservar a proposito, asi que se acepta; si algun dia molesta, la
+        // limpieza del catalogo va como accion de administracion aparte, no metiendo un bucle aca.
         await CountedDeleteAsync(conn, tx, counts, "waf_recommendation_canonical", """
             DELETE c FROM dbo.waf_recommendation_canonical c
-            WHERE NOT EXISTS (SELECT 1 FROM dbo.waf_recommendation r WHERE r.canonical_id = c.canonical_id)
+            WHERE c.canonical_id IN (SELECT canonical_id FROM #canon_del_cliente)
+              AND NOT EXISTS (SELECT 1 FROM dbo.waf_recommendation r
+                              WHERE r.canonical_id = c.canonical_id)
+              AND NOT EXISTS (SELECT 1 FROM dbo.waf_canonical_alias a
+                              WHERE a.canonical_id = c.canonical_id)
+              AND NOT EXISTS (SELECT 1 FROM dbo.waf_recommendation_comment m
+                              WHERE m.canonical_id = c.canonical_id)
+              AND NOT EXISTS (SELECT 1 FROM dbo.waf_recommendation_tracking t
+                              WHERE t.canonical_id = c.canonical_id)
+              AND NOT EXISTS (SELECT 1 FROM dbo.waf_tracking_history h
+                              WHERE h.canonical_id = c.canonical_id)
+              AND NOT EXISTS (SELECT 1 FROM dbo.waf_recommendation_canonical p
+                              WHERE p.consolidates_to_id = c.canonical_id)
             """, null, ct);
+        await ExecAsync(conn, tx,
+            "IF OBJECT_ID('tempdb..#canon_del_cliente') IS NOT NULL DROP TABLE #canon_del_cliente;", null, ct);
 
         // -------- Informes mensuales --------
         await CountedDeleteAsync(conn, tx, counts, "report_action_plan", "DELETE FROM dbo.report_action_plan WHERE client_id = @id", clientId, ct);
@@ -274,6 +353,18 @@ public sealed class SqlClientStore(ISqlConnectionFactory factory) : IClientStore
         // conviene dejarlo dicho acá en vez de que alguien lo descubra auditando el contenedor.
         await CountedDeleteAsync(conn, tx, counts, "informe_valor_entrega",
             "IF OBJECT_ID('dbo.informe_valor_entrega','U') IS NOT NULL DELETE FROM dbo.informe_valor_entrega WHERE client_id = @id;", clientId, ct);
+    }
+
+    /// <summary>SQL de apoyo del purge (armar y descartar la tabla temporal de canonicas). No borra
+    /// filas de negocio, asi que no entra en los conteos que se le devuelven al usuario.</summary>
+    private static async Task ExecAsync(
+        SqlConnection conn, SqlTransaction tx, string sql, int? clientId, CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = sql;
+        if (clientId is not null) cmd.Parameters.Add(new SqlParameter("@id", clientId.Value));
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     private static async Task CountedDeleteAsync(
