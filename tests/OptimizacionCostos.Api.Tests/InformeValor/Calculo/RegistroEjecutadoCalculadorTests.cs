@@ -77,14 +77,16 @@ public sealed class RegistroEjecutadoCalculadorTests
         ReservasFacturadasModelo? reservasFacturadas = null,
         FotoReservas? fotoReservas = null,
         IReadOnlyList<FacturacionRow>? facturacion = null,
-        ContextoInformeValor? contexto = null) =>
+        ContextoInformeValor? contexto = null,
+        IReadOnlyList<AccionManualRow>? accionesManuales = null) =>
         RegistroEjecutadoCalculador.Calcular(
             barrido ?? RegistroBarrido.SinBarrido(),
             hallazgosMatriz ?? [],
             reservasFacturadas ?? ModeloReservas(medido: false, motivo: "sin reservas"),
             fotoReservas ?? Foto(medido: false, motivo: "sin reservas"),
             facturacion ?? [],
-            contexto ?? ContextoAmplio);
+            contexto ?? ContextoAmplio,
+            accionesManuales);
 
     // ── Regla 1: barrido → fila ──
 
@@ -570,6 +572,46 @@ public sealed class RegistroEjecutadoCalculadorTests
             fotoReservas: Foto(medido: true, reservas: []));
 
         Assert.DoesNotContain(filas, f => f.Fuente == "reserva-archivo");
+    }
+
+    // ── Entrega 8, pieza B: el registro manual ──
+
+    [Fact]
+    public void Las_acciones_manuales_entran_como_quinta_fuente_declarada()
+    {
+        var manuales = new List<AccionManualRow>
+        {
+            new(AccionId: 1, Oportunidad: "Apagado de VMs de desarrollo", Categoria: null,
+                MesEjecucion: "2026-07", MesFin: null, MontoMensual: 450m, Recurso: "vm-dev-01",
+                Nota: null, Evidencia: "correo del cliente", CreadoPor: "consultor@bit.com",
+                CreadoEn: new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)),
+            new(AccionId: 2, Oportunidad: "Descuento negociado de soporte", Categoria: null,
+                MesEjecucion: "2026-05", MesFin: "2026-12", MontoMensual: null, Recurso: null,
+                Nota: "sin cifra en el acta", Evidencia: null, CreadoPor: "consultor@bit.com",
+                CreadoEn: new DateTime(2026, 8, 1, 0, 0, 0, DateTimeKind.Utc)),
+        };
+
+        // Un barrido del mismo mes sobre el mismo recurso NO anota a la manual: sin dedup entre
+        // manual y fuentes automáticas (decisión 2026-08-18, no comparten clave).
+        var barrido = new RegistroBarrido(true, null,
+            [BarridoFila("long_deallocated_vms", "s1", "rg1", "vm-dev-01", new DateTime(2026, 7, 10), estimatedMonthlySavings: 30m)]);
+
+        var (filas, _) = Calcular(barrido: barrido, accionesManuales: manuales);
+
+        var deManual = filas.Where(f => f.Fuente == "manual").ToList();
+        Assert.Equal(2, deManual.Count);
+        Assert.All(deManual, f => Assert.Equal("declarada", f.Autoria));
+
+        var conMonto = deManual.Single(f => f.MontoMensual is not null);
+        Assert.Equal("declarado", conMonto.FuenteMonto);
+        Assert.Equal(450m, conMonto.MontoMensual);
+        Assert.Null(conMonto.MotivoSinMonto);
+        Assert.Equal(CategoriaEjecutado.Residual, conMonto.Categoria);
+
+        var sinMonto = deManual.Single(f => f.MontoMensual is null);
+        Assert.Null(sinMonto.FuenteMonto);
+        Assert.NotNull(sinMonto.MotivoSinMonto);
+        Assert.Equal("2026-12", sinMonto.MesFin);
     }
 
     /// <summary>Una línea del respaldo sin precio de catálogo entra a la tabla con su motivo,

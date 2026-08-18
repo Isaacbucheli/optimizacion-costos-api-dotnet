@@ -338,6 +338,26 @@ public sealed class AcumuladoCalculadorTests
         Assert.Equal(300m + 50m * 6, m.ProyeccionFinDeAnio);
     }
 
+    /// <summary>Entrega 8, pieza B: el monto declarado es la tercera componente de la composición
+    /// y la invariante de suma se mantiene a tres fuentes.</summary>
+    [Fact]
+    public void La_composicion_declarada_cuadra_con_el_total_a_tres_fuentes()
+    {
+        var filas = new List<AccionEjecutada>
+        {
+            F("Delta medido", "VMs (right-size / apagado)", "2026-01", 100m, fuenteMonto: "facturado"),
+            F("Estimado del barrido", "Discos / Réplicas", "2026-01", 100m, fuenteMonto: "estimado"),
+            F("Apagado declarado a mano", "(sin categoría)", "2026-01", 100m, fuenteMonto: "declarado"),
+        };
+        var m = AcumuladoCalculador.Calcular(filas, EjesOk, ReservasVacioMedido, gastoTotalRango: null,
+            Ctx("2026-01-01", "2026-01-31", corte: "2026-01-31"));
+
+        Assert.Equal(100m, m.MontoFacturado);
+        Assert.Equal(100m, m.MontoEstimado);
+        Assert.Equal(100m, m.MontoDeclarado);
+        Assert.Equal(m.AcumuladoTotal, m.MontoFacturado + m.MontoEstimado + m.MontoDeclarado);
+    }
+
     /// <summary>Entrega 8: una fila SinProyeccion (reserva heredada del respaldo, sin vencimiento
     /// derivable) suma su tasa dentro del rango —es un hecho facturado— pero la proyección a fin
     /// de año la excluye: la salvaguarda 4 pesa más que la cifra.</summary>

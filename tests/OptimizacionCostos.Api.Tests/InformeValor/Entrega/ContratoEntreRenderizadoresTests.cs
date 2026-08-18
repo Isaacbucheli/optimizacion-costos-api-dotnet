@@ -180,6 +180,10 @@ public sealed class ContratoEntreRenderizadoresTests
             "evolución cuando la foto de Azure no midió. Las Tareas 8 (plantilla) y 9 (React) de esa " +
             "entrega dibujan la tabla del respaldo; al hacerlo, esta entrada se restringe a las " +
             "sub-rutas que ninguna vista publique (por ejemplo la línea cruda del pivot) o se retira."),
+        ("ejecutado.declarado", Lado.Ninguno,
+            "ENTRADA TEMPORAL de la entrega 8 (pieza B): la tercera componente de la composición " +
+            "del acumulado (montos registrados a mano por el consultor). Las Tareas 8 (plantilla) y " +
+            "9 (React) la suman al texto de la tarjeta de composición; esta entrada se retira ahí."),
         ("ejecutado.filas.sinProyeccion", Lado.Ninguno,
             "Flag de cálculo de la entrega 8: una reserva heredada del respaldo (sin fecha de compra " +
             "observable) suma su tasa en el rango pero la proyección a fin de año la excluye. El " +

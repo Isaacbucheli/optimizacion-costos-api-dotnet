@@ -90,7 +90,8 @@ public static class InformeValorEnsamblador
         IReadOnlyList<CasoRow> casos, InsumosBd insumosBd, string nombreCliente,
         ContextoInformeValor contexto, FotoReservas? fotoReservas = null,
         RegistroBarrido? registroBarrido = null, IReadOnlyList<EvolucionRow>? evolucion = null,
-        IReadOnlyDictionary<string, PrecioReservaVm>? preciosReserva = null)
+        IReadOnlyDictionary<string, PrecioReservaVm>? preciosReserva = null,
+        IReadOnlyList<AccionManualRow>? accionesManuales = null)
     {
         var consumo = ConsumoCalculador.Calcular(facturacion, filasAntesDeFusionar, contexto);
         var operacion = OperacionCalculador.Calcular(casos, contexto);
@@ -129,7 +130,9 @@ public static class InformeValorEnsamblador
         // reservas ya medida, ninguna de las tres fuentes tiene nada que cruzar y el bloque queda
         // null, misma semántica que los demás bloques ausentes de este método.
         EjecutadoModelo? ejecutado = null;
-        if (registroBarrido is not null || (fotoReservas?.Medido ?? false))
+        // Entrega 8: las acciones manuales también habilitan el bloque — un cliente sin barrido
+        // ni foto pero con acciones registradas a mano igual tiene un acumulado que publicar.
+        if (registroBarrido is not null || (fotoReservas?.Medido ?? false) || (accionesManuales?.Count > 0))
         {
             var fotoParaEjecutado = fotoReservas ?? FotoReservasPedidaAparte(contexto);
             var reservasFacturadas = ReservasFacturadasCalculador.Calcular(
@@ -161,7 +164,8 @@ public static class InformeValorEnsamblador
                     "los dos endpoints de producción siempre resuelven el barrido antes de llamar)."),
                 // Ojo: aun sin registroBarrido, la rama de matriz corre con HallazgosResueltos reales;
                 // solo el eje del barrido queda suprimido hasta que el controller lo cablee (T10).
-                insumosBd.HallazgosResueltos ?? [], reservasFacturadas, fotoParaEjecutado, facturacion, contexto);
+                insumosBd.HallazgosResueltos ?? [], reservasFacturadas, fotoParaEjecutado, facturacion, contexto,
+                accionesManuales);
             ejecutado = AcumuladoCalculador.Calcular(
                 filasEjecutado, ejesEjecutado, reservasFacturadas, consumo?.Total, contexto);
         }

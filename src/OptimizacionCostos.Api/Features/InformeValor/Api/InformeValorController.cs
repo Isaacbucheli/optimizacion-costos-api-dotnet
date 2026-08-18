@@ -335,10 +335,11 @@ public sealed class InformeValorController(
         var nombreCliente = await clientStore.GetNameAsync(clientId, ct) ?? $"Cliente {clientId}";
         var evolucion = await store.GetEvolucionAsync(clientId, ct);
         var registro = await LeerRegistroBarridoAsync(clientId, ct);
+        var manuales = await store.GetAccionesManualesAsync(clientId, ct);
 
         var modelo = InformeValorEnsamblador.Ensamblar(
             facturacion, FilasAntesDeFusionar(estados), casos, insumosBd, nombreCliente, contexto,
-            registroBarrido: registro, evolucion: evolucion);
+            registroBarrido: registro, evolucion: evolucion, accionesManuales: manuales);
 
         return Ok(modelo);
     }
@@ -560,6 +561,7 @@ public sealed class InformeValorController(
         var nombreCliente = await clientStore.GetNameAsync(clientId, ct) ?? $"Cliente {clientId}";
         var evolucion = await store.GetEvolucionAsync(clientId, ct);
         var registro = await LeerRegistroBarridoAsync(clientId, ct);
+        var manuales = await store.GetAccionesManualesAsync(clientId, ct);
         var foto = await fotoPendiente;
 
         // Entrega 8, pieza A: los precios de catálogo para el respaldo de reservas se resuelven
@@ -577,7 +579,8 @@ public sealed class InformeValorController(
 
         var modelo = InformeValorEnsamblador.Ensamblar(
             facturacion, FilasAntesDeFusionar(estados), casos, insumosBd, nombreCliente, contexto, foto,
-            registroBarrido: registro, evolucion: evolucion, preciosReserva: preciosReserva);
+            registroBarrido: registro, evolucion: evolucion, preciosReserva: preciosReserva,
+            accionesManuales: manuales);
 
         ArtefactoInforme artefacto;
         try
