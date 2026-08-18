@@ -45,10 +45,9 @@ public class CoberturaMesesDbTests
         var clients = new SqlClientStore(factory);
         var store = new SqlInformeValorStore(factory);
 
-        // Los sobrantes de una corrida anterior se limpian antes de empezar: el borrado en cascada
-        // de clientes está roto hoy en esta base (FK_waf_canonical_consolidates, ver el finally), así
-        // que una corrida que se cae a la mitad deja su cliente de prueba vivo.
-        await BorrarClientesDePruebaAsync(factory);
+        // Los sobrantes de una corrida anterior se limpian antes de empezar: una corrida que se cae
+        // antes del finally deja su cliente de prueba vivo.
+        await BorrarClientesDePruebaAsync(factory, clients);
 
         var tag = $"e2e-cobertura-{Guid.NewGuid():N}";
         var clientId = await clients.CreateAsync($"E2E cobertura {tag}", null, null, null, null);
@@ -82,28 +81,29 @@ public class CoberturaMesesDbTests
         }
         finally
         {
-            // Limpieza propia y no DeleteClientCascadeAsync: esa cascada borra las canónicas de WAF
-            // huérfanas de TODA la base, y hoy falla contra -valida porque alguna se apunta a otra
-            // por consolidates_to_id (FK_waf_canonical_consolidates). Es un defecto vivo del borrado
-            // de clientes, ajeno a este test; encadenarse a él dejaría basura acá cada vez.
-            await BorrarClientesDePruebaAsync(factory);
+            await BorrarClientesDePruebaAsync(factory, clients);
         }
     }
 
-    /// <summary>Borra los clientes que crea este test y sus filas de insumos. Por nombre, no por id:
-    /// también barre lo que haya dejado una corrida que se cayó antes del finally.</summary>
-    private static async Task BorrarClientesDePruebaAsync(ISqlConnectionFactory factory)
+    /// <summary>Borra los clientes que crea este test. Por nombre y no por id, así también barre lo
+    /// que haya dejado una corrida que se cayó antes del finally.
+    ///
+    /// <para>Pasa por la cascada de la app en vez de enumerar tablas a mano: es la que sabe qué hay
+    /// que borrar, y una lista escrita acá se desactualiza en silencio en cuanto el módulo suma una
+    /// tabla. Estuvo hecha a mano un tiempo porque la cascada fallaba por
+    /// <c>FK_waf_canonical_consolidates</c> y se llevaba puesta la limpieza de este test; eso quedó
+    /// arreglado el 2026-08-18 (ver <c>WafCanonicalPurgeDbTests</c>).</para></summary>
+    private static async Task BorrarClientesDePruebaAsync(ISqlConnectionFactory factory, SqlClientStore clients)
     {
-        await using var conn = await factory.OpenAsync(CancellationToken.None);
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            DECLARE @ids TABLE (id INT);
-            INSERT INTO @ids SELECT client_id FROM dbo.clients WHERE client_name LIKE @patron;
-            DELETE FROM dbo.informe_valor_facturacion WHERE client_id IN (SELECT id FROM @ids);
-            DELETE FROM dbo.informe_valor_ingesta WHERE client_id IN (SELECT id FROM @ids);
-            DELETE FROM dbo.clients WHERE client_id IN (SELECT id FROM @ids);
-            """;
-        cmd.Parameters.Add(new SqlParameter("@patron", "E2E cobertura %"));
-        await cmd.ExecuteNonQueryAsync(CancellationToken.None);
+        var ids = new List<int>();
+        await using (var conn = await factory.OpenAsync(CancellationToken.None))
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT client_id FROM dbo.clients WHERE client_name LIKE @patron";
+            cmd.Parameters.Add(new SqlParameter("@patron", "E2E cobertura %"));
+            await using var r = await cmd.ExecuteReaderAsync(CancellationToken.None);
+            while (await r.ReadAsync(CancellationToken.None)) ids.Add(r.GetInt32(0));
+        }
+        foreach (var id in ids) await clients.DeleteClientCascadeAsync(id);
     }
 }

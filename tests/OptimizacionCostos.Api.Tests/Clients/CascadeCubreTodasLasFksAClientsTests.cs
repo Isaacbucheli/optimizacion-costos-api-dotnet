@@ -4,20 +4,27 @@ using System.Text.RegularExpressions;
 namespace OptimizacionCostos.Api.Tests.Clients;
 
 /// <summary>
-/// Este guardia existe porque el mismo defecto ya apareció tres veces: alguien agrega una tabla con
-/// FK a <c>dbo.clients</c>, nadie se acuerda de sumarla a <c>DeleteClientCascadeAsync</c>, y borrar
-/// un cliente empieza a fallar por clave foránea. La primera vez fue
-/// <c>FK_waf_canonical_consolidates</c>, y la limpieza fallida de un cliente de prueba dejó una fila
-/// colgada en la base de producción. La tercera vez fueron OCHO tablas a la vez: las cuatro de
-/// Informe de valor más el barrido de optimización y el histórico/sync de Advisor score.
+/// Este guardia existe porque el defecto se repite: alguien agrega una tabla con FK a
+/// <c>dbo.clients</c>, nadie se acuerda de sumarla a <c>DeleteClientCascadeAsync</c>, y borrar un
+/// cliente empieza a fallar por clave foránea. El caso que lo motivó fueron OCHO tablas a la vez (las
+/// de Informe de valor más el barrido de optimización y el histórico/sync de Advisor score), varias ya
+/// en producción: <c>2ceb49f</c>. Desde entonces cazó dos más, del mismo módulo:
+/// <c>informe_valor_entrega</c> en <c>b1aaf42</c> e <c>informe_valor_evolucion</c> en <c>fbbaf64</c>.
 ///
 /// Agregar las tablas que faltan arregla el pasado y no el futuro. Esto último es lo que hace este
 /// test: escanea las declaraciones de FK contra <c>clients</c> en el código de esquema (mismo patrón
 /// que <c>SinRelojDelSistemaTests</c> y <c>ColumnLimitsSchemaSyncTests</c>: lee el archivo, no la
-/// reflexión) y exige que el cascade nombre cada tabla. Así la novena falla acá, en el CI, y no en
+/// reflexión) y exige que el cascade nombre cada tabla. Así la próxima falla acá, en el CI, y no en
 /// producción cuando alguien intenta borrar un cliente.
 ///
 /// Se exceptúan las FK declaradas con <c>ON DELETE CASCADE</c>: esas las limpia el motor.
+///
+/// <para><b>Ojo, hay otra forma de tumbar el borrado que este guardia NO cubre</b>, y no hay que
+/// confundirlas: el barrido de canónicas huérfanas del catálogo de WAF. Ahí la FK que estorbaba era
+/// <c>FK_waf_canonical_consolidates</c>, autorreferente (<c>consolidates_to_id</c> apunta a otra
+/// canónica del mismo catálogo) y sin relación con <c>dbo.clients</c>, así que la regex de acá jamás
+/// la habría visto y "sumar la tabla que faltaba" nunca fue su arreglo. Eso lo cubre
+/// <c>WafCanonicalPurgeDbTests</c>.</para>
 /// </summary>
 public sealed class CascadeCubreTodasLasFksAClientsTests
 {
