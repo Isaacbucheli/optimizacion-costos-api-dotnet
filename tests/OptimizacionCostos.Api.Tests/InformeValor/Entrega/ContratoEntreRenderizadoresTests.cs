@@ -175,11 +175,6 @@ public sealed class ContratoEntreRenderizadoresTests
             "SeccionCronologia.tsx (Tarea 9) agrupan los hitos por fecha, no por pilar, así que ninguno " +
             "de los dos lo dibuja: verificado con grep para \"pilar\" en SeccionCronologia.tsx, sin " +
             "resultados."),
-        ("ejecutado.reservas.respaldo", Lado.Html,
-            "ENTRADA TEMPORAL de la entrega 8 (pieza A): las reservas leídas desde el archivo de " +
-            "evolución cuando la foto de Azure no midió. La plantilla (Tarea 8) ya dibuja la tabla " +
-            "del respaldo; la Tarea 9 (React) la iguala y esta entrada se retira, salvo las " +
-            "sub-rutas que ninguna vista publica (linea y region, declaradas aparte)."),
         ("ejecutado.reservas.respaldo.filas.linea", Lado.Ninguno,
             "El texto crudo de la línea del pivot (\"Reserved VM Instance, SKU, región, término\"): " +
             "las vistas publican sus partes ya parseadas (sku/term), nunca la cadena entera."),
@@ -187,16 +182,6 @@ public sealed class ContratoEntreRenderizadoresTests
             "La región de la línea del respaldo: entra al cruce de precios (la clave del catálogo) " +
             "pero la tabla publica SKU y término, no la región — mismo criterio que la tabla por VM, " +
             "que tampoco la dibuja."),
-        ("ejecutado.declarado", Lado.Html,
-            "ENTRADA TEMPORAL de la entrega 8 (pieza B): la tercera componente de la composición " +
-            "del acumulado (montos registrados a mano por el consultor). La plantilla (Tarea 8) ya " +
-            "la publica en la tarjeta de composición; la Tarea 9 (React) la iguala y esta entrada " +
-            "se retira."),
-        ("fact.variacionConsumo", Lado.Html,
-            "Colisión de token con la entrega 8: \"term\" ahora lo lee la plantilla por la tabla del " +
-            "respaldo de reservas (ejecutado.reservas.respaldo.filas.term), y el barrido por token " +
-            "no distingue rutas — las rutas de term bajo variacionConsumo siguen sin dibujarse en " +
-            "ninguna vista (misma situación que las entradas React y Ninguno de este mismo nodo)."),
         ("ejecutado.filas.sinProyeccion", Lado.Ninguno,
             "Flag de cálculo de la entrega 8: una reserva heredada del respaldo (sin fecha de compra " +
             "observable) suma su tasa en el rango pero la proyección a fin de año la excluye. El " +
