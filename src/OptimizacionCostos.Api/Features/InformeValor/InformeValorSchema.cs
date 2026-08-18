@@ -1,4 +1,4 @@
-using Microsoft.Data.SqlClient;
+﻿using Microsoft.Data.SqlClient;
 
 namespace OptimizacionCostos.Api.Features.InformeValor;
 
@@ -272,13 +272,42 @@ public static class InformeValorSchema
         """,
     ];
 
+    /// <summary>Errores de SQL Server que significan "otra conexión ya lo creó": objeto duplicado
+    /// (2714), índice duplicado (1913) y columna duplicada (2705). Las guardas de arriba —
+    /// <c>OBJECT_ID ... IS NULL</c>, <c>COL_LENGTH ... IS NULL</c>— evitan el caso normal, así que
+    /// contra una base sana estos números SOLO pueden venir de dos conexiones ensayando el esquema
+    /// a la vez. Cualquier otro número se propaga.</summary>
+    internal static readonly IReadOnlySet<int> ErroresDeCarreraDeEsquema = new HashSet<int> { 2714, 1913, 2705 };
+
+    /// <summary>
+    /// Corre el esquema, tolerando que otra conexión lo esté corriendo al mismo tiempo.
+    ///
+    /// <para>La tolerancia no es defensiva por gusto: pasó en producción el 2026-08-18, a los
+    /// minutos del despliegue que estrenó <c>informe_valor_evolucion</c>. La pantalla del módulo
+    /// abre pidiendo varios endpoints a la vez y cada uno asegura el esquema en SU conexión, así
+    /// que las tres leyeron <c>OBJECT_ID</c> en NULL antes de que ninguna creara nada: una creó la
+    /// tabla y las otras murieron con 2714, que el usuario vio como "Error interno".
+    /// La guarda estaba bien escrita; lo que faltaba era que fuera atómica, y no lo es.</para>
+    ///
+    /// <para>Solo muerde la PRIMERA vez que una tabla o columna es nueva, que es justo cuando nadie
+    /// está mirando porque el despliegue "ya salió bien". Contra una base al día las guardas cortan
+    /// antes y acá no se atrapa nada.</para>
+    /// </summary>
     public static async Task EnsureSchemaAsync(SqlConnection conn, CancellationToken ct)
     {
         foreach (var sql in Statements)
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;
-            await cmd.ExecuteNonQueryAsync(ct);
+            try
+            {
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+            catch (SqlException ex) when (ErroresDeCarreraDeEsquema.Contains(ex.Number))
+            {
+                // Otra conexión ganó la carrera y ya dejó el objeto creado: el estado final es el
+                // que esta sentencia buscaba, así que seguir es correcto.
+            }
         }
     }
 }
