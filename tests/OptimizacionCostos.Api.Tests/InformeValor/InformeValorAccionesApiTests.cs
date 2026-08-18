@@ -169,6 +169,64 @@ public sealed class InformeValorAccionesApiTests : IClassFixture<InformeValorAcc
         Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
     }
 
+    // ---- La captura asistida: POST clients/{id}/acciones/extraer ----
+
+    [Fact]
+    public async Task Extraer_con_texto_vacio_es_400()
+    {
+        _factory.Access.Allow(clientId: 7);
+        var client = ClientFor("e1@bit.ec", Roles.Consultor, canEdit: true);
+
+        var res = await client.PostAsJsonAsync("/informe-valor/clients/7/acciones/extraer",
+            new Dictionary<string, object?> { ["texto"] = "   " });
+
+        Assert.Equal(HttpStatusCode.BadRequest, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task Extraer_devuelve_las_candidatas_sin_persistir()
+    {
+        _factory.Access.Allow(clientId: 7);
+        _factory.Chat.Respuesta =
+            """{"acciones":[{"oportunidad":"Apagado de VMs de desarrollo","mes":"2026-07","monto":450.0,"recurso":null,"cita":"se apagaron las 3 VMs"}]}""";
+        var client = ClientFor("e2@bit.ec", Roles.Consultor, canEdit: true);
+        var antes = _factory.Store.Acciones.Count;
+
+        var res = await client.PostAsJsonAsync("/informe-valor/clients/7/acciones/extraer",
+            new Dictionary<string, object?> { ["texto"] = "correo del cliente..." });
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var json = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
+        var accion = Assert.Single(json.RootElement.GetProperty("acciones").EnumerateArray());
+        Assert.Equal("2026-07", accion.GetProperty("mes").GetString());
+        Assert.Equal(antes, _factory.Store.Acciones.Count); // propone, NUNCA persiste
+    }
+
+    [Fact]
+    public async Task Extraer_cuando_el_modelo_no_responde_es_502()
+    {
+        _factory.Access.Allow(clientId: 7);
+        _factory.Chat.Respuesta = null;
+        var client = ClientFor("e3@bit.ec", Roles.Consultor, canEdit: true);
+
+        var res = await client.PostAsJsonAsync("/informe-valor/clients/7/acciones/extraer",
+            new Dictionary<string, object?> { ["texto"] = "correo..." });
+
+        Assert.Equal(HttpStatusCode.BadGateway, res.StatusCode);
+    }
+
+    [Fact]
+    public async Task Extraer_sin_permiso_edit_es_403()
+    {
+        _factory.Access.Allow(clientId: 7);
+        var client = ClientFor("e4@bit.ec", Roles.Lector, canEdit: false);
+
+        var res = await client.PostAsJsonAsync("/informe-valor/clients/7/acciones/extraer",
+            new Dictionary<string, object?> { ["texto"] = "correo..." });
+
+        Assert.Equal(HttpStatusCode.Forbidden, res.StatusCode);
+    }
+
     [Fact]
     public async Task Put_actualiza_y_devuelve_204()
     {
@@ -192,6 +250,7 @@ public sealed class InformeValorAccionesApiTests : IClassFixture<InformeValorAcc
         public FakeUserDirectory Directory { get; } = new();
         public InformeValorUploadApiTests.FakeAnalysisAccessForInformeValor Access { get; } = new();
         public FakeAccionesStore Store { get; } = new();
+        public FakeChatControlable Chat { get; } = new();
         public FakeModulePermissionStore Perms { get; } = new FakeModulePermissionStore().SeedDefaults();
         public IModulePermissionService Service => Services.GetRequiredService<IModulePermissionService>();
 
@@ -217,8 +276,19 @@ public sealed class InformeValorAccionesApiTests : IClassFixture<InformeValorAcc
                 services.AddSingleton<IModulePermissionStore>(Perms);
                 services.RemoveAll<IModulePermissionService>();
                 services.AddSingleton<IModulePermissionService, ModulePermissionService>();
+                // La captura asistida reusa IChatCompletionClient: acá un fake controlable, para
+                // que el endpoint de extraer no toque Azure OpenAI real.
+                services.RemoveAll<OptimizacionCostos.Api.Features.CostEngine.Pricing.IChatCompletionClient>();
+                services.AddSingleton<OptimizacionCostos.Api.Features.CostEngine.Pricing.IChatCompletionClient>(Chat);
             });
         }
+    }
+
+    /// <summary>Chat de Azure OpenAI controlable por test: devuelve lo que se le asigne.</summary>
+    public sealed class FakeChatControlable : OptimizacionCostos.Api.Features.CostEngine.Pricing.IChatCompletionClient
+    {
+        public string? Respuesta { get; set; }
+        public string? Complete(string systemPrompt, string userJson, int maxCompletionTokens = 500) => Respuesta;
     }
 
     /// <summary>Store en memoria SOLO para el CRUD de acciones: el resto de la interfaz lanza,

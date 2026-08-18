@@ -278,6 +278,45 @@ public sealed class InformeValorController(
             : NotFound(new { detail = "La acción no existe para este cliente." });
     }
 
+    /// <summary>Tope de la evidencia pegada: suficiente para un hilo de correo largo, y muy por
+    /// debajo de cualquier límite del modelo — un texto mayor casi siempre es un pegado accidental
+    /// (un export entero) que conviene rechazar con instrucciones.</summary>
+    internal const int MaxCaracteresEvidencia = 20000;
+
+    /// <summary>
+    /// Entrega 8, pieza B: la captura asistida. Recibe la evidencia pegada (correo, chat, minuta),
+    /// se la pasa a <see cref="AccionesEvidenciaExtractor"/> (el mismo Azure OpenAI del resto de la
+    /// plataforma) y devuelve las candidatas SIN persistir nada: la confirmación del consultor va
+    /// por el POST normal de acciones, con sus mismas validaciones. La IA propone; el consultor
+    /// declara.
+    /// </summary>
+    [HttpPost("clients/{clientId:int}/acciones/extraer")]
+    [RequireModule(Modules.InformeValor, ModuleAccess.Edit)]
+    public async Task<IActionResult> ExtraerAcciones(
+        int clientId, [FromBody] ExtraerEvidenciaRequest request,
+        [FromServices] AccionesEvidenciaExtractor extractor, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+
+        var texto = request.Texto?.Trim();
+        if (string.IsNullOrEmpty(texto))
+            return BadRequest(new { detail = "Pega la evidencia (correo, chat o minuta) a analizar." });
+        if (texto.Length > MaxCaracteresEvidencia)
+            return BadRequest(new
+            {
+                detail = $"La evidencia supera los {MaxCaracteresEvidencia:N0} caracteres: recórtala al fragmento relevante.",
+            });
+
+        var candidatas = await extractor.ExtraerAsync(texto, ct);
+        if (candidatas is null)
+            return StatusCode(StatusCodes.Status502BadGateway, new
+            {
+                detail = "La extracción con IA no devolvió una respuesta utilizable. Intenta de nuevo o registra la acción a mano.",
+            });
+        return Ok(new { acciones = candidatas });
+    }
+
     /// <summary>El detalle del 400, o null si el cuerpo es válido. Las mismas reglas que replica
     /// el front: oportunidad obligatoria, meses "aaaa-MM", fin no anterior al inicio, monto no
     /// negativo. Los anchos se validan acá para responder 400 legible en vez del truncamiento
@@ -1092,6 +1131,9 @@ public sealed class InformeValorController(
 public sealed record AccionManualRequest(
     string? Oportunidad, string? Categoria, string? MesEjecucion, string? MesFin,
     decimal? MontoMensual, string? Recurso, string? Nota, string? Evidencia);
+
+/// <summary>La evidencia pegada para la captura asistida (entrega 8, pieza B).</summary>
+public sealed record ExtraerEvidenciaRequest(string? Texto);
 
 public sealed record PreviewRequest(
     DateOnly PeriodStart,
