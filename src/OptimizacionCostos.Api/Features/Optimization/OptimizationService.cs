@@ -220,6 +220,9 @@ public sealed class OptimizationService(
     public async Task<bool> UpdateStateAsync(byte[] fingerprint, string state, string? notes, string? actor, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
+        // UpdateStateSql menciona resolved_by_kind, que llega por soft-migration: sin esto, contra
+        // una BD donde la tabla ya existia sin la columna el UPDATE falla con "Invalid column name".
+        await EnsureSchemaAsync(conn, ct);
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = UpdateStateSql;
         cmd.Parameters.Add(new SqlParameter("@state", state));
