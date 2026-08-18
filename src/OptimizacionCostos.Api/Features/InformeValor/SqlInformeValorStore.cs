@@ -716,6 +716,112 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    // ===================================================================================
+    // El registro manual de acciones ejecutadas (entrega 8, pieza B). Acumula con borrado
+    // lógico: una acción registrada respalda informes ya emitidos, así que nunca se borra
+    // de verdad.
+    // ===================================================================================
+
+    public async Task<IReadOnlyList<AccionManualRow>> GetAccionesManualesAsync(int clientId, CancellationToken ct)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await InformeValorSchema.EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT accion_id, oportunidad, categoria, mes_ejecucion, mes_fin, monto_mensual,
+                recurso, nota, evidencia, creado_por, creado_en
+            FROM dbo.informe_valor_accion_manual
+            WHERE client_id = @cid AND activo = 1
+            ORDER BY mes_ejecucion, accion_id
+            """;
+        cmd.Parameters.Add(new SqlParameter("@cid", SqlDbType.Int) { Value = clientId });
+
+        var result = new List<AccionManualRow>();
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct))
+        {
+            result.Add(new AccionManualRow(
+                AccionId: rd.GetInt32(0),
+                Oportunidad: rd.GetString(1),
+                Categoria: rd.IsDBNull(2) ? null : rd.GetString(2),
+                MesEjecucion: rd.GetString(3).TrimEnd(), // CHAR(7): sin recorte viajarían espacios
+                MesFin: rd.IsDBNull(4) ? null : rd.GetString(4).TrimEnd(),
+                MontoMensual: rd.IsDBNull(5) ? null : rd.GetDecimal(5),
+                Recurso: rd.IsDBNull(6) ? null : rd.GetString(6),
+                Nota: rd.IsDBNull(7) ? null : rd.GetString(7),
+                Evidencia: rd.IsDBNull(8) ? null : rd.GetString(8),
+                CreadoPor: rd.IsDBNull(9) ? null : rd.GetString(9),
+                CreadoEn: rd.GetDateTime(10)));
+        }
+        return result;
+    }
+
+    public async Task<int> InsertAccionManualAsync(
+        int clientId, AccionManualNueva accion, string? user, CancellationToken ct)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await InformeValorSchema.EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO dbo.informe_valor_accion_manual
+                (client_id, oportunidad, categoria, mes_ejecucion, mes_fin, monto_mensual,
+                 recurso, nota, evidencia, creado_por)
+            OUTPUT INSERTED.accion_id
+            VALUES (@cid, @oportunidad, @categoria, @mes, @fin, @monto, @recurso, @nota, @evidencia, @user)
+            """;
+        AgregarParametrosDeAccion(cmd, clientId, accion);
+        cmd.Parameters.Add(new SqlParameter("@user", SqlDbType.NVarChar, 200) { Value = TruncDb(user, 200) });
+        return Convert.ToInt32(await cmd.ExecuteScalarAsync(ct));
+    }
+
+    public async Task<bool> UpdateAccionManualAsync(
+        int clientId, int accionId, AccionManualNueva accion, CancellationToken ct)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await InformeValorSchema.EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dbo.informe_valor_accion_manual
+            SET oportunidad = @oportunidad, categoria = @categoria, mes_ejecucion = @mes,
+                mes_fin = @fin, monto_mensual = @monto, recurso = @recurso, nota = @nota,
+                evidencia = @evidencia, actualizado_en = SYSUTCDATETIME()
+            WHERE client_id = @cid AND accion_id = @id AND activo = 1
+            """;
+        AgregarParametrosDeAccion(cmd, clientId, accion);
+        cmd.Parameters.Add(new SqlParameter("@id", SqlDbType.Int) { Value = accionId });
+        return await cmd.ExecuteNonQueryAsync(ct) > 0;
+    }
+
+    public async Task<bool> DeleteAccionManualAsync(int clientId, int accionId, CancellationToken ct)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await InformeValorSchema.EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            UPDATE dbo.informe_valor_accion_manual
+            SET activo = 0, actualizado_en = SYSUTCDATETIME()
+            WHERE client_id = @cid AND accion_id = @id AND activo = 1
+            """;
+        cmd.Parameters.Add(new SqlParameter("@cid", SqlDbType.Int) { Value = clientId });
+        cmd.Parameters.Add(new SqlParameter("@id", SqlDbType.Int) { Value = accionId });
+        return await cmd.ExecuteNonQueryAsync(ct) > 0;
+    }
+
+    /// <summary>Los parámetros que INSERT y UPDATE comparten (mismos anchos que el esquema; los
+    /// opcionales pasan por <see cref="Db"/>/<see cref="TruncDb"/> — SqlException 8178).</summary>
+    private static void AgregarParametrosDeAccion(SqlCommand cmd, int clientId, AccionManualNueva accion)
+    {
+        cmd.Parameters.Add(new SqlParameter("@cid", SqlDbType.Int) { Value = clientId });
+        cmd.Parameters.Add(new SqlParameter("@oportunidad", SqlDbType.NVarChar, 200) { Value = TruncDb(accion.Oportunidad, 200) });
+        cmd.Parameters.Add(new SqlParameter("@categoria", SqlDbType.NVarChar, 100) { Value = TruncDb(accion.Categoria, 100) });
+        cmd.Parameters.Add(new SqlParameter("@mes", SqlDbType.Char, 7) { Value = accion.MesEjecucion });
+        cmd.Parameters.Add(new SqlParameter("@fin", SqlDbType.Char, 7) { Value = Db(accion.MesFin) });
+        cmd.Parameters.Add(new SqlParameter("@monto", SqlDbType.Decimal) { Precision = 18, Scale = 2, Value = Db(accion.MontoMensual) });
+        cmd.Parameters.Add(new SqlParameter("@recurso", SqlDbType.NVarChar, 512) { Value = TruncDb(accion.Recurso, 512) });
+        cmd.Parameters.Add(new SqlParameter("@nota", SqlDbType.NVarChar, 1000) { Value = TruncDb(accion.Nota, 1000) });
+        cmd.Parameters.Add(new SqlParameter("@evidencia", SqlDbType.NVarChar, -1) { Value = Db(accion.Evidencia) });
+    }
+
     /// <summary>Un null de C# en SqlParameter lanza SqlException 8178; hay que mapear a DBNull.</summary>
     private static object Db(object? value) => value ?? DBNull.Value;
 

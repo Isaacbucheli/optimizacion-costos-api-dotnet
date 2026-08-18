@@ -1129,6 +1129,15 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
         /// entrega_id adivinado no puede devolver el artefacto de otro cliente.</summary>
         public Task<EntregaArchivada?> GetEntregaAsync(int clientId, int entregaId, CancellationToken ct) =>
             Task.FromResult(_archivadas.GetValueOrDefault((clientId, entregaId)));
+
+        public Task<IReadOnlyList<AccionManualRow>> GetAccionesManualesAsync(int clientId, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<AccionManualRow>>([]);
+        public Task<int> InsertAccionManualAsync(int clientId, AccionManualNueva accion, string? user, CancellationToken ct)
+            => throw new NotSupportedException();
+        public Task<bool> UpdateAccionManualAsync(int clientId, int accionId, AccionManualNueva accion, CancellationToken ct)
+            => throw new NotSupportedException();
+        public Task<bool> DeleteAccionManualAsync(int clientId, int accionId, CancellationToken ct)
+            => throw new NotSupportedException();
     }
 
     /// <summary>Insumos de base vacíos, con la trazabilidad que la entrega tiene que archivar
