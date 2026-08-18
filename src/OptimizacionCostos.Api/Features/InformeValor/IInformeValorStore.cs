@@ -20,6 +20,21 @@ public sealed record InsumoEstado(
     int Filas, int RowsMerged, string? Status, IReadOnlyList<string> Warnings,
     int IngestaId);
 
+/// <summary>
+/// El primer y el último mes que cubre un insumo cargado, como claves de mes calendario
+/// ("aaaa-MM"). Es el rango REAL del archivo, no el que alguien quiso subir: sale de un MIN/MAX
+/// sobre las filas vigentes.
+/// </summary>
+public sealed record RangoMeses(string Desde, string Hasta);
+
+/// <summary>
+/// Qué período cubre cada insumo con eje de tiempo. <c>null</c> en un insumo quiere decir que no
+/// hay filas cargadas (o que ninguna trae fecha), y eso es distinto de un rango vacío: el front
+/// propone el período por defecto con el primero que exista y, si no existe ninguno, se queda con
+/// su propio criterio en vez de inventar un rango.
+/// </summary>
+public sealed record CoberturaMeses(RangoMeses? Facturacion, RangoMeses? Evolucion, RangoMeses? Casos);
+
 public interface IInformeValorStore
 {
     Task<int> ReplaceFacturacionAsync(
@@ -44,6 +59,13 @@ public interface IInformeValorStore
     Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct);
 
     Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct);
+
+    /// <summary>
+    /// El rango de meses que cubren los insumos cargados del cliente. Lo pide la pantalla de
+    /// insumos junto con el estado, así que es un MIN/MAX agregado por tabla y NUNCA lee filas:
+    /// proponer el período del informe no puede costar lo que cuesta calcularlo.
+    /// </summary>
+    Task<CoberturaMeses> GetCoberturaMesesAsync(int clientId, CancellationToken ct);
 
     /// <summary>
     /// Las filas de facturación ya persistidas de un cliente (Tarea 8: insumo del ensamblador del

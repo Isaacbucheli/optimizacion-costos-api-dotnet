@@ -1026,6 +1026,9 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
                     new DateTime(2026, 3, 1, 8, 10, 0, DateTimeKind.Utc), 0, 0, "ok", [], IngestaEvolucion),
             ]);
 
+        public Task<CoberturaMeses> GetCoberturaMesesAsync(int clientId, CancellationToken ct)
+            => Task.FromResult(new CoberturaMeses(null, null, null));
+
         public Task<IReadOnlyList<FacturacionRow>> GetFacturacionAsync(int clientId, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<FacturacionRow>>(
             [

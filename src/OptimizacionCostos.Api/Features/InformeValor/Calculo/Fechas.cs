@@ -53,4 +53,13 @@ public static class Fechas
     /// </summary>
     public static DateOnly ResolverFechaEnGuayaquil(DateTimeOffset instante) =>
         DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instante, ZonaGuayaquil).DateTime);
+
+    /// <summary>
+    /// La clave de mes calendario ("aaaa-MM") de un índice <c>año * 12 + mes</c> con el mes en
+    /// 1..12, que es como se ordenan y comparan los períodos en las consultas del módulo. El mes 12
+    /// es el caso que se rompe si uno divide de más: 2025*12+12 tiene que volver a leerse como
+    /// 2025-12, nunca como 2026-00.
+    /// </summary>
+    public static string ClaveDeMes(int indiceAnioMes) =>
+        $"{(indiceAnioMes - 1) / 12:D4}-{((indiceAnioMes - 1) % 12) + 1:D2}";
 }

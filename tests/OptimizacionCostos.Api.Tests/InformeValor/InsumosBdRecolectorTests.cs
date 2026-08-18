@@ -408,6 +408,9 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
         public Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<InsumoEstado>>([]);
 
+        public Task<CoberturaMeses> GetCoberturaMesesAsync(int clientId, CancellationToken ct)
+            => Task.FromResult(new CoberturaMeses(null, null, null));
+
         public Task<IReadOnlyList<FacturacionRow>> GetFacturacionAsync(int clientId, CancellationToken ct)
             => throw new NotSupportedException();
 
