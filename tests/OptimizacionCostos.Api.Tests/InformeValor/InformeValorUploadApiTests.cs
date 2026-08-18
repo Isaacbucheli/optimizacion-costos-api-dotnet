@@ -192,6 +192,26 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
         Assert.Equal(["facturacion", "evolucion", "casos", "rbac"], kinds);
     }
 
+    /// <summary>
+    /// El período que cubre cada insumo viaja en GET /estado. Es lo que deja al front proponer el
+    /// rango del informe con lo que hay cargado; un insumo sin filas con fecha llega en null, no en
+    /// un rango de relleno, porque "no sé qué cubre" y "cubre esto" no se pueden confundir.
+    /// </summary>
+    [Fact]
+    public async Task El_estado_declara_que_meses_cubre_cada_insumo()
+    {
+        _factory.Access.Allow(clientId: 7);
+        var client = ClientFor("periodo@bit.ec", Roles.Consultor, canEdit: false);
+
+        var body = await client.GetFromJsonAsync<JsonElement>("/informe-valor/clients/7/estado");
+
+        var periodo = body.GetProperty("periodo");
+        Assert.Equal("2025-03", periodo.GetProperty("facturacion").GetProperty("desde").GetString());
+        Assert.Equal("2026-06", periodo.GetProperty("facturacion").GetProperty("hasta").GetString());
+        Assert.Equal("2025-01", periodo.GetProperty("casos").GetProperty("desde").GetString());
+        Assert.Equal(JsonValueKind.Null, periodo.GetProperty("evolucion").ValueKind);
+    }
+
     private static MultipartFormDataContent Multipart(string fileName, byte[] bytes)
     {
         var content = new MultipartFormDataContent();
@@ -307,6 +327,12 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
 
         public Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<InsumoEstado>>([]);
+
+        /// <summary>Cobertura de meses del cliente: los tests de GET /estado comprueban con esto
+        /// que el bloque "periodo" viaja tal cual sale del store.</summary>
+        public Task<CoberturaMeses> GetCoberturaMesesAsync(int clientId, CancellationToken ct)
+            => Task.FromResult(new CoberturaMeses(
+                new RangoMeses("2025-03", "2026-06"), null, new RangoMeses("2025-01", "2026-07")));
 
         public Task<IReadOnlyList<FacturacionRow>> GetFacturacionAsync(int clientId, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<FacturacionRow>>([]);

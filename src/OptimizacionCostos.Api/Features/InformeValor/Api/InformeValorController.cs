@@ -74,6 +74,12 @@ public sealed class InformeValorController(
             SqlInformeValorStore.KindCasos, SqlInformeValorStore.KindRbac,
         };
 
+    /// <summary>Un rango de meses tal cual sale de la base, o <c>null</c> si el insumo no tiene
+    /// filas con fecha. El front lo usa para proponer el período del informe: la ausencia tiene que
+    /// llegar como ausencia y no como un rango de relleno, o el consultor terminaría calculando un
+    /// período que ningún archivo respalda.</summary>
+    private static object? Rango(RangoMeses? r) => r is null ? null : new { desde = r.Desde, hasta = r.Hasta };
+
     /// <summary>
     /// Qué insumos hay cargados y de cuándo, el estado de la condicional de RBAC con su motivo, y
     /// (implícito en <c>insumos</c>) qué falta para poder generar el informe. Es la pantalla de
@@ -86,6 +92,11 @@ public sealed class InformeValorController(
     /// <para><c>estado_rbac</c> tiene la MISMA forma que el bloque homónimo de <c>/insumos-bd</c>
     /// (mismos campos, mismos nombres -- <see cref="EstadoRbacBlock"/> construye los dos): el
     /// front consume un solo tipo para los dos endpoints.</para>
+    ///
+    /// <para><c>periodo</c> dice qué meses cubre cada insumo con eje de tiempo. Existe para que el
+    /// front proponga el período del informe con lo que hay cargado en vez de con "los últimos doce
+    /// meses", que era un rango que no miraba los datos: bastaba que el export empezara en marzo
+    /// para que el informe abriera pidiendo meses vacíos. Son MIN/MAX agregados, no filas.</para>
     /// </summary>
     [HttpGet("clients/{clientId:int}/estado")]
     public async Task<IActionResult> Estado(int clientId, CancellationToken ct)
@@ -96,6 +107,7 @@ public sealed class InformeValorController(
         var cargados = await store.GetEstadoAsync(clientId, ct);
         var porKind = cargados.ToDictionary(x => x.Kind, StringComparer.OrdinalIgnoreCase);
         var (estadoRbac, origenRbac) = await recolector.LeerEstadoRbacConOrigenAsync(clientId, ct);
+        var cobertura = await store.GetCoberturaMesesAsync(clientId, ct);
 
         return Ok(new
         {
@@ -107,6 +119,12 @@ public sealed class InformeValorController(
                 Describe(SqlInformeValorStore.KindRbac, false, porKind),
             },
             estado_rbac = EstadoRbacBlock(estadoRbac, origenRbac),
+            periodo = new
+            {
+                facturacion = Rango(cobertura.Facturacion),
+                evolucion = Rango(cobertura.Evolucion),
+                casos = Rango(cobertura.Casos),
+            },
         });
     }
 

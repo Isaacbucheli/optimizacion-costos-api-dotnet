@@ -37,4 +37,19 @@ public sealed class FechasTests
         var offset = Fechas.ZonaGuayaquil.GetUtcOffset(instanteUtc);
         Assert.Equal(TimeSpan.FromHours(-5), offset);
     }
+
+    /// <summary>
+    /// La clave de mes de un índice año*12+mes. Diciembre es el caso que delata una división mal
+    /// hecha: sin restar uno antes de dividir, 2025-12 se leería como 2026-00 y el período que el
+    /// front propone arrancaría un año corrido.
+    /// </summary>
+    [Theory]
+    [InlineData(2025 * 12 + 1, "2025-01")]
+    [InlineData(2025 * 12 + 9, "2025-09")]
+    [InlineData(2025 * 12 + 12, "2025-12")]
+    [InlineData(2026 * 12 + 1, "2026-01")]
+    public void La_clave_de_mes_no_desborda_en_diciembre(int indice, string esperado)
+    {
+        Assert.Equal(esperado, Fechas.ClaveDeMes(indice));
+    }
 }

@@ -1,7 +1,9 @@
 using System.Data;
+using System.Globalization;
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using OptimizacionCostos.Api.Data;
+using OptimizacionCostos.Api.Features.InformeValor.Calculo;
 using OptimizacionCostos.Api.Features.InformeValor.Entrega;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 
@@ -261,6 +263,56 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
                 rd.GetInt32(7)));
         }
         return result;
+    }
+
+    /// <inheritdoc />
+    public async Task<CoberturaMeses> GetCoberturaMesesAsync(int clientId, CancellationToken ct)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await InformeValorSchema.EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        // Los tres agregados en una sola ida a la base, y sin traer una sola fila: esto lo pide la
+        // pantalla de insumos en cada entrada. El mes se compara como año*12+mes y no columna por
+        // columna, porque el MIN de cada una por separado devolvería el "enero" de un año con el
+        // "2025" de otro: un mes que nunca estuvo en el archivo. Los casos no tienen columnas de
+        // período, así que su rango sale de la fecha de registro.
+        cmd.CommandText = """
+            SELECT MIN(CAST(period_year AS int) * 12 + period_month),
+                   MAX(CAST(period_year AS int) * 12 + period_month)
+            FROM dbo.informe_valor_facturacion WHERE client_id = @cid;
+
+            SELECT MIN(CAST(period_year AS int) * 12 + period_month),
+                   MAX(CAST(period_year AS int) * 12 + period_month)
+            FROM dbo.informe_valor_evolucion WHERE client_id = @cid;
+
+            SELECT MIN(fecha_registro), MAX(fecha_registro)
+            FROM dbo.informe_valor_caso WHERE client_id = @cid AND fecha_registro IS NOT NULL;
+            """;
+        cmd.Parameters.Add(new SqlParameter("@cid", SqlDbType.Int) { Value = clientId });
+
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        var facturacion = await RangoPorIndiceAsync(rd, ct);
+        await rd.NextResultAsync(ct);
+        var evolucion = await RangoPorIndiceAsync(rd, ct);
+        await rd.NextResultAsync(ct);
+        var casos = await RangoPorFechaAsync(rd, ct);
+        return new CoberturaMeses(facturacion, evolucion, casos);
+    }
+
+    private static async Task<RangoMeses?> RangoPorIndiceAsync(SqlDataReader rd, CancellationToken ct)
+    {
+        // Sin filas, MIN/MAX devuelven NULL en una fila que sí existe: la ausencia se detecta por
+        // IsDBNull, no por la falta de fila.
+        if (!await rd.ReadAsync(ct) || rd.IsDBNull(0)) return null;
+        return new RangoMeses(Fechas.ClaveDeMes(rd.GetInt32(0)), Fechas.ClaveDeMes(rd.GetInt32(1)));
+    }
+
+    private static async Task<RangoMeses?> RangoPorFechaAsync(SqlDataReader rd, CancellationToken ct)
+    {
+        if (!await rd.ReadAsync(ct) || rd.IsDBNull(0)) return null;
+        return new RangoMeses(
+            rd.GetDateTime(0).ToString("yyyy-MM", CultureInfo.InvariantCulture),
+            rd.GetDateTime(1).ToString("yyyy-MM", CultureInfo.InvariantCulture));
     }
 
     public async Task<IReadOnlyList<FacturacionRow>> GetFacturacionAsync(int clientId, CancellationToken ct)
