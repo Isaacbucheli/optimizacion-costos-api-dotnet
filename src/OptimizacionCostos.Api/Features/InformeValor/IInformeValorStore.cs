@@ -114,4 +114,20 @@ public interface IInformeValorStore
     /// no devuelva el artefacto de otro cliente ni siquiera por un instante.
     /// </summary>
     Task<EntregaArchivada?> GetEntregaAsync(int clientId, int entregaId, CancellationToken ct);
+
+    // ── El registro manual de acciones ejecutadas (entrega 8, pieza B) ──
+
+    /// <summary>Las acciones manuales ACTIVAS del cliente, ordenadas por mes de ejecución y id:
+    /// alimentan la quinta fuente del registro de lo ejecutado y la pantalla de gestión.</summary>
+    Task<IReadOnlyList<AccionManualRow>> GetAccionesManualesAsync(int clientId, CancellationToken ct);
+
+    Task<int> InsertAccionManualAsync(int clientId, AccionManualNueva accion, string? user, CancellationToken ct);
+
+    /// <summary><c>false</c> si la acción no existe, es de otro cliente o ya está inactiva — el
+    /// filtro por cliente va en el WHERE, mismo criterio que <see cref="GetEntregaAsync"/>.</summary>
+    Task<bool> UpdateAccionManualAsync(int clientId, int accionId, AccionManualNueva accion, CancellationToken ct);
+
+    /// <summary>Borrado lógico (<c>activo = 0</c>): una acción registrada respalda informes ya
+    /// emitidos, así que la fila nunca se elimina de verdad.</summary>
+    Task<bool> DeleteAccionManualAsync(int clientId, int accionId, CancellationToken ct);
 }

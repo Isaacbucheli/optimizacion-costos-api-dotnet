@@ -24,6 +24,21 @@ public sealed record CasoRow(
     string Hash, string? Caso, DateOnly? FechaRegistro, string? Estado, decimal? SlaHoras,
     decimal? DuracionCruda, string? Cumple, string? Categoria, string? Subcategoria, string? Horario);
 
+/// <summary>Una acción ejecutada registrada a mano (entrega 8, pieza B): la unidad de la PPT de
+/// referencia como fila del CRUD del módulo. <see cref="Evidencia"/> es el texto fuente pegado
+/// cuando la fila nació de la captura asistida — respaldo interno para defender la fila, JAMÁS
+/// viaja al JSON del informe ni al HTML generado.</summary>
+public sealed record AccionManualRow(
+    int AccionId, string Oportunidad, string? Categoria, string MesEjecucion, string? MesFin,
+    decimal? MontoMensual, string? Recurso, string? Nota, string? Evidencia,
+    string? CreadoPor, DateTime CreadoEn);
+
+/// <summary>El cuerpo de un alta o edición de acción manual, ya validado por el controller
+/// (oportunidad no vacía, meses "aaaa-MM", fin no anterior al inicio, monto no negativo).</summary>
+public sealed record AccionManualNueva(
+    string Oportunidad, string? Categoria, string MesEjecucion, string? MesFin,
+    decimal? MontoMensual, string? Recurso, string? Nota, string? Evidencia);
+
 public sealed record ParseResult<T>(
     IReadOnlyList<T> Rows, int RowsTotal, int RowsSkipped,
     // Filas que ni se guardaron ni se contaron como descartadas: se fusionaron con otra de la

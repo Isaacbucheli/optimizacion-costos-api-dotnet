@@ -202,8 +202,8 @@ public static class InformeValorHtmlExporter
         if (!publicados.Contains(BloqueEconomico.AhorroEjecutado))
         {
             // Montos fuera; conteos, porcentaje y ejes se quedan (mismo criterio que los demás
-            // bloques).
-            Anular(ejecutado, "total", "tasaVigente", "facturado", "estimado", "proyeccionFin");
+            // bloques). "declarado" (entrega 8) es dinero y se recorta con sus dos hermanos.
+            Anular(ejecutado, "total", "tasaVigente", "facturado", "estimado", "declarado", "proyeccionFin");
             AnularEnFilas(ejecutado?["serie"], 1, 2);
             AnularEnFilas(ejecutado?["porOportunidad"], 1);
             AnularEnFilas(ejecutado?["proyeccion"], 1, 2);
@@ -218,6 +218,14 @@ public static class InformeValorHtmlExporter
             Anular(res, "totalDemanda", "totalReserva", "totalAhorro", "ahorroAnualizado");
             if (res?["filas"] is JsonArray filasRes)
                 foreach (var f in filasRes.OfType<JsonObject>()) Anular(f, "demanda", "reserva", "ahorro");
+            // El respaldo desde el archivo (entrega 8) lleva los mismos montos por otra vía:
+            // mismo interruptor, mismo recorte.
+            if (res?["respaldo"] is JsonObject respaldo)
+            {
+                Anular(respaldo, "totalCargo", "totalAhorro");
+                if (respaldo["filas"] is JsonArray filasResp)
+                    foreach (var f in filasResp.OfType<JsonObject>()) Anular(f, "cargo", "ahorro");
+            }
         }
     }
 

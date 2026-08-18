@@ -213,7 +213,7 @@ internal static class ModeloDePrueba
                 [CategoriaConAcentos] = new Dictionary<string, decimal> { ["2026-01"] = 33009m },
             },
             AcumuladoTotal: 33001m, TasaVigenteCierre: 33002m, PctGastoPeriodo: PctGastoDePrueba,
-            MontoFacturado: 33003m, MontoEstimado: 33004m, FilasSinMonto: 0,
+            MontoFacturado: 33003m, MontoEstimado: 33004m, MontoDeclarado: 33013m, FilasSinMonto: 0,
             Proyeccion: [["2026-03", 33011m, 33012m]], ProyeccionFinDeAnio: 33005m,
             Reservas: new ReservasFacturadasModelo(
                 Medido: true, Motivo: null,

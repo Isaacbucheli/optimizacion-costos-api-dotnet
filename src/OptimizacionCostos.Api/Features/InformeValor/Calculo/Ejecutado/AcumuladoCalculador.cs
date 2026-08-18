@@ -75,7 +75,7 @@ public static class AcumuladoCalculador
 
         var porCategoria = ConstruirPorCategoria(filas, mesesDelRango);
         var porOportunidad = ConstruirPorOportunidad(filas, mesesDelRango);
-        var (montoFacturado, montoEstimado) = ConstruirComposicion(filas, mesesDelRango);
+        var (montoFacturado, montoEstimado, montoDeclarado) = ConstruirComposicion(filas, mesesDelRango);
         var filasSinMonto = filas.Count(f => f.MontoMensual is null);
 
         var (proyeccion, proyeccionFin) = ConstruirProyeccion(filas, contexto, acumuladoTotal);
@@ -101,6 +101,7 @@ public static class AcumuladoCalculador
             PctGastoPeriodo: pctGastoPeriodo,
             MontoFacturado: montoFacturado,
             MontoEstimado: montoEstimado,
+            MontoDeclarado: montoDeclarado,
             FilasSinMonto: filasSinMonto,
             Proyeccion: proyeccion,
             ProyeccionFinDeAnio: proyeccionFin,
@@ -183,22 +184,27 @@ public static class AcumuladoCalculador
 
     /// <summary>Composición declarada del total (nunca implícita): la misma contribución por fila
     /// que <see cref="ConstruirPorOportunidad"/>, partida por <see cref="AccionEjecutada.FuenteMonto"/>
-    /// en vez de por oportunidad. <c>MontoFacturado + MontoEstimado == AcumuladoTotal</c> siempre que
-    /// toda fila con monto traiga su fuente rotulada (contrato de <see cref="AccionEjecutada"/>).</summary>
-    private static (decimal Facturado, decimal Estimado) ConstruirComposicion(
+    /// en vez de por oportunidad. <c>MontoFacturado + MontoEstimado + MontoDeclarado == AcumuladoTotal</c>
+    /// siempre que toda fila con monto traiga su fuente rotulada (contrato de
+    /// <see cref="AccionEjecutada"/>). "declarado" (entrega 8) es el monto que el consultor
+    /// registró a mano: no se verifica contra factura, y por eso lleva componente propia y jamás
+    /// se suma como facturado.</summary>
+    private static (decimal Facturado, decimal Estimado, decimal Declarado) ConstruirComposicion(
         IReadOnlyList<AccionEjecutada> filas, List<string> mesesDelRango)
     {
         var facturado = 0m;
         var estimado = 0m;
+        var declarado = 0m;
         foreach (var f in filas)
         {
             if (f.MontoMensual is not decimal monto) continue;
             var contribucion = monto * MesesActivosDentroDelRango(f, mesesDelRango);
             if (f.FuenteMonto == "facturado") facturado += contribucion;
             else if (f.FuenteMonto == "estimado") estimado += contribucion;
+            else if (f.FuenteMonto == "declarado") declarado += contribucion;
             else throw new InvalidOperationException($"Fila con monto sin fuente reconocida: '{f.FuenteMonto}' ({f.Oportunidad}). Toda fila con monto rotula su fuente.");
         }
-        return (facturado, estimado);
+        return (facturado, estimado, declarado);
     }
 
     /// <summary>Meses desde el siguiente al mes de <see cref="ContextoInformeValor.Corte"/> hasta
@@ -211,11 +217,17 @@ public static class AcumuladoCalculador
         var meses = MesesDeProyeccion(contexto);
         if (meses.Count == 0) return ([], acumuladoTotal);
 
+        // Entrega 8: las filas marcadas SinProyeccion (reservas heredadas del respaldo, sin
+        // vencimiento derivable) suman su tasa en la serie histórica —son hechos facturados—
+        // pero NO se extienden a futuro: proyectar una reserva que puede vencer mañana es
+        // exactamente lo que la salvaguarda 4 existe para impedir.
+        var proyectables = filas.Where(f => !f.SinProyeccion).ToList();
+
         var proyeccion = new List<IReadOnlyList<object?>>();
         var acumulado = acumuladoTotal;
         foreach (var mes in meses)
         {
-            var tasa = TasaVigenteEn(filas, ToOrdinal(mes));
+            var tasa = TasaVigenteEn(proyectables, ToOrdinal(mes));
             acumulado += tasa;
             proyeccion.Add((IReadOnlyList<object?>)[mes, tasa, acumulado]);
         }

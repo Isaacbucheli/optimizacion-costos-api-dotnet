@@ -175,6 +175,19 @@ public sealed class ContratoEntreRenderizadoresTests
             "SeccionCronologia.tsx (Tarea 9) agrupan los hitos por fecha, no por pilar, así que ninguno " +
             "de los dos lo dibuja: verificado con grep para \"pilar\" en SeccionCronologia.tsx, sin " +
             "resultados."),
+        ("ejecutado.reservas.respaldo.filas.linea", Lado.Ninguno,
+            "El texto crudo de la línea del pivot (\"Reserved VM Instance, SKU, región, término\"): " +
+            "las vistas publican sus partes ya parseadas (sku/term), nunca la cadena entera."),
+        ("ejecutado.reservas.respaldo.filas.region", Lado.Ninguno,
+            "La región de la línea del respaldo: entra al cruce de precios (la clave del catálogo) " +
+            "pero la tabla publica SKU y término, no la región — mismo criterio que la tabla por VM, " +
+            "que tampoco la dibuja."),
+        ("ejecutado.filas.sinProyeccion", Lado.Ninguno,
+            "Flag de cálculo de la entrega 8: una reserva heredada del respaldo (sin fecha de compra " +
+            "observable) suma su tasa en el rango pero la proyección a fin de año la excluye. El " +
+            "efecto se publica en la curva y el total proyectado, no como columna de la tabla: ningún " +
+            "renderizador lo dibuja fila por fila, y el motivo del eje ya declara cuántas quedaron " +
+            "fuera."),
     ];
 
     public enum Lado { Html, React, Ninguno }

@@ -61,7 +61,8 @@ public static class RegistroEjecutadoCalculador
         ReservasFacturadasModelo reservasFacturadas,
         FotoReservas fotoReservas,
         IReadOnlyList<FacturacionRow> facturacion,
-        ContextoInformeValor contexto)
+        ContextoInformeValor contexto,
+        IReadOnlyList<AccionManualRow>? accionesManuales = null)
     {
         var (porMesPorTerna, categoriaPorTerna) = AgruparFacturacionPorTerna(facturacion, contexto);
 
@@ -89,6 +90,7 @@ public static class RegistroEjecutadoCalculador
         var todas = filasBarrido.Select(x => x.Fila)
             .Concat(filasMatriz)
             .Concat(filasReserva)
+            .Concat(CalcularManuales(accionesManuales ?? []))
             .ToList();
 
         var ejes = new RegistroEjes(
@@ -326,6 +328,32 @@ public static class RegistroEjecutadoCalculador
     {
         var filas = new List<AccionEjecutada>();
         var sinInicio = 0;
+
+        // Entrega 8, pieza A: sin foto de Azure pero con respaldo desde el archivo de evolución,
+        // las filas del registro salen de las líneas del archivo. Solo cuando la foto NO midió —
+        // la foto es la autoridad, y las dos vías nunca coexisten (sin doble conteo por
+        // construcción). Heredada (sin fecha de compra observable) => SinProyeccion: suma en el
+        // rango, no proyecta (decisión 2026-08-18).
+        if (!fotoReservas.Medido && reservasFacturadas.Respaldo is { } respaldo)
+        {
+            foreach (var linea in respaldo.Filas)
+            {
+                filas.Add(new AccionEjecutada(
+                    Fuente: "reserva-archivo",
+                    Oportunidad: $"Reserva {linea.Sku} ({linea.TermTexto})",
+                    Categoria: CategoriaEjecutado.Resolver("reserva", null, null),
+                    SubscriptionId: null, ResourceGroup: null, ResourceName: null,
+                    MesEjecucion: linea.Desde,
+                    MesFin: linea.Vence,
+                    MontoMensual: linea.AhorroMes,
+                    FuenteMonto: linea.AhorroMes is null ? null : "estimado",
+                    MotivoSinMonto: linea.MotivoSinMonto,
+                    Autoria: "declarada",
+                    SinProyeccion: linea.Heredada));
+            }
+            return (filas, sinInicio);
+        }
+
         if (!fotoReservas.Medido) return (filas, sinInicio);
 
         var ahorroPorReserva = reservasFacturadas.Filas
@@ -372,6 +400,39 @@ public static class RegistroEjecutadoCalculador
         }
 
         return (filas, sinInicio);
+    }
+
+    // ── Entrega 8, pieza B: el registro manual como quinta fuente ──
+
+    /// <summary>Las acciones registradas a mano entran tal cual, con autoría declarada por
+    /// definición (quien declara es el consultor que las registró). Sin dedup contra las fuentes
+    /// automáticas (decisión 2026-08-18: no comparten clave; la pantalla de gestión muestra el
+    /// registro completo y la responsabilidad de no duplicar es del consultor). El monto lleva su
+    /// propio rótulo "declarado": no se verifica contra la factura, y por eso jamás se presenta
+    /// como facturado. La evidencia NO viaja: <see cref="AccionEjecutada"/> no tiene ese campo, a
+    /// propósito.</summary>
+    private static List<AccionEjecutada> CalcularManuales(IReadOnlyList<AccionManualRow> manuales)
+    {
+        var filas = new List<AccionEjecutada>(manuales.Count);
+        foreach (var m in manuales)
+        {
+            filas.Add(new AccionEjecutada(
+                Fuente: "manual",
+                Oportunidad: m.Oportunidad,
+                Categoria: m.Categoria ?? CategoriaEjecutado.Resolver("manual", null, null),
+                SubscriptionId: null,
+                ResourceGroup: null,
+                ResourceName: m.Recurso,
+                MesEjecucion: m.MesEjecucion,
+                MesFin: m.MesFin,
+                MontoMensual: m.MontoMensual is { } monto ? Redondeo.ComoJs(monto) : null,
+                FuenteMonto: m.MontoMensual is null ? null : "declarado",
+                MotivoSinMonto: m.MontoMensual is null
+                    ? "La acción se registró sin monto medible: cuenta como ejecutada, fuera de la aritmética."
+                    : null,
+                Autoria: "declarada"));
+        }
+        return filas;
     }
 
     private static string? MesDe(string? fechaIso)

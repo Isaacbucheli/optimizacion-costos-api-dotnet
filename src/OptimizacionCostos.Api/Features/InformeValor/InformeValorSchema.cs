@@ -270,6 +270,35 @@ public static class InformeValorSchema
         IF COL_LENGTH('dbo.informe_valor_rbac', 'is_custom_role') IS NULL
             ALTER TABLE dbo.informe_valor_rbac ADD is_custom_role BIT NOT NULL CONSTRAINT DF_iv_rbac_custom DEFAULT 0;
         """,
+        // El registro manual de acciones ejecutadas (entrega 8, pieza B): la unidad de la PPT de
+        // referencia (oportunidad, mes, ahorro mensual) como CRUD del módulo. A diferencia de los
+        // insumos, esta tabla NO es viva: acumula filas con borrado lógico (activo), porque una
+        // acción registrada respalda informes ya emitidos. `evidencia` es el texto fuente pegado
+        // cuando la fila nació de la captura asistida (correo/chat/minuta): respaldo interno para
+        // defender la fila, JAMÁS viaja al JSON del informe ni al HTML generado (puede traer texto
+        // sensible del correo del cliente).
+        """
+        IF OBJECT_ID('dbo.informe_valor_accion_manual', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.informe_valor_accion_manual (
+                accion_id INT IDENTITY(1,1) PRIMARY KEY,
+                client_id INT NOT NULL CONSTRAINT FK_iv_accman_client REFERENCES dbo.clients(client_id),
+                oportunidad NVARCHAR(200) NOT NULL,
+                categoria NVARCHAR(100) NULL,
+                mes_ejecucion CHAR(7) NOT NULL,
+                mes_fin CHAR(7) NULL,
+                monto_mensual DECIMAL(18,2) NULL,
+                recurso NVARCHAR(512) NULL,
+                nota NVARCHAR(1000) NULL,
+                evidencia NVARCHAR(MAX) NULL,
+                creado_por NVARCHAR(200) NULL,
+                creado_en DATETIME2 NOT NULL CONSTRAINT DF_iv_accman_creado DEFAULT SYSUTCDATETIME(),
+                actualizado_en DATETIME2 NULL,
+                activo BIT NOT NULL CONSTRAINT DF_iv_accman_activo DEFAULT 1
+            );
+            CREATE INDEX IX_iv_accman_client ON dbo.informe_valor_accion_manual (client_id, activo);
+        END
+        """,
     ];
 
     /// <summary>Errores de SQL Server que significan "otra conexión ya lo creó": objeto duplicado

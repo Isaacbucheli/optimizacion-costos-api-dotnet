@@ -27,6 +27,9 @@ public sealed record EjecutadoModelo(
     [property: JsonPropertyName("pctGasto")] decimal? PctGastoPeriodo,     // tarjeta 1: total/gasto, 1 decimal; null si gasto no medible
     [property: JsonPropertyName("facturado")] decimal MontoFacturado,      // composición del total, declarada
     [property: JsonPropertyName("estimado")] decimal MontoEstimado,
+    // Entrega 8: la tercera componente — montos registrados a mano por el consultor. No se
+    // verifican contra factura; por eso rótulo propio, nunca sumados a "facturado".
+    [property: JsonPropertyName("declarado")] decimal MontoDeclarado,
     [property: JsonPropertyName("sinMonto")] int FilasSinMonto,
     // [mes, tasa proyectada, acumulado proyectado] desde el mes siguiente al corte hasta diciembre del año del corte
     [property: JsonPropertyName("proyeccion")] IReadOnlyList<IReadOnlyList<object?>> Proyeccion,

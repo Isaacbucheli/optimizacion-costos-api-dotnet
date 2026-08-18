@@ -358,6 +358,15 @@ public sealed class InformeValorUploadApiTests : IClassFixture<InformeValorUploa
         public Task<EntregaArchivada?> GetEntregaAsync(int clientId, int entregaId, CancellationToken ct)
             => throw new NotSupportedException();
 
+        public Task<IReadOnlyList<AccionManualRow>> GetAccionesManualesAsync(int clientId, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<AccionManualRow>>([]);
+        public Task<int> InsertAccionManualAsync(int clientId, AccionManualNueva accion, string? user, CancellationToken ct)
+            => throw new NotSupportedException();
+        public Task<bool> UpdateAccionManualAsync(int clientId, int accionId, AccionManualNueva accion, CancellationToken ct)
+            => throw new NotSupportedException();
+        public Task<bool> DeleteAccionManualAsync(int clientId, int accionId, CancellationToken ct)
+            => throw new NotSupportedException();
+
     }
 
     /// <summary>Ensamblador falso que revienta si se lo llega a usar, salvo

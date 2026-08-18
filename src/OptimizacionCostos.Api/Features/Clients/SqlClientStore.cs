@@ -288,6 +288,11 @@ public sealed class SqlClientStore(ISqlConnectionFactory factory) : IClientStore
         // conviene dejarlo dicho acá en vez de que alguien lo descubra auditando el contenedor.
         await CountedDeleteAsync(conn, tx, counts, "informe_valor_entrega",
             "IF OBJECT_ID('dbo.informe_valor_entrega','U') IS NOT NULL DELETE FROM dbo.informe_valor_entrega WHERE client_id = @id;", clientId, ct);
+        // El registro manual de acciones ejecutadas (entrega 8). Acá sí se borra de verdad —el
+        // borrado lógico del CRUD protege informes emitidos, pero un cliente eliminado se lleva
+        // su registro completo, activas e inactivas, igual que el resto de sus tablas.
+        await CountedDeleteAsync(conn, tx, counts, "informe_valor_accion_manual",
+            "IF OBJECT_ID('dbo.informe_valor_accion_manual','U') IS NOT NULL DELETE FROM dbo.informe_valor_accion_manual WHERE client_id = @id;", clientId, ct);
 
         // -------- Catalogo de WAF: el barrido de huerfanas, al final a proposito --------
         // Va ultimo y no arriba con el resto de WAF porque es lo unico del metodo que toca una tabla
