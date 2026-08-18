@@ -50,7 +50,13 @@ public class WafAdvisorNameEnTests
         return value is null or DBNull ? null : Convert.ToInt32(value);
     }
 
-    /// <summary>Las canónicas son globales: el cascade del cliente no las borra, hay que limpiarlas.</summary>
+    /// <summary>Limpia por tag las canónicas y alias que siembra este test.
+    ///
+    /// <para>La cascada del cliente sí borra las canónicas que ese cliente usaba y quedaron sin nada
+    /// que las referencie (desde el 2026-08-18 el barrido está acotado al cliente, ver
+    /// <c>WafCanonicalPurgeDbTests</c>), así que esto es la red para lo que ella deja en pie a
+    /// propósito: una canónica retenida porque otra la apunta, o lo que quede de una corrida que se
+    /// cayó antes del finally.</para></summary>
     private static async Task DeleteCanonicalsAsync(ISqlConnectionFactory factory, string tag)
     {
         await using var conn = await factory.OpenAsync();
