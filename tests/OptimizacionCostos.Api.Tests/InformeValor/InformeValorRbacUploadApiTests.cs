@@ -205,6 +205,10 @@ public sealed class InformeValorRbacUploadApiTests : IClassFixture<InformeValorR
         // Ídem: /preview/variacion-consumo es el único que lo llama, y no se toca acá.
         public Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
             int clientId, CancellationToken ct = default) => throw new NotSupportedException();
+
+        // Ídem: /preview y /generar son los únicos que lo llaman, y no se tocan acá.
+        public Task<RegistroBarrido> LeerBarridoResueltoAsync(int clientId, CancellationToken ct = default)
+            => throw new NotSupportedException();
     }
 
     /// <summary>Store fake que registra si ReplaceRbacAsync llegó a llamarse: es la comprobación
@@ -228,6 +232,10 @@ public sealed class InformeValorRbacUploadApiTests : IClassFixture<InformeValorR
             return Task.FromResult(1);
         }
 
+        public Task<int> ReplaceEvolucionAsync(
+            int clientId, string fileName, string? user, ParseResult<EvolucionRow> parsed, CancellationToken ct)
+            => throw new NotSupportedException();
+
         public Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct) => throw new NotSupportedException();
 
         public Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct)
@@ -240,6 +248,9 @@ public sealed class InformeValorRbacUploadApiTests : IClassFixture<InformeValorR
             => throw new NotSupportedException();
 
         public Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<EvolucionRow>> GetEvolucionAsync(int clientId, CancellationToken ct)
             => throw new NotSupportedException();
 
         // Entrega 3, F4: la bitacora de entregas no la ejercita ningun test de esta clase. Revienta

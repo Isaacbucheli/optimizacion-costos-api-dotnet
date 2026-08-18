@@ -73,6 +73,7 @@ public class InformeValorEntregaRoundTripDbTests
                 FacturacionIngestaId: 4001,
                 CasosIngestaId: 4002,
                 RbacIngestaId: null,
+                EvolucionIngestaId: 4003,
                 FotoReservas: foto,
                 PlantillaVersion: "abcdef0123456789",
                 BlobContainer: "contenedor-de-prueba",
@@ -107,6 +108,7 @@ public class InformeValorEntregaRoundTripDbTests
             Assert.Equal(4001, vuelta.FacturacionIngestaId);
             Assert.Equal(4002, vuelta.CasosIngestaId);
             Assert.Null(vuelta.RbacIngestaId);
+            Assert.Equal(4003, vuelta.EvolucionIngestaId);
             Assert.Equal("abcdef0123456789", vuelta.PlantillaVersion);
             Assert.Equal(nueva.SummaryJson, vuelta.SummaryJson);
 

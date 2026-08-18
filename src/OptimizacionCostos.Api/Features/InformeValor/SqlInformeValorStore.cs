@@ -19,6 +19,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
     public const string KindFacturacion = "facturacion";
     public const string KindCasos = "casos";
     public const string KindRbac = "rbac";
+    public const string KindEvolucion = "evolucion";
 
     // OJO: client_id e ingesta_id son SIEMPRE las dos primeras columnas de las dos
     // proyecciones. ReplaceAsync las sobreescribe por posición (values[0] y values[1]),
@@ -88,6 +89,24 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         ("is_custom_role", typeof(bool), r => r.IsCustomRole),
     ];
 
+    // Mismo criterio de columnas fijas por posición que las tres proyecciones de arriba (ver el
+    // comentario sobre FacturacionColumns): client_id e ingesta_id primero, sobreescritas por
+    // ReplaceAsync, y category/subcategory nulas (el balde residual de D1 del parser) mapeadas
+    // a DBNull vía Db(), no a "".
+    internal static readonly (string Column, Type Type, Func<EvolucionRow, object> Value)[] EvolucionColumns =
+    [
+        ("client_id", typeof(int), _ => 0),
+        ("ingesta_id", typeof(int), _ => 0),
+        ("natural_key_hash", typeof(string), r => r.NaturalKeyHash),
+        ("category", typeof(string), r => Db(r.Category)),
+        ("subcategory", typeof(string), r => Db(r.Subcategory)),
+        ("resource_name", typeof(string), r => r.ResourceName),
+        ("is_reservation", typeof(bool), r => r.IsReservation),
+        ("pvp", typeof(decimal), r => r.Pvp),
+        ("period_year", typeof(short), r => r.PeriodYear),
+        ("period_month", typeof(byte), r => r.PeriodMonth),
+    ];
+
     public Task<int> ReplaceFacturacionAsync(
         int clientId, string fileName, string? user, ParseResult<FacturacionRow> parsed, CancellationToken ct) =>
         ReplaceAsync(clientId, KindFacturacion, "dbo.informe_valor_facturacion", fileName, user,
@@ -108,6 +127,11 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
             // reflejados en parsed.Warnings.
             new ParseResult<RbacRow>(parsed.Rows, parsed.RowsTotal, parsed.RowsSkipped, 0, parsed.TruncatedValues, parsed.Warnings),
             ct);
+
+    public Task<int> ReplaceEvolucionAsync(
+        int clientId, string fileName, string? user, ParseResult<EvolucionRow> parsed, CancellationToken ct) =>
+        ReplaceAsync(clientId, KindEvolucion, "dbo.informe_valor_evolucion", fileName, user,
+            parsed.Rows, EvolucionColumns, parsed, ct);
 
     private async Task<int> ReplaceAsync<T>(
         int clientId, string kind, string table, string fileName, string? user,
@@ -181,6 +205,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
             KindFacturacion => "dbo.informe_valor_facturacion",
             KindCasos => "dbo.informe_valor_caso",
             KindRbac => "dbo.informe_valor_rbac",
+            KindEvolucion => "dbo.informe_valor_evolucion",
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),
         };
         await using var conn = await factory.OpenAsync(ct);
@@ -351,6 +376,42 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         return result;
     }
 
+    /// <summary>Las filas de evolución de consumo ya persistidas de un cliente. A diferencia de
+    /// <see cref="GetFacturacionAsync"/>/<see cref="GetCasosAsync"/>/<see cref="GetRbacAsync"/>,
+    /// que ordenan por <c>row_id</c> (orden de inserción de la carga vigente), acá el consumo de
+    /// la entrega 6 necesita las filas agrupadas por período, así que se ordena por
+    /// año/mes/recurso directamente.</summary>
+    public async Task<IReadOnlyList<EvolucionRow>> GetEvolucionAsync(int clientId, CancellationToken ct)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await InformeValorSchema.EnsureSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT natural_key_hash, category, subcategory, resource_name, is_reservation,
+                pvp, period_year, period_month
+            FROM dbo.informe_valor_evolucion
+            WHERE client_id = @cid
+            ORDER BY period_year, period_month, resource_name
+            """;
+        cmd.Parameters.Add(new SqlParameter("@cid", SqlDbType.Int) { Value = clientId });
+
+        var result = new List<EvolucionRow>();
+        await using var rd = await cmd.ExecuteReaderAsync(ct);
+        while (await rd.ReadAsync(ct))
+        {
+            result.Add(new EvolucionRow(
+                NaturalKeyHash: rd.GetString(0),
+                Category: rd.IsDBNull(1) ? null : rd.GetString(1),
+                Subcategory: rd.IsDBNull(2) ? null : rd.GetString(2),
+                ResourceName: rd.GetString(3),
+                IsReservation: rd.GetBoolean(4),
+                Pvp: rd.GetDecimal(5),
+                PeriodYear: rd.GetInt16(6),
+                PeriodMonth: rd.GetByte(7)));
+        }
+        return result;
+    }
+
     // ===================================================================================
     // Bitácora de entregas (F4 de la entrega 3). Acumula: nunca borra la fila anterior del
     // mismo período, porque reemitir es legítimo y el historial importa.
@@ -373,7 +434,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         bloques_publicados, rbac_origen, rbac_corrida_fecha, seguridad_gestionada_externamente,
         facturacion_ingesta_id, casos_ingesta_id, rbac_ingesta_id, foto_reservas_json,
         plantilla_version, blob_name, blob_size_bytes, file_name, summary_json,
-        generated_by, generated_at, blob_container
+        generated_by, generated_at, blob_container, evolucion_ingesta_id
         """;
 
     public async Task<int> RegistrarEntregaAsync(EntregaNueva entrega, CancellationToken ct)
@@ -387,11 +448,12 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
                 (client_id, period_start, period_end, corte, meses_parciales, variante,
                  bloques_publicados, rbac_origen, rbac_corrida_fecha,
                  seguridad_gestionada_externamente, facturacion_ingesta_id, casos_ingesta_id,
-                 rbac_ingesta_id, foto_reservas_json, plantilla_version, blob_container, blob_name,
-                 blob_size_bytes, file_name, summary_json, generated_by, generated_at)
+                 rbac_ingesta_id, evolucion_ingesta_id, foto_reservas_json, plantilla_version,
+                 blob_container, blob_name, blob_size_bytes, file_name, summary_json, generated_by,
+                 generated_at)
             OUTPUT INSERTED.entrega_id
             VALUES (@cid, @ini, @fin, @corte, @parc, @var, @bloques, @rbacOrigen, @rbacCorrida,
-                    @segExt, @ingFact, @ingCasos, @ingRbac, @foto, @plantilla, @cont, @blob,
+                    @segExt, @ingFact, @ingCasos, @ingRbac, @ingEvo, @foto, @plantilla, @cont, @blob,
                     @size, @file, @summary, @by, @now)
             """;
         cmd.Parameters.Add(new SqlParameter("@cid", SqlDbType.Int) { Value = entrega.ClientId });
@@ -413,6 +475,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
         cmd.Parameters.Add(Entero("@ingFact", entrega.FacturacionIngestaId));
         cmd.Parameters.Add(Entero("@ingCasos", entrega.CasosIngestaId));
         cmd.Parameters.Add(Entero("@ingRbac", entrega.RbacIngestaId));
+        cmd.Parameters.Add(Entero("@ingEvo", entrega.EvolucionIngestaId));
         cmd.Parameters.Add(new SqlParameter("@foto", SqlDbType.NVarChar, -1)
         { Value = (object?)FotoReservasJson.Serializar(entrega.FotoReservas) ?? DBNull.Value });
         cmd.Parameters.Add(new SqlParameter("@plantilla", SqlDbType.NVarChar, 64)
@@ -471,7 +534,7 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
 
         return new EntregaArchivada(
             Resumen: LeerResumen(rd),
-            // Índice 21: última columna de ColumnasEntregaCompleta (ver su remarks).
+            // Índice 21: penúltima columna de ColumnasEntregaCompleta (ver su remarks).
             BlobContainer: rd.IsDBNull(21) ? null : rd.GetString(21),
             BlobName: rd.GetString(15),
             MesesParcialesForzados: MesesParcialesJson.Deserializar(rd.IsDBNull(4) ? null : rd.GetString(4)),
@@ -480,6 +543,8 @@ public sealed class SqlInformeValorStore(ISqlConnectionFactory factory) : IInfor
             FacturacionIngestaId: rd.IsDBNull(10) ? null : rd.GetInt32(10),
             CasosIngestaId: rd.IsDBNull(11) ? null : rd.GetInt32(11),
             RbacIngestaId: rd.IsDBNull(12) ? null : rd.GetInt32(12),
+            // Índice 22: última columna de ColumnasEntregaCompleta, agregada al final (T10).
+            EvolucionIngestaId: rd.IsDBNull(22) ? null : rd.GetInt32(22),
             FotoReservas: FotoReservasJson.Deserializar(rd.IsDBNull(13) ? null : rd.GetString(13)),
             PlantillaVersion: rd.IsDBNull(14) ? null : rd.GetString(14),
             SummaryJson: rd.IsDBNull(18) ? null : rd.GetString(18));

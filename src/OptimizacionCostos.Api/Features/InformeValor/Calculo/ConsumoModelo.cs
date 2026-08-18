@@ -53,6 +53,25 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// mes (ya sin las de un mes parcial, D5), monto del mes, monto retirado del mes, 1 si es parcial
 /// / 0 si no]. <see cref="PromediosPorAnio"/> = [año, meses completos de ese año, promedio
 /// mensual, total anual]. <see cref="PorCentroCosto"/> = [centro de costo, monto].</para>
+///
+/// <para><b>Tarea 7 de la entrega 6, dos filas posicionales más, las dos derivadas de agregados
+/// que <see cref="Calculo.ConsumoCalculador.Calcular"/> ya arma para otro campo (no se vuelve a
+/// agrupar la facturación).</b> <see cref="CostoUnitario"/> = [mes, recursos activos, monto del
+/// mes, costo por recurso (monto ÷ recursos, redondeado; <c>null</c> si ese mes no tuvo recursos
+/// activos, para no dividir por cero), 1 si es parcial / 0 si no] — recursos y monto son los
+/// mismos índices 1 y 4 de <see cref="Serie"/>, releídos, no recalculados. Es el argumento del
+/// HTML de referencia: recursos activos suben, factura sube menos, costo por recurso baja.
+/// <see cref="VariacionMoM"/> = [mes, reducciones (positivo), incrementos (positivo), neto =
+/// reducciones − incrementos, 1 si el mes es parcial / 0 si no], una fila por cada mes del rango
+/// salvo el primero (que no tiene mes anterior contra el cual comparar). Por categoría, compara
+/// el monto de ese mes contra el anterior dentro del rango — una categoría ausente en un mes
+/// cuenta como cero ese mes — y suma las caídas por un lado y las subidas por otro, ya en
+/// positivo. Observación 6 de la reunión: el dibujo (entrega 7) pone las reducciones arriba del
+/// eje y los incrementos abajo; publicar las dos series ya separadas es lo que hace posible ese
+/// dibujo sin que el modelo tenga que saber de ejes. El flag de mes parcial (índice 4, defecto del
+/// plan original, corregido en el review final de la entrega 6, I4) sigue la misma convención que
+/// <see cref="SerieMensual"/>/<see cref="Serie"/>/<see cref="CostoUnitario"/>: sin él, esta era la
+/// única fila posicional de la entrega que no declaraba si su propio mes era parcial.</para>
 /// </summary>
 public sealed record ConsumoModelo(
     /// <summary>Filas aceptadas antes de fusionar, de TODA la carga (D14, sin filtrar por rango:
@@ -86,6 +105,8 @@ public sealed record ConsumoModelo(
     [property: JsonPropertyName("ahorro")] ConsumoAhorro? Ahorro,
     [property: JsonPropertyName("comp")] ConsumoComparativa? Comparativa,
     [property: JsonPropertyName("cc")] IReadOnlyList<IReadOnlyList<object?>> PorCentroCosto,
+    [property: JsonPropertyName("unitario")] IReadOnlyList<IReadOnlyList<object?>> CostoUnitario,
+    [property: JsonPropertyName("mom")] IReadOnlyList<IReadOnlyList<object?>> VariacionMoM,
     /// <summary>
     /// Tarea 5 de la entrega 2d (E0): la descomposicion de a donde fue la variacion del consumo —
     /// nunca "ahorro" (ver <see cref="VariacionConsumoModelo"/>). Sibling de <see cref="Ahorro"/>

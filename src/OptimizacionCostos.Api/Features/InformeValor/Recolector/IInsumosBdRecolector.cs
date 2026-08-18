@@ -64,7 +64,18 @@ public sealed record InsumosBd(
     /// significa a la vez "el Boletín nunca corrió" y "nadie preguntó", así que
     /// <c>PosturaCalculador</c> resuelve el empate por el otro lado — con retiros presentes, alguien
     /// los buscó, y eso ya alcanza para declararlo medido.</para></summary>
-    CorridaBoletin? CorridaBoletin = null)
+    CorridaBoletin? CorridaBoletin = null,
+    /// <summary>Score del pilar de costos de Advisor hoy más su serie mensual
+    /// (<see cref="OpexRecolector"/>), la fuente de la tarjeta "Opex" del resumen (entrega 6/7).
+    /// Default <c>null</c> por el mismo motivo que los parámetros de arriba: no romper los tests
+    /// que construyen este record a mano.</summary>
+    OpexScore? Opex = null,
+    /// <summary>Hitos de la bitácora del tracking de la matriz WAF (<see cref="CronologiaRecolector"/>),
+    /// la fuente cruda de la cronología del informe (entrega 6/7): la entrega que dibuja la línea de
+    /// tiempo decide qué campos de <see cref="HitoFila.Campo"/> se traducen a un hito legible y con
+    /// qué redacción, este recolector no filtra por campo. Default <c>null</c> por el mismo motivo
+    /// que los parámetros de arriba: no romper los tests que construyen este record a mano.</summary>
+    IReadOnlyList<HitoFila>? Hitos = null)
 {
     /// <summary><see cref="RbacOrigen"/> cuando <see cref="Rbac"/> salió de Revisión de accesos.</summary>
     public const string OrigenBase = "base";
@@ -135,4 +146,19 @@ public interface IInsumosBdRecolector
     /// </summary>
     Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
         int clientId, CancellationToken ct = default);
+
+    /// <summary>
+    /// El registro del barrido de optimización resuelto (<see cref="BarridoResueltoRecolector"/>,
+    /// entrega 5), leído sin decidir la doble puerta del spec: el llamador (entrega 6, el controller,
+    /// donde vive el contexto de usuario) verifica el permiso del módulo Optimization Y
+    /// <c>OptimizationService.AccessAllowed(email)</c> ANTES de llamar a esto, y usa
+    /// <see cref="RegistroBarrido.NoAutorizado"/> cuando no pasa — este método nunca se llama en ese
+    /// caso.
+    ///
+    /// <para>El llamador también debe correr <c>OptimizationService.EnsureSchemaAsync</c> antes de
+    /// invocar este método: las tablas del barrido no las asegura <see cref="SqlInsumosBdRecolector"/>
+    /// (no forma parte del schema-ensure de <see cref="LeerAsync"/> a propósito, el barrido no es un
+    /// insumo de <see cref="InsumosBd"/>).</para>
+    /// </summary>
+    Task<RegistroBarrido> LeerBarridoResueltoAsync(int clientId, CancellationToken ct = default);
 }

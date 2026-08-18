@@ -13,7 +13,7 @@ public sealed record ArtefactoInforme(
     byte[] Contenido,
     string FileName,
     /// <summary>Los bloques económicos que este artefacto REALMENTE publica. Para la variante
-    /// interna son los seis; para la del cliente, los aprobados. Se archiva esto y no lo que pidió
+    /// interna son los ocho; para la del cliente, los aprobados. Se archiva esto y no lo que pidió
     /// quien llamó, para que la bitácora diga lo que el archivo hace y no lo que se intentó.</summary>
     IReadOnlyList<BloqueEconomico> BloquesPublicados,
     string PlantillaVersion);
@@ -106,7 +106,7 @@ public static class InformeValorHtmlExporter
     }
 
     /// <summary>
-    /// Lo que la capa de dibujo consulta para saber qué puede mostrar. Los seis bloques viajan
+    /// Lo que la capa de dibujo consulta para saber qué puede mostrar. Los ocho bloques viajan
     /// SIEMPRE, con <c>true</c> o <c>false</c> explícito: una clave ausente se leería como
     /// "publicado" (el default de <c>pub()</c>, pensado para el informe interno sin declaración) y
     /// un bloque no aprobado saldría publicado por omisión.
@@ -141,6 +141,11 @@ public static class InformeValorHtmlExporter
         {
             AnularEnFilas(fact?["meses"], 1);
             AnularEnFilas(fact?["serie"], 4, 5);
+            // fact.unitario (Tarea 7 de la entrega 6) deriva de fact.serie: los mismos índices 1 y 4
+            // releídos, no recalculados (ver el docstring de ConsumoModelo.CostoUnitario). Mismo
+            // bloque que cubre esa serie. Los índices 2 y 3 son montos (el gasto del mes y el costo
+            // por recurso); el índice 1 (recursos activos) no es dinero y sigue viajando.
+            AnularEnFilas(fact?["unitario"], 2, 3);
         }
 
         if (!publicados.Contains(BloqueEconomico.ComposicionServicio))
@@ -148,6 +153,11 @@ public static class InformeValorHtmlExporter
             raiz["catSerie"] = null;
             AnularEnFilas(fact?["subs"], 1);
             AnularEnFilas((fact?["comp"] as JsonObject)?["filas"], 1, 2);
+            // fact.mom (Tarea 7 de la entrega 6) deriva de los deltas de categoría de facturación:
+            // mismo bloque que cubre esa composición. El mes (índice 0) y el flag de mes parcial
+            // (índice 4, I4 del review final de la entrega 6) siguen viajando: ninguno de los dos es
+            // dinero. Reducciones, incrementos y neto (índices 1 a 3) son montos.
+            AnularEnFilas(fact?["mom"], 1, 2, 3);
         }
 
         if (!publicados.Contains(BloqueEconomico.AhorroActivo))
@@ -167,13 +177,48 @@ public static class InformeValorHtmlExporter
                 foreach (var kv in porSub) Anular(kv.Value as JsonObject, "ri", "sp");
         }
 
-        // fact.variacionConsumo (los tres baldes de la entrega 2d) no lo cubre ninguno de los seis
+        // fact.variacionConsumo (los tres baldes de la entrega 2d) no lo cubre ninguno de los ocho
         // bloques del spec y ningún renderizador lo dibuja todavía, así que en la variante del
         // cliente no viaja. Recortarlo entero es la única opción honesta: dejarlo pasar sería
         // publicar por descuido montos que nadie aprobó, y nulearlo campo por campo simularía una
         // sección que el consultor nunca eligió publicar. Cuando esa sección tenga que llegar a un
         // cliente, necesita su propio interruptor de aprobación.
         Anular(fact, "variacionConsumo");
+
+        // meta.conciliacion (Tarea 8 de la entrega 6, dibujado por la Tarea 7 de la entrega 7) lleva
+        // los totales MENSUALES de BITCOST y del archivo de evolución: exactamente la clase de
+        // cifra que SerieMensual/GastoTotal protegen detrás de su propio interruptor. La sección
+        // publica sus montos SOLO cuando los dos están aprobados; si falta cualquiera de los dos,
+        // el nodo entero se anula (no campo por campo, mismo criterio que
+        // fact.variacionConsumo arriba) y el dibujo escribe su propia nota de "no publicado".
+        if (!publicados.Contains(BloqueEconomico.GastoTotal) || !publicados.Contains(BloqueEconomico.SerieMensual))
+            Anular(raiz["meta"] as JsonObject, "conciliacion");
+
+        // ejecutado (Tarea 9 de la entrega 6): el titular del informe (decisión 2026-08-13), octava
+        // clave de nivel superior desde la Tarea 6. Sin recorte propio viajaría intacto en la
+        // variante del cliente y filtraría todo el acumulado a quien nadie se lo aprobó: por eso el
+        // recorte nace en el mismo commit-set que el campo.
+        var ejecutado = raiz["ejecutado"] as JsonObject;
+        if (!publicados.Contains(BloqueEconomico.AhorroEjecutado))
+        {
+            // Montos fuera; conteos, porcentaje y ejes se quedan (mismo criterio que los demás
+            // bloques).
+            Anular(ejecutado, "total", "tasaVigente", "facturado", "estimado", "proyeccionFin");
+            AnularEnFilas(ejecutado?["serie"], 1, 2);
+            AnularEnFilas(ejecutado?["porOportunidad"], 1);
+            AnularEnFilas(ejecutado?["proyeccion"], 1, 2);
+            if (ejecutado?["catAcum"] is not null) ejecutado["catAcum"] = null;
+            if (ejecutado?["filas"] is JsonArray filasEj)
+                foreach (var f in filasEj.OfType<JsonObject>()) Anular(f, "monto");
+            // pctGasto NO se anula: es porcentaje y viaja siempre (tarjeta 1, decisión 2026-08-13).
+        }
+        if (!publicados.Contains(BloqueEconomico.ReservasFacturadas))
+        {
+            var res = ejecutado?["reservas"] as JsonObject;
+            Anular(res, "totalDemanda", "totalReserva", "totalAhorro", "ahorroAnualizado");
+            if (res?["filas"] is JsonArray filasRes)
+                foreach (var f in filasRes.OfType<JsonObject>()) Anular(f, "demanda", "reserva", "ahorro");
+        }
     }
 
     private static void Anular(JsonObject? obj, params string[] propiedades)

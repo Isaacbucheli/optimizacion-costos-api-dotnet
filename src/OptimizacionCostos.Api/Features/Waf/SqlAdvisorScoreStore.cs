@@ -174,7 +174,15 @@ public sealed class SqlAdvisorScoreStore(ISqlConnectionFactory factory) : IAdvis
         return await LoadLatestSnapshotAsync(conn, clientId, includeBreakdown, ct);
     }
 
-    private static async Task<WafAdvisorScoreSnapshot?> LoadLatestSnapshotAsync(
+    /// <summary>
+    /// Internal (no private) para que <see cref="OptimizacionCostos.Api.Features.InformeValor.Recolector.OpexRecolector"/>
+    /// la llame sobre la conexión compartida de <c>SqlInsumosBdRecolector</c> cuando el store
+    /// inyectado es este mismo tipo concreto (entrega 6 tarea 11): evita abrir una segunda
+    /// conexión y correr <see cref="WafSchema.EnsureWafSchemaAsync"/> de nuevo, cuando el llamador
+    /// ya lo hizo sobre esa conexión. El camino público de arriba (para el resto de llamadores,
+    /// que no comparten conexión) sigue haciendo las dos cosas.
+    /// </summary>
+    internal static async Task<WafAdvisorScoreSnapshot?> LoadLatestSnapshotAsync(
         SqlConnection conn, int clientId, bool includeBreakdown, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
@@ -533,7 +541,14 @@ public sealed class SqlAdvisorScoreStore(ISqlConnectionFactory factory) : IAdvis
     {
         await using var conn = await factory.OpenAsync(ct);
         await WafSchema.EnsureWafSchemaAsync(conn, ct);
+        return await LoadHistoryAsync(conn, clientId, granularity, ct);
+    }
 
+    /// <summary>Ver el comentario de la sobrecarga homónima de <see cref="LoadLatestSnapshotAsync(SqlConnection,int,bool,CancellationToken)"/>:
+    /// misma razón, mismo llamador (<c>OpexRecolector</c> sobre la conexión compartida).</summary>
+    internal static async Task<IReadOnlyList<ClientScoreHistoryPoint>> LoadHistoryAsync(
+        SqlConnection conn, int clientId, char granularity, CancellationToken ct)
+    {
         await using var cmd = conn.CreateCommand();
         cmd.CommandText = """
             SELECT point_date, score_global, score_p1, score_p2, score_p3, score_p4, score_p5

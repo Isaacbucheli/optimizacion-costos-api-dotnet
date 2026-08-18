@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Claims;
 using System.Text.Json;
 using Azure;
 using Microsoft.AspNetCore.Authorization;
@@ -11,6 +12,7 @@ using OptimizacionCostos.Api.Features.CostEngine.Api;
 using OptimizacionCostos.Api.Features.InformeValor.Calculo;
 using OptimizacionCostos.Api.Features.InformeValor.Entrega;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
+using OptimizacionCostos.Api.Features.Optimization;
 using OptimizacionCostos.Api.Features.Storage;
 
 namespace OptimizacionCostos.Api.Features.InformeValor.Api;
@@ -50,7 +52,8 @@ public sealed class InformeValorController(
     IInformeValorStore store, IAnalysisAccess access, ILogger<InformeValorController> logger,
     IInsumosBdRecolector recolector, IClientStore clientStore,
     IReservationService reservations, IAzureReservationsClient reservationsClient,
-    IBlobStorageService blobs, AppConfig config) : ControllerBase
+    IBlobStorageService blobs, AppConfig config,
+    IModulePermissionService permissions, IOptimizationService optimization) : ControllerBase
 {
     // Un export de BITCOST de 24 meses de un cliente grande está entre 8 y 18 MB, así que el
     // tope compartido de UploadValidation (10 MiB) rechazaría un archivo legítimo.
@@ -66,7 +69,10 @@ public sealed class InformeValorController(
 
     private static readonly HashSet<string> Kinds =
         new(StringComparer.OrdinalIgnoreCase)
-        { SqlInformeValorStore.KindFacturacion, SqlInformeValorStore.KindCasos, SqlInformeValorStore.KindRbac };
+        {
+            SqlInformeValorStore.KindFacturacion, SqlInformeValorStore.KindEvolucion,
+            SqlInformeValorStore.KindCasos, SqlInformeValorStore.KindRbac,
+        };
 
     /// <summary>
     /// Qué insumos hay cargados y de cuándo, el estado de la condicional de RBAC con su motivo, y
@@ -96,6 +102,7 @@ public sealed class InformeValorController(
             insumos = new[]
             {
                 Describe(SqlInformeValorStore.KindFacturacion, true, porKind),
+                Describe(SqlInformeValorStore.KindEvolucion, true, porKind),
                 Describe(SqlInformeValorStore.KindCasos, true, porKind),
                 Describe(SqlInformeValorStore.KindRbac, false, porKind),
             },
@@ -206,9 +213,12 @@ public sealed class InformeValorController(
         var casos = await store.GetCasosAsync(clientId, ct);
         var estados = await store.GetEstadoAsync(clientId, ct);
         var nombreCliente = await clientStore.GetNameAsync(clientId, ct) ?? $"Cliente {clientId}";
+        var evolucion = await store.GetEvolucionAsync(clientId, ct);
+        var registro = await LeerRegistroBarridoAsync(clientId, ct);
 
         var modelo = InformeValorEnsamblador.Ensamblar(
-            facturacion, FilasAntesDeFusionar(estados), casos, insumosBd, nombreCliente, contexto);
+            facturacion, FilasAntesDeFusionar(estados), casos, insumosBd, nombreCliente, contexto,
+            registroBarrido: registro, evolucion: evolucion);
 
         return Ok(modelo);
     }
@@ -336,6 +346,21 @@ public sealed class InformeValorController(
         }
     }
 
+    /// <summary>La doble puerta del spec (Recolectores): el registro del barrido solo se lee si el
+    /// usuario tiene View del módulo Optimization Y pasa la lista de correos del barrido. Sin las
+    /// dos, la sección declara que no se pudo leer — no sale en cero (D9).</summary>
+    private async Task<RegistroBarrido> LeerRegistroBarridoAsync(int clientId, CancellationToken ct)
+    {
+        var role = User.FindFirst(ClaimTypes.Role)?.Value ?? "";
+        var email = User.FindFirst("sub")?.Value;
+        if (!await permissions.HasAccessAsync(role, Modules.Optimization, requireEdit: false, ct)
+            || !optimization.AccessAllowed(email))
+            return RegistroBarrido.NoAutorizado(
+                "El barrido de optimización requiere permisos que este usuario no tiene; la sección no se midió.");
+        await optimization.EnsureSchemaAsync(ct);
+        return await recolector.LeerBarridoResueltoAsync(clientId, ct);
+    }
+
     // ===================================================================================
     // Entrega (Tarea 4 de la entrega 3): generar, listar y descargar.
     // ===================================================================================
@@ -364,7 +389,7 @@ public sealed class InformeValorController(
     ///
     /// <para><b>Lo que se archiva es lo que el artefacto HACE, no lo que se pidió</b>
     /// (<see cref="ArtefactoInforme.BloquesPublicados"/>): pedir la variante interna con tres bloques
-    /// aprobados produce el informe completo, y la bitácora dice los seis. La respuesta devuelve el
+    /// aprobados produce el informe completo, y la bitácora dice los ocho. La respuesta devuelve el
     /// mismo dato para que quien llama vea qué pasó de verdad.</para>
     /// </summary>
     [HttpPost("clients/{clientId:int}/generar")]
@@ -413,10 +438,13 @@ public sealed class InformeValorController(
         var casos = await store.GetCasosAsync(clientId, ct);
         var estados = await store.GetEstadoAsync(clientId, ct);
         var nombreCliente = await clientStore.GetNameAsync(clientId, ct) ?? $"Cliente {clientId}";
+        var evolucion = await store.GetEvolucionAsync(clientId, ct);
+        var registro = await LeerRegistroBarridoAsync(clientId, ct);
         var foto = await fotoPendiente;
 
         var modelo = InformeValorEnsamblador.Ensamblar(
-            facturacion, FilasAntesDeFusionar(estados), casos, insumosBd, nombreCliente, contexto, foto);
+            facturacion, FilasAntesDeFusionar(estados), casos, insumosBd, nombreCliente, contexto, foto,
+            registroBarrido: registro, evolucion: evolucion);
 
         ArtefactoInforme artefacto;
         try
@@ -467,6 +495,7 @@ public sealed class InformeValorController(
                     FacturacionIngestaId: EstadoDe(estados, SqlInformeValorStore.KindFacturacion)?.IngestaId,
                     CasosIngestaId: EstadoDe(estados, SqlInformeValorStore.KindCasos)?.IngestaId,
                     RbacIngestaId: EstadoDe(estados, SqlInformeValorStore.KindRbac)?.IngestaId,
+                    EvolucionIngestaId: EstadoDe(estados, SqlInformeValorStore.KindEvolucion)?.IngestaId,
                     FotoReservas: foto,
                     PlantillaVersion: artefacto.PlantillaVersion,
                     BlobContainer: container,
@@ -748,6 +777,13 @@ public sealed class InformeValorController(
                 return Ok(Resumen(id, parsed.RowsTotal, parsed.Rows.Count, parsed.RowsSkipped, parsed.RowsMerged, parsed.Warnings));
             }
 
+            if (string.Equals(kind, SqlInformeValorStore.KindEvolucion, StringComparison.OrdinalIgnoreCase))
+            {
+                var parsed = EvolucionParser.Parse(ms);
+                var id = await store.ReplaceEvolucionAsync(clientId, name, user, parsed, ct);
+                return Ok(Resumen(id, parsed.RowsTotal, parsed.Rows.Count, parsed.RowsSkipped, parsed.RowsMerged, parsed.Warnings));
+            }
+
             if (string.Equals(kind, SqlInformeValorStore.KindCasos, StringComparison.OrdinalIgnoreCase))
             {
                 var parsed = CasosParser.Parse(ms);
@@ -931,7 +967,7 @@ public sealed record PreviewRequest(
 /// de meses parciales por su cuenta, el informe entregado podría medir otra ventana que la vista
 /// previa que el consultor aprobó, y las dos piezas serían coherentes consigo mismas.</para>
 ///
-/// <para><see cref="Bloques"/> ausente, <c>null</c> o vacío es "ninguno aprobado": los seis nacen
+/// <para><see cref="Bloques"/> ausente, <c>null</c> o vacío es "ninguno aprobado": los ocho nacen
 /// apagados (F1) y generar sin decidir produce la versión sin cifras, que es el default del spec y no
 /// un error. <see cref="Variante"/>, en cambio, es obligatoria — ver <c>Generar</c> para por qué no
 /// hay default seguro.</para>

@@ -1,15 +1,32 @@
 using System.Text.Json.Serialization;
+using OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 
 namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 
 /// <summary>
 /// El modelo completo del informe: <see cref="Meta"/> más los cinco bloques —consumo, operación,
-/// seguridad, postura y roadmap— y <see cref="CatSerie"/>. Forma exacta del objeto <c>D</c> que
-/// arma <c>recalcula()</c> en <c>docs/Plantilla-Dashboard-BIT.html</c>: <c>D.meta</c>,
-/// <c>D.tickets</c>, <c>D.fact</c>, <c>D.rbac</c>, <c>D.advisor</c>, <c>D.matriz</c>,
-/// <c>D.catSerie</c>. Todo bloque ausente en la plantilla es <c>null</c> (insumo no cargado):
-/// <c>render()</c> ya maneja ese caso con <c>if(!t){ ...pendiente... }</c> por sección, así que
-/// cada propiedad de bloque acá es nullable, nunca un objeto "vacío" que simule ausencia.
+/// seguridad, postura y roadmap—, <see cref="CatSerie"/> y <see cref="Ejecutado"/>. Forma exacta
+/// del objeto <c>D</c> que arma <c>recalcula()</c> en <c>docs/Plantilla-Dashboard-BIT.html</c>:
+/// <c>D.meta</c>, <c>D.tickets</c>, <c>D.fact</c>, <c>D.rbac</c>, <c>D.advisor</c>, <c>D.matriz</c>,
+/// <c>D.catSerie</c>, <c>D.ejecutado</c>. Todo bloque ausente en la plantilla es <c>null</c>
+/// (insumo no cargado): <c>render()</c> ya maneja ese caso con <c>if(!t){ ...pendiente... }</c>
+/// por sección, así que cada propiedad de bloque acá es nullable, nunca un objeto "vacío" que
+/// simule ausencia.
+///
+/// <para><b><see cref="Ejecutado"/> es la octava clave de nivel superior, y va DELIBERADAMENTE
+/// fuera de <c>fact</c> (entrega 6, Tarea 6).</b> <c>fact</c> es el bloque de la tabla de
+/// hechos —la facturación cruda de BITCOST y lo que de ahí se deriva (variación de consumo,
+/// series, comparativas)—, mientras que <see cref="Ejecutado"/> es el titular del informe
+/// (decisión 2026-08-13): el acumulado de lo que efectivamente se ejecutó, cruzando tres fuentes
+/// que <c>fact</c> nunca mira (el barrido de optimización, la matriz WAF resuelta y las reservas
+/// activas). Meterlo dentro de <c>fact</c> habría escondido el dato más importante del informe
+/// adentro de un bloque pensado para otra cosa. El contrato de siete claves que fijaba
+/// <c>InformeValorJsonOptionsTests</c> se amplía a OCHO a propósito, en el mismo commit que
+/// introduce el campo (spec §Modelo): a diferencia de <see cref="InformeValorMeta.Cobertura"/>
+/// (D12), que sí vive DENTRO de <c>meta</c> porque <c>render()</c> nunca la va a leer,
+/// <see cref="Ejecutado"/> es contenido para el cliente que un renderizador futuro (entrega 7) SÍ
+/// va a dibujar — necesita su propio lugar de nivel superior, igual que <c>catSerie</c>, no un
+/// rincón de otro bloque.</para>
 ///
 /// <para>Lo ensambla la Tarea 8, que también resuelve D12 (las tres cifras de suscripciones se
 /// concilian) sobre este objeto: cruza las suscripciones que ve cada bloque y publica el conjunto
@@ -31,6 +48,17 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// globales de la API</b> (D13: la política global transforma a snake_case tanto nombres de
 /// propiedad como claves de diccionario, y <c>render()</c> espera los nombres tal cual salen del
 /// JavaScript original).</para>
+///
+/// <para><b><see cref="Opex"/> y <see cref="Cronologia"/> son la novena y la décima clave de nivel
+/// superior (entrega 7, Tarea 1)</b>, publicadas antes de que ningún renderizador las dibuje (esa
+/// parte es de las tareas 3, 5 y 9 de la misma entrega): igual que <see cref="Ejecutado"/>, van
+/// arriba y no anidadas en ningún otro bloque, por la misma razón que ya deja escrita el
+/// comentario de clase de <see cref="OpexModelo"/> — <see cref="Postura"/> es null cuando el
+/// cliente no tiene recomendaciones activas, y un cliente puede tener score de Opex sin
+/// recomendaciones, así que meterlo dentro de <c>advisor</c> perdería el dato justo en el caso que
+/// la tarjeta existe para contar. <see cref="Cronologia"/> tampoco cuelga de <c>matriz</c> por el
+/// mismo motivo: es una vista propia sobre la misma bitácora, no una columna más de la tabla de
+/// hallazgos.</para>
 /// </summary>
 public sealed record ModeloInformeValor(
     [property: JsonPropertyName("meta")] InformeValorMeta Meta,
@@ -39,7 +67,10 @@ public sealed record ModeloInformeValor(
     [property: JsonPropertyName("rbac")] SeguridadModelo? Seguridad,
     [property: JsonPropertyName("advisor")] PosturaModelo? Postura,
     [property: JsonPropertyName("matriz")] RoadmapModelo? Roadmap,
-    [property: JsonPropertyName("catSerie")] IReadOnlyDictionary<string, IReadOnlyDictionary<string, decimal>>? CatSerie);
+    [property: JsonPropertyName("catSerie")] IReadOnlyDictionary<string, IReadOnlyDictionary<string, decimal>>? CatSerie,
+    [property: JsonPropertyName("ejecutado")] EjecutadoModelo? Ejecutado = null,
+    [property: JsonPropertyName("opex")] OpexModelo? Opex = null,
+    [property: JsonPropertyName("cronologia")] CronologiaModelo? Cronologia = null);
 
 /// <summary>
 /// Encabezado del informe (<c>D.meta</c>). <see cref="Corte"/> es la fecha de corte tal como
@@ -56,13 +87,21 @@ public sealed record ModeloInformeValor(
 /// lee, pensado para la vista React de la entrega 3 y para la bitácora de la entrega, spec
 /// <c>informe_valor_entrega.rbac_origen</c>). Un consultor que no puede saber si el bloque de
 /// seguridad salió de la base o del Excel de respaldo no puede explicar sus cifras.</para>
+///
+/// <para><see cref="Conciliacion"/> es la Tarea 8 de la entrega 6: vive DENTRO de <c>meta</c> por el
+/// mismo motivo que <see cref="Cobertura"/> — ningún bloque de <see cref="ModeloInformeValor"/> ve a
+/// la vez la tabla de hechos y el archivo de evolución, así que el cruce lo arma
+/// <see cref="InformeValorEnsamblador"/> y no tiene otro lugar donde publicarse. Ningún renderizador
+/// la dibuja todavía (entrega 7 la toma); <c>null</c> cuando no hay evolución cargada, mismo caso
+/// que un bloque ausente en cualquier otra parte del modelo.</para>
 /// </summary>
 public sealed record InformeValorMeta(
     [property: JsonPropertyName("cliente")] string Cliente,
     [property: JsonPropertyName("periodo")] string Periodo,
     [property: JsonPropertyName("corte")] string Corte,
     [property: JsonPropertyName("cobertura")] InformeValorCobertura Cobertura,
-    [property: JsonPropertyName("rbacOrigen")] string? RbacOrigen = null);
+    [property: JsonPropertyName("rbacOrigen")] string? RbacOrigen = null,
+    [property: JsonPropertyName("conciliacion")] ConciliacionArchivos? Conciliacion = null);
 
 /// <summary>
 /// D12 (Tarea 8): las tres cifras de suscripciones del informe —de facturación, de RBAC y de

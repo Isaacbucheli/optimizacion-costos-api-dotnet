@@ -17,13 +17,6 @@ public static class BitcostParser
         "El archivo no tiene la forma del export de BITCOST. Deben estar las columnas "
         + "Recurso, PVP y la jerarquía de fechas con Año y Mes.";
 
-    private static readonly Dictionary<string, byte> Meses = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ["enero"] = 1, ["febrero"] = 2, ["marzo"] = 3, ["abril"] = 4, ["mayo"] = 5, ["junio"] = 6,
-        ["julio"] = 7, ["agosto"] = 8, ["septiembre"] = 9, ["setiembre"] = 9, ["octubre"] = 10,
-        ["noviembre"] = 11, ["diciembre"] = 12,
-    };
-
     public static ParseResult<FacturacionRow> Parse(Stream stream)
     {
         var acumulado = new Dictionary<string, FacturacionRow>(StringComparer.Ordinal);
@@ -170,10 +163,13 @@ public static class BitcostParser
         return -1;
     }
 
+    /// <summary>A diferencia de <see cref="EvolucionParser"/>, BITCOST trae el mes como texto O
+    /// como número en distintos exports: por eso esta tolerancia extra vive acá y no en el
+    /// diccionario compartido (<see cref="InsumoCellUtils.MesesPorNombre"/>).</summary>
     private static byte Mes(string raw)
     {
         var n = Norm(raw);
-        if (Meses.TryGetValue(n, out var m)) return m;
+        if (MesesPorNombre.TryGetValue(n, out var m)) return m;
         return byte.TryParse(n, out var num) && num >= 1 && num <= 12 ? num : (byte)0;
     }
 }

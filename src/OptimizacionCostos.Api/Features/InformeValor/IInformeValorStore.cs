@@ -36,6 +36,11 @@ public interface IInformeValorStore
     Task<int> ReplaceRbacAsync(
         int clientId, string fileName, string? user, RbacParseResult parsed, CancellationToken ct);
 
+    /// <summary>Reemplaza el insumo de evolución de consumo por recurso (entrega 5 del informe de
+    /// valor): mismo criterio de "insumo vivo" que facturación y casos.</summary>
+    Task<int> ReplaceEvolucionAsync(
+        int clientId, string fileName, string? user, ParseResult<EvolucionRow> parsed, CancellationToken ct);
+
     Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct);
 
     Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct);
@@ -62,6 +67,11 @@ public interface IInformeValorStore
     /// para qué campos de <see cref="RbacFila"/> no sobreviven esta vía y por qué.
     /// </summary>
     Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct);
+
+    /// <summary>Las filas de evolución de consumo ya persistidas de un cliente (insumo de la
+    /// entrega 6, el ensamblador del informe). Ordenadas por período y recurso, no por
+    /// <c>row_id</c>: ver el comentario de la implementación.</summary>
+    Task<IReadOnlyList<EvolucionRow>> GetEvolucionAsync(int clientId, CancellationToken ct);
 
     /// <summary>
     /// Archiva una entrega generada (F4 de la entrega 3) y devuelve su <c>entrega_id</c>.

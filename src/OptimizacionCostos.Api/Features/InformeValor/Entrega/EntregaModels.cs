@@ -39,6 +39,11 @@ public sealed record EntregaNueva(
     int? FacturacionIngestaId,
     int? CasosIngestaId,
     int? RbacIngestaId,
+    /// <summary>La corrida de evolución (entrega 5) que alimentó la conciliación de la Tarea 8 y el
+    /// balde de reservas facturadas de la Tarea 3 (entrega 6). Mismo criterio que sus tres hermanas:
+    /// el insumo es vivo, así que esto es lo único que después permite detectar que ya no es el
+    /// mismo. <c>null</c> cuando el insumo no estaba cargado al generar.</summary>
+    int? EvolucionIngestaId,
     /// <summary>La foto de reservas con la que se generó. <c>null</c> significa "esta entrega se
     /// generó sin capturarla", que NO es lo mismo que una foto con <c>Medido=false</c> ("se intentó
     /// y no se pudo", con su motivo adentro).</summary>
@@ -91,6 +96,8 @@ public sealed record EntregaArchivada(
     int? FacturacionIngestaId,
     int? CasosIngestaId,
     int? RbacIngestaId,
+    /// <summary>Ver <see cref="EntregaNueva.EvolucionIngestaId"/>.</summary>
+    int? EvolucionIngestaId,
     FotoReservas? FotoReservas,
     string? PlantillaVersion,
     string? SummaryJson);

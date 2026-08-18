@@ -10,7 +10,11 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
 /// Implementación de <see cref="IInsumosBdRecolector"/>. Abre UNA sola conexión y la reusa para
 /// Advisor, Matriz y Retiros (los tres reciben una <see cref="SqlConnection"/> ya abierta y, a
 /// propósito, no aseguran su propio schema: ver el comentario de clase de cada uno). RBAC no la
-/// usa: pasa por <see cref="IAccessReviewStore"/>, que administra su propia conexión.
+/// usa: pasa por <see cref="IAccessReviewStore"/>, que administra su propia conexión. Opex
+/// (<see cref="OpexRecolector"/>) la reusa también cuando <see cref="IAdvisorScoreStore"/> inyectado
+/// es el <see cref="SqlAdvisorScoreStore"/> concreto (entrega 6 tarea 11 -- ver el comentario en
+/// <see cref="LeerAsync"/>); con un fake de tests cae al camino de interfaz, que administra su
+/// propia conexión, igual que RBAC.
 ///
 /// <para>La corrida de accesos se lee UNA sola vez (<c>GetLatestFinishedRunAsync</c> +
 /// <c>GetSnapshotAsync</c>) y el mismo snapshot alimenta dos cosas: <see cref="EstadoRbac.Resolver"/>
@@ -39,7 +43,8 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Recolector;
 /// si la base alcanza por sí sola no hace falta ni preguntarle al store.</para>
 /// </summary>
 public sealed class SqlInsumosBdRecolector(
-    ISqlConnectionFactory factory, IAccessReviewStore accessReviewStore, IInformeValorStore informeValorStore)
+    ISqlConnectionFactory factory, IAccessReviewStore accessReviewStore, IInformeValorStore informeValorStore,
+    IAdvisorScoreStore advisorScoreStore)
     : IInsumosBdRecolector
 {
     /// <summary>
@@ -95,10 +100,17 @@ public sealed class SqlInsumosBdRecolector(
         // Advisor y Matriz dependen del schema WAF; Retiros, del de Boletín. Ninguno de los tres
         // recolectores lo asegura por sí mismo (ver sus comentarios de clase): centralizarlo acá
         // en vez de repetirlo en cada uno evita 3 chequeos de DDL idempotente por request cuando
-        // 2 alcanzan (WAF sirve para Advisor y Matriz a la vez). Y correrlos una sola vez por
-        // proceso (ver _schemaEnsured) evita repetir esas ~19+ sentencias en cada request de un
-        // endpoint que no escribe nada.
+        // 2 alcanzan (WAF sirve para Advisor, Matriz y Opex a la vez). Y correrlos una sola vez
+        // por proceso (ver _schemaEnsured) evita repetir esas ~19+ sentencias en cada request de
+        // un endpoint que no escribe nada.
         await AsegurarSchemaAsync(conn, ct);
+
+        // Opex: sobre la conexión compartida cuando el store es el SQL real (el schema WAF ya está
+        // asegurado acá); por la interfaz cuando es un fake de tests. Evita 2 conexiones y 2 batches
+        // DDL por preview en el B1 compartido (hallazgo del review final de la entrega 5).
+        var opex = advisorScoreStore is SqlAdvisorScoreStore sqlScore
+            ? await OpexRecolector.LeerAsync(conn, sqlScore, clientId, ct)
+            : await OpexRecolector.LeerAsync(advisorScoreStore, clientId, ct);
 
         var administradas = await SuscripcionesAdministradasAsync(conn, clientId, ct);
         var (seguridadGestionadaExternamente, seguridadGestionadaNota) =
@@ -115,6 +127,9 @@ public sealed class SqlInsumosBdRecolector(
         // schema WAF ya asegurado arriba, mismo filtro de suscripciones administradas).
         var hallazgosResueltos = await HallazgoResueltoRecolector.LeerAsync(
             conn, clientId, administradas, seguridadGestionadaExternamente, ct);
+        // Tarea 6: misma conexión y mismo schema WAF ya asegurado arriba. No depende de
+        // suscripciones administradas (waf_tracking_history no tiene columna de suscripción).
+        var hitos = await CronologiaRecolector.LeerAsync(conn, clientId, seguridadGestionadaExternamente, ct);
 
         var run = await accessReviewStore.GetLatestFinishedRunAsync(clientId, ct);
         var snapshot = run is null ? null : await accessReviewStore.GetSnapshotAsync(run.RunId, ct);
@@ -134,7 +149,7 @@ public sealed class SqlInsumosBdRecolector(
             advisor, matriz, rbac, retiros, estadoBase with { Ejes = ejesRbac },
             seguridadGestionadaExternamente, seguridadGestionadaNota, DateTime.UtcNow,
             RbacOrigen: rbacOrigen, HallazgosResueltos: hallazgosResueltos,
-            CorridaBoletin: corridaBoletin);
+            CorridaBoletin: corridaBoletin, Opex: opex, Hitos: hitos);
     }
 
     /// <summary>
@@ -161,6 +176,18 @@ public sealed class SqlInsumosBdRecolector(
 
         return await HallazgoResueltoRecolector.LeerAsync(
             conn, clientId, administradas, seguridadGestionadaExternamente, ct);
+    }
+
+    /// <summary>
+    /// <see cref="IInsumosBdRecolector.LeerBarridoResueltoAsync"/>: abre su propia conexión y
+    /// delega en <see cref="BarridoResueltoRecolector.LeerAsync"/>. Sin schema-ensure propio a
+    /// propósito -- el llamador (el controller) ya corrió <c>OptimizationService.EnsureSchemaAsync</c>
+    /// como parte de la doble puerta, antes de decidir siquiera llamar a este método.
+    /// </summary>
+    public async Task<RegistroBarrido> LeerBarridoResueltoAsync(int clientId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        return await BarridoResueltoRecolector.LeerAsync(conn, clientId, ct);
     }
 
     /// <summary>Ver <see cref="_schemaEnsured"/>: DDL idempotente de WAF y Boletin, una sola vez por

@@ -64,6 +64,26 @@ public static class InformeValorSchema
         END
         """,
         """
+        IF OBJECT_ID('dbo.informe_valor_evolucion', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.informe_valor_evolucion (
+                row_id BIGINT IDENTITY(1,1) PRIMARY KEY,
+                client_id INT NOT NULL CONSTRAINT FK_iv_evo_client REFERENCES dbo.clients(client_id),
+                ingesta_id INT NOT NULL,
+                natural_key_hash CHAR(64) NOT NULL,
+                category NVARCHAR(200) NULL,
+                subcategory NVARCHAR(200) NULL,
+                resource_name NVARCHAR(512) NOT NULL,
+                is_reservation BIT NOT NULL CONSTRAINT DF_iv_evo_res DEFAULT 0,
+                pvp DECIMAL(28,10) NOT NULL,
+                period_year SMALLINT NOT NULL,
+                period_month TINYINT NOT NULL
+            );
+            CREATE UNIQUE INDEX UX_iv_evo_key ON dbo.informe_valor_evolucion (client_id, natural_key_hash);
+            CREATE INDEX IX_iv_evo_periodo ON dbo.informe_valor_evolucion (client_id, period_year, period_month);
+        END
+        """,
+        """
         IF OBJECT_ID('dbo.informe_valor_caso', 'U') IS NULL
         BEGIN
             CREATE TABLE dbo.informe_valor_caso (
@@ -133,7 +153,7 @@ public static class InformeValorSchema
                 -- Guardar la lista vacía como NULL cambiaría el resultado al reemitir.
                 meses_parciales NVARCHAR(2000) NULL,
                 variante NVARCHAR(20) NOT NULL,
-                -- JSON con las claves de los seis bloques económicos aprobados. NUNCA NULL: '[]'
+                -- JSON con las claves de los ocho bloques económicos aprobados. NUNCA NULL: '[]'
                 -- significa "se generó sin aprobar ninguno", que es el default y un dato en sí.
                 bloques_publicados NVARCHAR(400) NOT NULL,
                 -- De dónde salió el insumo de RBAC ("base"/"archivo"/NULL si ninguna fuente tenía
@@ -154,6 +174,9 @@ public static class InformeValorSchema
                 facturacion_ingesta_id INT NULL,
                 casos_ingesta_id INT NULL,
                 rbac_ingesta_id INT NULL,
+                -- La corrida de evolución (entrega 5) que alimentó esta entrega: mismo criterio que
+                -- sus tres hermanas de arriba (entrega 6, Tarea 10).
+                evolucion_ingesta_id INT NULL,
                 -- La foto de reservas (F4, heredada de la entrega 2d). Sin persistirla, reemitir un
                 -- informe viejo lo recalcularía contra las reservas de HOY. NULL y una foto con
                 -- Medido=false NO son lo mismo: NULL es "esta entrega es anterior a la foto",
@@ -209,6 +232,11 @@ public static class InformeValorSchema
         """
         IF COL_LENGTH('dbo.informe_valor_entrega', 'rbac_ingesta_id') IS NULL
             ALTER TABLE dbo.informe_valor_entrega ADD rbac_ingesta_id INT NULL;
+        """,
+        // soft-migration entrega 6 (Tarea 10): mismo motivo que sus tres hermanas de arriba.
+        """
+        IF COL_LENGTH('dbo.informe_valor_entrega', 'evolucion_ingesta_id') IS NULL
+            ALTER TABLE dbo.informe_valor_entrega ADD evolucion_ingesta_id INT NULL;
         """,
         """
         IF COL_LENGTH('dbo.informe_valor_entrega', 'plantilla_version') IS NULL

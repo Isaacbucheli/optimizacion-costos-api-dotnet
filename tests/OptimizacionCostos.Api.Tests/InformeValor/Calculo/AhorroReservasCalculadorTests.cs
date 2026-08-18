@@ -337,6 +337,20 @@ public sealed class AhorroReservasCalculadorTests
         Assert.Equal(10m, modelo.AhorroConfirmado); // (1 - 0) * 10, solo la de vm1
     }
 
+    // ── Los helpers de fecha de reserva son internal porque se reutilizan (entrega 6) ──
+
+    /// <summary>Los helpers son internal porque el registro de lo ejecutado (entrega 6) deriva
+    /// el mes de ejecución de cada reserva con la MISMA regla: ExpiresOn menos Term. Dos reglas
+    /// para el mismo concepto es el defecto más repetido del módulo.</summary>
+    [Fact]
+    public void El_inicio_de_reserva_se_deriva_de_vencimiento_menos_termino()
+    {
+        Assert.Equal(new DateOnly(2026, 2, 3), AhorroReservasCalculador.InicioDeReserva("2027-02-03", "P1Y"));
+        Assert.Equal(new DateOnly(2023, 6, 15), AhorroReservasCalculador.InicioDeReserva("2026-06-15", "P3Y"));
+        Assert.Null(AhorroReservasCalculador.InicioDeReserva("2027-02-03", "1 Year"));
+        Assert.Null(AhorroReservasCalculador.InicioDeReserva(null, "P1Y"));
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════════════════════
     // E9 (entrega 2d, tarea 5, la costura con los baldes 2 y 3): la fecha de la reserva decide SI
     // explica algo dentro del período del informe; si sí, el aporte se mide sobre la MISMA ventana

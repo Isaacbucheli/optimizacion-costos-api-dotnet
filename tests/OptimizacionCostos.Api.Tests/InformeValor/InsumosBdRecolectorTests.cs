@@ -399,6 +399,10 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
             int clientId, string fileName, string? user, RbacParseResult parsed, CancellationToken ct)
             => throw new NotSupportedException();
 
+        public Task<int> ReplaceEvolucionAsync(
+            int clientId, string fileName, string? user, ParseResult<EvolucionRow> parsed, CancellationToken ct)
+            => throw new NotSupportedException();
+
         public Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct) => throw new NotSupportedException();
 
         public Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct)
@@ -411,6 +415,9 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
             => throw new NotSupportedException();
 
         public Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<EvolucionRow>> GetEvolucionAsync(int clientId, CancellationToken ct)
             => throw new NotSupportedException();
 
         // Entrega 3, F4: la bitacora de entregas no la ejercita ningun test de esta clase. Revienta
@@ -537,6 +544,11 @@ public sealed class InsumosBdRecolectorTests : IClassFixture<InsumosBdRecolector
         public Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
             int clientId, CancellationToken ct = default) =>
             Task.FromResult(_insumos.HallazgosResueltos ?? []);
+
+        // Ningún test de esta clase pega a /preview ni a /generar (solo al recolector directo o a
+        // /insumos-bd): mismo default seguro que el resto de los fakes de este módulo.
+        public Task<RegistroBarrido> LeerBarridoResueltoAsync(int clientId, CancellationToken ct = default) =>
+            Task.FromResult(RegistroBarrido.SinBarrido());
     }
 
     /// <summary>Ningún test de esta clase pega a /preview/variacion-consumo: revienta a propósito si

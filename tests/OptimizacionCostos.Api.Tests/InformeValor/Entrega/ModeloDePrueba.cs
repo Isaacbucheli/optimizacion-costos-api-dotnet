@@ -1,12 +1,14 @@
 using OptimizacionCostos.Api.Features.InformeValor.Calculo;
+using OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 
 namespace OptimizacionCostos.Api.Tests.InformeValor.Entrega;
 
 /// <summary>
 /// Un <see cref="ModeloInformeValor"/> con un valor distinto en CADA monto del modelo. Los montos
-/// son marcadores irrepetibles (11xxx para consumo, 22xxx para Advisor) para que un test pueda
-/// afirmar "este monto no está en el artefacto" buscando el número, sin depender de cómo se
-/// formatea ni de qué sección lo dibuja.
+/// son marcadores irrepetibles (11xxx para consumo, 22xxx para Advisor, 33xxx para el acumulado
+/// ejecutado, 34xxx para sus reservas facturadas, 35xxx para la conciliación entre los dos
+/// archivos de bitcost) para que un test pueda afirmar "este monto no está en el artefacto"
+/// buscando el número, sin depender de cómo se formatea ni de qué sección lo dibuja.
 /// </summary>
 internal static class ModeloDePrueba
 {
@@ -40,7 +42,39 @@ internal static class ModeloDePrueba
         ("ahorroAdvisor", 22004m),        // advisor.savLineas[0].monto
         ("ahorroAdvisor", 22005m),        // advisor.porSub[sub].ri
         ("ahorroAdvisor", 22006m),        // advisor.porSub[sub].sp
+        ("ahorroEjecutado", 33001m),      // ejecutado.total
+        ("ahorroEjecutado", 33002m),      // ejecutado.tasaVigente
+        ("ahorroEjecutado", 33003m),      // ejecutado.facturado
+        ("ahorroEjecutado", 33004m),      // ejecutado.estimado
+        ("ahorroEjecutado", 33005m),      // ejecutado.proyeccionFin
+        ("ahorroEjecutado", 33006m),      // ejecutado.serie[0][1] (tasa vigente)
+        ("ahorroEjecutado", 33007m),      // ejecutado.serie[0][2] (acumulado)
+        ("ahorroEjecutado", 33008m),      // ejecutado.porOportunidad[0][1]
+        ("ahorroEjecutado", 33009m),      // ejecutado.catAcum[cat][mes]
+        ("ahorroEjecutado", 33010m),      // ejecutado.filas[0].monto
+        ("ahorroEjecutado", 33011m),      // ejecutado.proyeccion[0][1]
+        ("ahorroEjecutado", 33012m),      // ejecutado.proyeccion[0][2]
+        ("reservasFacturadas", 34001m),   // ejecutado.reservas.totalDemanda
+        ("reservasFacturadas", 34002m),   // ejecutado.reservas.totalReserva
+        ("reservasFacturadas", 34003m),   // ejecutado.reservas.totalAhorro
+        ("reservasFacturadas", 34004m),   // ejecutado.reservas.ahorroAnualizado
+        ("reservasFacturadas", 34005m),   // ejecutado.reservas.filas[0].demanda
+        ("reservasFacturadas", 34006m),   // ejecutado.reservas.filas[0].reserva
+        ("reservasFacturadas", 34007m),   // ejecutado.reservas.filas[0].ahorro
+        // meta.conciliacion (Tarea 8 de la entrega 6, C1 del review final): no lo cubre ninguno de
+        // los ocho bloques ("conciliacion" no es la clave de ninguno), así que ningún bloque
+        // aprobado lo publica nunca — el barrido de "Cada_bloque_aprobado_publica_exactamente_sus_
+        // montos" lo confirma al no encontrar coincidencia jamás. Igual que fact.variacionConsumo,
+        // se recorta entero (Recortar), no campo por campo.
+        ("conciliacion", 35001.10m),      // meta.conciliacion.difs[0][1] (total de hechos del mes)
+        ("conciliacion", 35002.10m),      // meta.conciliacion.difs[0][2] (total de evolución del mes)
+        ("conciliacion", 35003.10m),      // meta.conciliacion.difs[0][3] (diferencia)
     ];
+
+    /// <summary>El porcentaje de la tarjeta 1 (<c>ejecutado.pctGasto</c>): viaja SIEMPRE, aprobado o
+    /// no el bloque <c>ahorroEjecutado</c> (decisión 2026-08-13), así que no entra en
+    /// <see cref="Montos"/> — esa lista audita lo que SÍ tiene que desaparecer.</summary>
+    public const decimal PctGastoDePrueba = 47.3m;
 
     public static ModeloInformeValor Crear(string cliente = "Cliente de prueba") => new(
         Meta: new InformeValorMeta(
@@ -48,7 +82,13 @@ internal static class ModeloDePrueba
             Periodo: "2026-01 a 2026-02",
             Corte: "2026-03-01",
             Cobertura: new InformeValorCobertura(1, [new CoberturaSuscripcion("sub-1", SuscripcionConAcentos, true, false, true)]),
-            RbacOrigen: "base"),
+            RbacOrigen: "base",
+            // Marcadores 35xxx (C1 del review final de la entrega 6): meta.conciliacion tiene que
+            // desaparecer entero en la variante del cliente (InformeValorHtmlExporterTests).
+            Conciliacion: new ConciliacionArchivos(
+                Coincide: false,
+                Diferencias: [["2026-01", 35001.10m, 35002.10m, 35003.10m]],
+                Umbral: 0.005m)),
         Operacion: new OperacionModelo(
             Total: 10, Cumple: 3, NoCumple: 1, SinEvaluar: 6, PctCumplimiento: 75d,
             DenominadorPctCumplimiento: 4, Cerrados: 8, MediaHoras: 4d, MedianaHoras: 3d, P90Horas: 9d,
@@ -84,8 +124,31 @@ internal static class ModeloDePrueba
                 Fin: 11302m, FinHastaMes: "2026-02", TasaMensual: 11303m, MesesSostenido: 4,
                 Anualizada: 11304m),
             Comparativa: new ConsumoComparativa("2025-01", "2026-01", [["Storage", 11203m, 11204m]]),
-            PorCentroCosto: [["Finanzas", 11401m]]),
-        Seguridad: null,
+            PorCentroCosto: [["Finanzas", 11401m]],
+            // unitario/mom (Tarea 7, entrega 6): Lado.Ninguno en ContratoEntreRenderizadoresTests,
+            // ningún renderizador los lee todavía, así que no llevan marcador de la lista de Montos
+            // de arriba (esa lista audita fugas hacia los dos renderizadores existentes) ni
+            // reutilizan ninguno de esos marcadores, para no ensuciar esa auditoría por accidente.
+            CostoUnitario: [["2026-01", 12, 660m, 55m, 0]],
+            // Índice 4 (I4 del review final de la entrega 6): 1 si el mes es parcial / 0 si no,
+            // misma convención que CostoUnitario y las demás filas posicionales. "2026-02" ya es
+            // parcial en SerieMensual de arriba, así que el flag va en 1 acá también.
+            VariacionMoM: [["2026-02", 40m, 15m, 25m, 1]]),
+        // Poblado (antes null) para que la Tarea 3 de la entrega 7 pueda probar que el detalle de
+        // RBAC sigue vivo en la sección de seguridad una vez que su tarjeta sale del resumen: sin
+        // datos acá la sección caía en el "pendiente de insumo" y el test no probaba nada.
+        Seguridad: new SeguridadModelo(
+            Total: 20, Usuarios: 15, ServicePrincipals: 5,
+            Identidades: 10, IdentidadesUsuarios: 7, IdentidadesServicePrincipals: 3,
+            Suscripciones: [[SuscripcionConAcentos, 15, 5]],
+            Roles: [["Reader", 10, 0], ["Contributor", 5, 1]],
+            RolesServicePrincipal: [["Contributor", 5, 1]],
+            Owner: 1, UserAccessAdministrator: 1, Contributor: 5, Privilegiados: 7,
+            SinActividadSesion: 2, UltimoLoginMedido: true,
+            SinNombreResuelto: 0, CuentasDeshabilitadas: 0, EstadoCuentaMedido: true,
+            SuscripcionTopServicePrincipal: null,
+            Hallazgos: [new SeguridadHallazgo("Alta", "Asignaciones Owner sin expiración", SuscripcionConAcentos, "Migrar a acceso PIM temporal", "Abierto")],
+            Criticos: 0),
         Postura: new PosturaModelo(
             Total: 8, TiposDeRecomendacion: 4,
             Pilares: [new PosturaPilar("Costo", 8, 3, 3, 2)],
@@ -103,9 +166,82 @@ internal static class ModeloDePrueba
             RetirosVencidos: 0, RetirosProximosATresMeses: 1,
             RetirosMedido: true, RetirosMotivo: null,
             SeguridadGestionadaExternamente: false, SeguridadGestionadaNota: null),
-        Roadmap: null,
+        // Poblado (antes null) para la Tarea de fix de la entrega 7: con Roadmap siempre null, la
+        // cuarta tarjeta del hero (observación 4, "avance de remediación") caía siempre en su rama
+        // "—" y dona() -- ya probada en aislamiento en node -- nunca se ejercitaba desde un render()
+        // real. n/cerrados/curso/sinIniciar/avance son conteos y un porcentaje, NUNCA dinero, así que
+        // no entran a la lista de Montos de arriba (esa lista audita fugas de DINERO hacia los dos
+        // renderizadores).
+        Roadmap: new RoadmapModelo(
+            Total: 6,
+            Items:
+            [
+                new RoadmapItem("Costo", "Apagar VMs ociosas detectadas por Advisor", "2026-01-10", 1, "1", null, 100, 2, "1.1"),
+                new RoadmapItem("Costo", "Eliminar discos huérfanos", null, 2, "2", null, 100, 1, "1.2"),
+                new RoadmapItem("Confiabilidad", "Habilitar respaldo en las VM de producción", null, 1, "1", null, 60, 3, null),
+                new RoadmapItem("Rendimiento", "Redimensionar el SKU sobredimensionado", null, 2, "2", null, 40, 1, null),
+                new RoadmapItem("Seguridad", "Revisar asignaciones Owner sin expiración", null, 1, "1", null, 0, 1, null),
+                new RoadmapItem("Operación", "Documentar el runbook de conmutación", null, 3, "3", null, 0, 0, null),
+            ],
+            Ambitos:
+            [
+                new RoadmapAmbito("Costo", 2, 3, 100),
+                new RoadmapAmbito("Confiabilidad", 1, 3, 60),
+                new RoadmapAmbito("Rendimiento", 1, 1, 40),
+                new RoadmapAmbito("Seguridad", 1, 1, 0),
+                new RoadmapAmbito("Operación", 1, 0, 0),
+            ],
+            Cerrados: 2, EnCurso: 2, SinIniciar: 2, AvancePromedio: 50d, HorasPendientes: null),
         CatSerie: new Dictionary<string, IReadOnlyDictionary<string, decimal>>
         {
             [CategoriaConAcentos] = new Dictionary<string, decimal> { ["2026-01"] = 11201m },
-        });
+        },
+        Ejecutado: new EjecutadoModelo(
+            Medido: true, Motivo: null,
+            Filas:
+            [
+                new AccionEjecutada(
+                    Fuente: "barrido", Oportunidad: "Apagar VM ociosa", Categoria: CategoriaConAcentos,
+                    SubscriptionId: null, ResourceGroup: null, ResourceName: null, MesEjecucion: "2026-01",
+                    MesFin: null, MontoMensual: 33010m, FuenteMonto: "facturado", MotivoSinMonto: null,
+                    Autoria: "declarada"),
+            ],
+            Serie: [["2026-01", 33006m, 33007m]],
+            PorOportunidad: [["Apagar VM ociosa", 33008m]],
+            PorCategoria: new Dictionary<string, IReadOnlyDictionary<string, decimal>>
+            {
+                [CategoriaConAcentos] = new Dictionary<string, decimal> { ["2026-01"] = 33009m },
+            },
+            AcumuladoTotal: 33001m, TasaVigenteCierre: 33002m, PctGastoPeriodo: PctGastoDePrueba,
+            MontoFacturado: 33003m, MontoEstimado: 33004m, FilasSinMonto: 0,
+            Proyeccion: [["2026-03", 33011m, 33012m]], ProyeccionFinDeAnio: 33005m,
+            Reservas: new ReservasFacturadasModelo(
+                Medido: true, Motivo: null,
+                Filas:
+                [
+                    new ReservaVmFila(
+                        ReservationId: "res-1", Vm: "vm-1", Sku: "D2s_v3",
+                        PorDemandaMes: 34005m, ReservaMes: 34006m, AhorroMes: 34007m,
+                        Compartida: false, Vence: "2027-01-01", PorVencer: false, Nota: null),
+                ],
+                TotalDemanda: 34001m, TotalReserva: 34002m, TotalAhorro: 34003m, AhorroAnualizado: 34004m,
+                SinLineaEnEvolucion: [], ConsumidoresNoLeidos: 0),
+            Ejes: new RegistroEjes(
+                BarridoMedido: true, BarridoMotivo: null, ReservasMedidas: true, ReservasMotivo: null,
+                Indeterminadas: 0)),
+        // Opex y Cronologia (entrega 7, Tarea 1): un score y una línea de tiempo no son montos, así
+        // que no entran a la lista de Montos de arriba (esa lista audita fugas de DINERO hacia los
+        // renderizadores; un porcentaje de Advisor y una bitácora de fechas no lo son).
+        Opex: new OpexModelo(
+            Actual: 62m, Fecha: "2026-02-01", Estado: null,
+            Serie: [["2026-01", 55m], ["2026-02", 62m]],
+            Medido: true, Motivo: null),
+        Cronologia: new CronologiaModelo(
+            Hitos:
+            [
+                new HitoModelo(
+                    Fecha: "2026-01-15", Campo: "completion_pct", Antes: "0", Despues: "50",
+                    Recomendacion: "Apagar VM ociosa", MatrixCode: "1.1", Pilar: 1),
+            ],
+            Omitidos: 1));
 }

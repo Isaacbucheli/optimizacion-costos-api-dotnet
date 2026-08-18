@@ -1,6 +1,8 @@
+using System.Globalization;
 using System.Text.Json;
 using OptimizacionCostos.Api.Features.InformeValor;
 using OptimizacionCostos.Api.Features.InformeValor.Calculo;
+using OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 
 namespace OptimizacionCostos.Api.Tests.InformeValor.Calculo;
@@ -82,6 +84,35 @@ public sealed class InformeValorEnsambladorTests
             Corte: Fechas.ResolverFechaEnGuayaquil(corteInstante),
             MesesParcialesForzados: []);
     }
+
+    // ── Entrega 7, Tarea 1: opex y cronología llegan al modelo. Mismo patrón de builders que el
+    // resto de la clase, pero sobre fechas explícitas "aaaa-MM-dd" (los dos insumos nuevos son
+    // registros con DateOnly/DateTime, no año/mes sueltos como el resto del fixture). ──
+
+    /// <summary>Como <see cref="Contexto"/>, pero con el rango dado por fechas explícitas: los tres
+    /// tests de esta tarea necesitan controlar el corte exacto de una serie, no solo el mes.</summary>
+    private static ContextoInformeValor Ctx(string inicio, string fin) => new(
+        DateOnly.ParseExact(inicio, "yyyy-MM-dd", CultureInfo.InvariantCulture),
+        DateOnly.ParseExact(fin, "yyyy-MM-dd", CultureInfo.InvariantCulture),
+        DateOnly.ParseExact(fin, "yyyy-MM-dd", CultureInfo.InvariantCulture),
+        null);
+
+    /// <summary>Atajo sobre <see cref="InformeValorEnsamblador.Ensamblar"/> para los tests que solo
+    /// necesitan variar <see cref="InsumosBd"/> y el contexto: sin facturación ni casos, que no
+    /// pesan en ninguno de los tres tests de esta tarea.</summary>
+    private static ModeloInformeValor Ensamblar(InsumosBd insumosBd, ContextoInformeValor contexto) =>
+        InformeValorEnsamblador.Ensamblar([], 0, [], insumosBd, "Cliente", contexto);
+
+    private static InsumosBd ConOpex(OpexScore opex) => Insumos() with { Opex = opex };
+
+    private static InsumosBd ConHitos(IReadOnlyList<HitoFila> hitos) => Insumos() with { Hitos = hitos };
+
+    /// <summary>Una fila de la bitácora de tracking con autor/matrixCode/pilar fijos (no importan
+    /// para los tests de esta tarea, que solo varían fecha/campo/valores).</summary>
+    private static HitoFila Hito(string fecha, string campo, string? antes, string? despues) => new(
+        Fecha: DateTime.ParseExact(fecha, "yyyy-MM-dd", CultureInfo.InvariantCulture),
+        Campo: campo, ValorAnterior: antes, ValorNuevo: despues, Autor: "consultor@bit.com",
+        MatrixCode: "M-1", Recomendacion: "Recomendación de prueba", PillarNumber: 3);
 
     // ===================================================================================
     // 5a. Determinismo: mismo insumo, misma fecha de corte, dos corridas, modelos idénticos.
@@ -426,6 +457,231 @@ public sealed class InformeValorEnsambladorTests
         var catSerie = ModeloJson().GetProperty("catSerie");
         Assert.True(catSerie.TryGetProperty("Cómputo", out var porMes));
         Assert.True(porMes.TryGetProperty("2026-01", out _));
+    }
+
+    // ===================================================================================
+    // Tarea 6 de la entrega 6: D.ejecutado, la octava clave. Regla dura del encargo: con los
+    // insumos nuevos (registroBarrido/evolucion) en null y sin foto de reservas medida, Ejecutado
+    // sale null y ningún test de arriba —escrito antes de esta tarea— cambia de comportamiento.
+    // ===================================================================================
+
+    private static BarridoResueltoFila BarridoFila(
+        string checkId, string subscriptionId, string resourceGroup, string resourceName, DateTime resueltoEn,
+        decimal? estimatedMonthlySavings = null) => new(
+        CheckId: checkId, SubscriptionId: subscriptionId,
+        AzureResourceId: $"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroup}/providers/Microsoft.Compute/virtualMachines/{resourceName}",
+        ResourceName: resourceName, ResourceType: "microsoft.compute/virtualmachines",
+        EstimatedMonthlySavings: estimatedMonthlySavings, Currency: "USD", ResueltoEn: resueltoEn,
+        ResueltoPor: "consultor@bit.com", ResolvedByKind: "manual", Notas: null);
+
+    /// <summary>La regla dura: sin <c>registroBarrido</c> ni <c>evolucion</c>, y sin una foto de
+    /// reservas ya medida (no se le pasa <c>fotoReservas</c>), <see cref="ModeloInformeValor.Ejecutado"/>
+    /// sale null — misma semántica que los demás bloques ausentes, no un objeto "vacío" que simule
+    /// que sí se midió.</summary>
+    [Fact]
+    public void Sin_registro_de_barrido_ni_foto_de_reservas_medida_ejecutado_sale_null()
+    {
+        var (facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto) = FixtureRica();
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto);
+
+        Assert.Null(modelo.Ejecutado);
+    }
+
+    /// <summary>
+    /// Con un <c>registroBarrido</c> mínimo (una fila resuelta, sin foto de reservas) el ensamblador
+    /// encadena T4→T3→T5: <see cref="RegistroEjecutadoCalculador"/> produce la fila y
+    /// <see cref="AcumuladoCalculador"/> arma la serie sobre el rango del contexto (enero-febrero de
+    /// <see cref="FixtureRica"/>). El recurso resuelto es <c>vm-1</c> de <c>sub-a</c>, el mismo que
+    /// factura en el fixture, pero como Enero ES su mes de ejecución no hay mes "antes" del que sacar
+    /// un delta (Regla 4 de <c>RegistroEjecutadoCalculador</c>): el monto sale del estimado del
+    /// barrido, no de la factura, y viaja sin fecha de fin, así que queda vigente los dos meses del
+    /// rango.
+    /// </summary>
+    [Fact]
+    public void Con_un_registro_de_barrido_minimo_ejecutado_trae_filas_y_serie_consistente()
+    {
+        var (facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto) = FixtureRica();
+        var registroBarrido = new RegistroBarrido(true, null,
+            [BarridoFila("orphaned_disks", "sub-a", "rg-1", "vm-1", new DateTime(2026, 1, 15), estimatedMonthlySavings: 50m)]);
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto, registroBarrido: registroBarrido);
+
+        Assert.NotNull(modelo.Ejecutado);
+        var ejecutado = modelo.Ejecutado!;
+        Assert.True(ejecutado.Medido);
+        var fila = Assert.Single(ejecutado.Filas);
+        Assert.Equal("barrido", fila.Fuente);
+        Assert.Equal(50m, fila.MontoMensual);
+        Assert.Equal("estimado", fila.FuenteMonto);
+
+        // Serie: un punto por mes del rango (2026-01, 2026-02), sin fecha de fin la fila queda
+        // vigente en los dos y el acumulado sube 50 cada mes.
+        Assert.Equal(2, ejecutado.Serie.Count);
+        Assert.Equal(new object?[] { "2026-01", 50m, 50m }, ejecutado.Serie[0]);
+        Assert.Equal(new object?[] { "2026-02", 50m, 100m }, ejecutado.Serie[1]);
+        Assert.Equal(100m, ejecutado.AcumuladoTotal);
+        Assert.Equal(50m, ejecutado.TasaVigenteCierre);
+    }
+
+    // ===================================================================================
+    // Tarea 8 de la entrega 6: la conciliación entre los dos archivos de BITCOST (spec, "Reglas
+    // de convivencia entre los dos archivos"). La tabla de hechos manda para identidad; el archivo
+    // de evolución, para reservas. Si los totales por mes divergen más allá del umbral, el informe
+    // declara la discrepancia con la cifra de cada fuente en vez de promediar o elegir en silencio.
+    // ===================================================================================
+
+    private static EvolucionRow Evolucion(
+        decimal pvp, int anio, int mes, bool esReserva = false, string recurso = "vm-1",
+        string? categoria = "Cómputo") => new(
+        NaturalKeyHash: $"h{++_n}", Category: categoria, Subcategory: null, ResourceName: recurso,
+        IsReservation: esReserva, Pvp: pvp, PeriodYear: (short)anio, PeriodMonth: (byte)mes);
+
+    [Fact]
+    public void Sin_evolucion_cargada_la_conciliacion_sale_null()
+    {
+        var (facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto) = FixtureRica();
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, filasAntesDeFusionar, casos, insumosBd, cliente, contexto);
+
+        Assert.Null(modelo.Meta.Conciliacion);
+    }
+
+    [Fact]
+    public void Con_los_mismos_totales_por_mes_la_conciliacion_coincide_sin_filas()
+    {
+        var facturacion = new List<FacturacionRow> { Factura("sub-a", "Suscripción A", 20000m, 2026, 6) };
+        var evolucion = new List<EvolucionRow> { Evolucion(20000m, 2026, 6) };
+        var contexto = Contexto(2026, 6, 6);
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, 0, [], Insumos(), "Cliente", contexto, evolucion: evolucion);
+
+        Assert.NotNull(modelo.Meta.Conciliacion);
+        var conciliacion = modelo.Meta.Conciliacion!;
+        Assert.True(conciliacion.Coincide);
+        Assert.Empty(conciliacion.Diferencias);
+    }
+
+    [Fact]
+    public void Un_mes_con_diferencia_sobre_el_umbral_se_declara_con_la_cifra_de_cada_fuente()
+    {
+        var facturacion = new List<FacturacionRow> { Factura("sub-a", "Suscripción A", 20000m, 2026, 6) };
+        var evolucion = new List<EvolucionRow> { Evolucion(19000m, 2026, 6) };
+        var contexto = Contexto(2026, 6, 6);
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, 0, [], Insumos(), "Cliente", contexto, evolucion: evolucion);
+
+        var conciliacion = modelo.Meta.Conciliacion!;
+        Assert.False(conciliacion.Coincide);
+        var fila = Assert.Single(conciliacion.Diferencias);
+        Assert.Equal(new object?[] { "2026-06", 20000m, 19000m, 1000m }, fila);
+    }
+
+    /// <summary>
+    /// El umbral es POR MES, con piso de $1: <c>max(1.00, 0.5% del total de hechos de ESE mes)</c>.
+    /// Con hechos en $100 el 0.5% da $0.50, por debajo del piso — el umbral real que se aplica es
+    /// $1.00, y una diferencia de $0.80 queda debajo. Si el piso no existiera, el 0.5% puro habría
+    /// dejado pasar esta misma diferencia a la lista.
+    /// </summary>
+    [Fact]
+    public void Una_diferencia_bajo_el_umbral_no_se_declara()
+    {
+        var facturacion = new List<FacturacionRow> { Factura("sub-a", "Suscripción A", 100m, 2026, 6) };
+        var evolucion = new List<EvolucionRow> { Evolucion(99.20m, 2026, 6) };
+        var contexto = Contexto(2026, 6, 6);
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, 0, [], Insumos(), "Cliente", contexto, evolucion: evolucion);
+
+        var conciliacion = modelo.Meta.Conciliacion!;
+        Assert.True(conciliacion.Coincide);
+        Assert.Empty(conciliacion.Diferencias);
+    }
+
+    /// <summary>
+    /// Un mes presente SOLO en evolución (sin filas de facturación ese mes) produce una fila de
+    /// diferencia: dif = hechos - evolución = 0 - 5000 = -5000. Caso espejo: un mes con hechos
+    /// pero sin evolución (p. ej. 20000 en hechos, 0 en evolución) produce dif = 20000 - 0 = 20000.
+    /// Ambos casos superan el umbral (que en ambos es max(1.00, 0.5% de hechos de ese mes) —
+    /// cuando hechos es 0, el umbral queda en $1 y -5000 lo supera; cuando evolución es 0, 0.5%
+    /// de 20000 es 100 y 20000 también lo supera) así que las dos filas entran a Diferencias y
+    /// Coincide=false.
+    /// </summary>
+    [Fact]
+    public void La_union_de_meses_de_facturacion_y_evolucion_produce_diferencias()
+    {
+        var facturacion = new List<FacturacionRow> { Factura("sub-a", "Suscripción A", 20000m, 2026, 6) };
+        var evolucion = new List<EvolucionRow> { Evolucion(5000m, 2026, 7) };
+        var contexto = Contexto(2026, 6, 7);
+
+        var modelo = InformeValorEnsamblador.Ensamblar(
+            facturacion, 0, [], Insumos(), "Cliente", contexto, evolucion: evolucion);
+
+        var conciliacion = modelo.Meta.Conciliacion!;
+        Assert.False(conciliacion.Coincide);
+        Assert.Equal(2, conciliacion.Diferencias.Count);
+
+        // Mes 2026-06: hechos 20000, evolución 0 → dif = 20000 − 0 = 20000
+        var filaJunio = conciliacion.Diferencias[0];
+        Assert.Equal("2026-06", filaJunio[0]);
+        Assert.Equal(20000m, filaJunio[1]);
+        Assert.Equal(0m, filaJunio[2]);
+        Assert.Equal(20000m, filaJunio[3]);
+
+        // Mes 2026-07: hechos 0, evolución 5000 → dif = 0 − 5000 = −5000
+        var filaJulio = conciliacion.Diferencias[1];
+        Assert.Equal("2026-07", filaJulio[0]);
+        Assert.Equal(0m, filaJulio[1]);
+        Assert.Equal(5000m, filaJulio[2]);
+        Assert.Equal(-5000m, filaJulio[3]);
+    }
+
+    // ===================================================================================
+    // Entrega 7, Tarea 1: opex y cronología llegan al modelo publicado. Antes de esta tarea
+    // InsumosBd.Opex/.Hitos no llegaban a ninguna parte de ModeloInformeValor.
+    // ===================================================================================
+
+    /// <summary>La serie de Opex se recorta al rango: el recolector la trae completa (D0).</summary>
+    [Fact]
+    public void La_serie_de_opex_se_recorta_al_rango_del_informe()
+    {
+        var opex = new OpexScore(92m, new DateOnly(2026, 6, 30), "ok",
+            [new OpexPunto(new DateOnly(2025, 9, 1), 59m), new OpexPunto(new DateOnly(2026, 3, 1), 80m)],
+            Medido: true, Motivo: null);
+        var m = Ensamblar(ConOpex(opex), Ctx("2026-01-01", "2026-06-30"));
+        Assert.Single(m.Opex!.Serie);
+        Assert.Equal("2026-03", m.Opex.Serie[0][0]);
+    }
+
+    /// <summary>Las notas internas y la bitácora de ejecución jamás llegan al artefacto, y lo
+    /// omitido se cuenta para que una cronología corta no se lea como "no pasó nada".</summary>
+    [Fact]
+    public void La_cronologia_deja_fuera_los_campos_internos_y_los_cuenta()
+    {
+        var hitos = new[]
+        {
+            Hito("2026-03-10", "completion_pct", "0", "40"),
+            Hito("2026-03-11", "internal_notes", null, "acordado por teléfono con el cliente"),
+            Hito("2026-03-12", "execution_log", null, "corrida manual del script"),
+        };
+        var m = Ensamblar(ConHitos(hitos), Ctx("2026-01-01", "2026-06-30"));
+        Assert.Single(m.Cronologia!.Hitos);
+        Assert.Equal("completion_pct", m.Cronologia.Hitos[0].Campo);
+        Assert.Equal(2, m.Cronologia.Omitidos);
+    }
+
+    /// <summary>Sin insumos nuevos, las dos claves viajan null: bloque ausente ≠ bloque vacío.</summary>
+    [Fact]
+    public void Sin_opex_ni_hitos_las_dos_claves_son_null()
+    {
+        var m = Ensamblar(Insumos(), Ctx("2026-01-01", "2026-06-30"));
+        Assert.Null(m.Opex);
+        Assert.Null(m.Cronologia);
     }
 
     // ===================================================================================

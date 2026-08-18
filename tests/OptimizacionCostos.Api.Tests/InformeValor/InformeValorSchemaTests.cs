@@ -10,6 +10,7 @@ public sealed class InformeValorSchemaTests
     [InlineData("dbo.informe_valor_caso")]
     [InlineData("dbo.informe_valor_rbac")]
     [InlineData("dbo.informe_valor_entrega")]
+    [InlineData("dbo.informe_valor_evolucion")]
     public void Cada_tabla_se_crea_con_guarda_de_existencia(string tabla)
     {
         var crea = InformeValorSchema.Statements
@@ -22,6 +23,7 @@ public sealed class InformeValorSchemaTests
     [InlineData("dbo.informe_valor_facturacion")]
     [InlineData("dbo.informe_valor_caso")]
     [InlineData("dbo.informe_valor_rbac")]
+    [InlineData("dbo.informe_valor_evolucion")]
     public void Las_tablas_de_datos_tienen_indice_unico_por_cliente_y_hash(string tabla)
     {
         var todo = string.Join("\n", InformeValorSchema.Statements);
@@ -134,6 +136,7 @@ public sealed class InformeValorSchemaTests
     [InlineData("facturacion_ingesta_id")]
     [InlineData("casos_ingesta_id")]
     [InlineData("rbac_ingesta_id")]
+    [InlineData("evolucion_ingesta_id")]
     [InlineData("foto_reservas_json")]
     [InlineData("plantilla_version")]
     [InlineData("blob_container")]
@@ -163,6 +166,7 @@ public sealed class InformeValorSchemaTests
     [InlineData("facturacion_ingesta_id")]
     [InlineData("casos_ingesta_id")]
     [InlineData("rbac_ingesta_id")]
+    [InlineData("evolucion_ingesta_id")]
     [InlineData("plantilla_version")]
     [InlineData("blob_container")]
     public void Las_columnas_de_reproducibilidad_tienen_soft_migration(string columna)

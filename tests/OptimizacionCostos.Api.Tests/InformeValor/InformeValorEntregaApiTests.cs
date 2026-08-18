@@ -18,6 +18,7 @@ using OptimizacionCostos.Api.Features.Identity;
 using OptimizacionCostos.Api.Features.InformeValor;
 using OptimizacionCostos.Api.Features.InformeValor.Entrega;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
+using OptimizacionCostos.Api.Features.Optimization;
 using OptimizacionCostos.Api.Features.Storage;
 
 namespace OptimizacionCostos.Api.Tests.InformeValor;
@@ -305,7 +306,7 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
     }
 
     /// <summary>
-    /// La variante interna publica los seis bloques aunque no se apruebe ninguno: pedir la interna es
+    /// La variante interna publica los ocho bloques aunque no se apruebe ninguno: pedir la interna es
     /// pedir el informe completo. Lo que se archiva es lo que el artefacto HACE, no lo que se pidió.
     /// </summary>
     [Fact]
@@ -320,11 +321,11 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
 
         Assert.Equal(HttpStatusCode.OK, res.StatusCode);
         var json = await res.Content.ReadFromJsonAsync<JsonElement>();
-        Assert.Equal(6, json.GetProperty("bloques_publicados").GetArrayLength());
-        Assert.Equal(6, json.GetProperty("bloques_totales").GetInt32());
+        Assert.Equal(8, json.GetProperty("bloques_publicados").GetArrayLength());
+        Assert.Equal(8, json.GetProperty("bloques_totales").GetInt32());
 
         var entrega = Assert.Single(_factory.Store.Entregas.Where(e => e.ClientId == clientId).ToList());
-        Assert.Equal(6, entrega.BloquesPublicados.Count);
+        Assert.Equal(8, entrega.BloquesPublicados.Count);
     }
 
     /// <summary>
@@ -397,6 +398,113 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
 
         var entrega = Assert.Single(_factory.Store.Entregas.Where(e => e.ClientId == clientId).ToList());
         Assert.Equal([BloqueEconomico.GastoTotal], entrega.BloquesPublicados);
+    }
+
+    /// <summary>
+    /// La trampa que encontró la revisión de la Tarea 9: <c>Generar_para_el_cliente_sin_bloques_aprobados_no_sube_ningun_monto</c>
+    /// no siembra ninguna credencial de reservas, así que <c>FotoReservas.Medido</c> queda en
+    /// <c>false</c> y <see cref="InformeValorEnsamblador.Ensamblar"/> nunca entra a calcular
+    /// <c>ejecutado</c> — la clave queda <c>null</c> y ese test pasa sin haber custodiado nada del
+    /// subárbol nuevo (Tarea 9), que es el de más riesgo por ser el más reciente y el que más
+    /// piezas cruza (barrido, matriz y reservas). Este test siembra una reserva medida (mismo
+    /// helper que <see cref="Generar_captura_la_foto_de_reservas_y_la_archiva"/>) para que
+    /// <c>ejecutado</c> viaje poblado de verdad, y solo entonces confirma que su propio recorte
+    /// (<c>InformeValorHtmlExporter</c>, cuando <c>AhorroEjecutado</c> no está aprobado) hace su
+    /// trabajo igual que el resto de los bloques.
+    /// </summary>
+    [Fact]
+    public async Task Generar_para_el_cliente_sin_bloques_con_ejecutado_poblado_no_sube_sus_montos()
+    {
+        const int clientId = 941;
+        _factory.Access.Allow(clientId);
+        _factory.SembrarUnaReservaConConsumidor(clientId, credentialId: 41, reservationId: "resv-941");
+        var client = ClientFor("g28@bit.ec", Roles.Consultor, canEdit: true);
+
+        var res = await client.PostAsJsonAsync(
+            $"/informe-valor/clients/{clientId}/generar", Cuerpo(variante: "cliente"));
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var json = await res.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(0, json.GetProperty("bloques_publicados").GetArrayLength());
+
+        var subida = Assert.Single(_factory.Blobs.Uploads.Where(u => u.BlobName.Contains($"client-{clientId}/", StringComparison.Ordinal)).ToList());
+        var datos = BloqueDeDatos(Encoding.UTF8.GetString(subida.Data));
+
+        // El guard positivo primero: si "ejecutado" volviera a quedar null (la trampa de arriba),
+        // esto revienta ACÁ, antes de llegar a los DoesNotContain de abajo — que de otro modo
+        // pasarían igual de vacíos por la razón equivocada.
+        // El bloque de datos es JS, no JSON puro ("var EMBEDDED={...};var PUBLICACION={...};"): se
+        // recorta el objeto de EMBEDDED antes de parsear.
+        const string prefijoEmbedded = "var EMBEDDED=";
+        const string separadorPublicacion = ";var PUBLICACION=";
+        Assert.StartsWith(prefijoEmbedded, datos, StringComparison.Ordinal);
+        var finEmbedded = datos.IndexOf(separadorPublicacion, StringComparison.Ordinal);
+        Assert.True(finEmbedded > 0, "El bloque de datos no tiene el separador esperado entre EMBEDDED y PUBLICACION.");
+        var embeddedJson = datos[prefijoEmbedded.Length..finEmbedded];
+
+        var ejecutado = JsonDocument.Parse(embeddedJson).RootElement.GetProperty("ejecutado");
+        Assert.True(ejecutado.GetProperty("medido").GetBoolean());
+        Assert.True(ejecutado.TryGetProperty("pctGasto", out var pctGasto));
+        Assert.NotEqual(JsonValueKind.Null, pctGasto.ValueKind);
+        Assert.True(ejecutado.TryGetProperty("ejes", out var ejes));
+        Assert.Equal(JsonValueKind.Object, ejes.ValueKind);
+
+        // Anti-trampa (Tarea 10): con GetEvolucionAsync ya sembrado, la reserva SÍ matchea una línea
+        // de evolución y "reservas.filas" viaja con la VM real, no vacía por falta de match. Si esto
+        // fallara, los DoesNotContain de abajo pasarían por la razón equivocada: nunca hubo nada que
+        // recortar.
+        var filasReservas = ejecutado.GetProperty("reservas").GetProperty("filas");
+        Assert.True(filasReservas.GetArrayLength() > 0, "La reserva sembrada tiene que matchear la línea de evolución y producir al menos una fila.");
+        Assert.Equal("vm-1", filasReservas[0].GetProperty("vm").GetString());
+
+        // Y con "ejecutado" de verdad poblado, la variante del cliente sin bloques aprobados sigue
+        // sin subir los montos de la facturación (1000 + 500 = 1500 del mismo fixture que la reserva
+        // ahora comparte recurso): el recorte de "ejecutado" tiene que nulear sus propios campos de
+        // monto igual que lo hacen los demás bloques, no solo el bloque de facturación de siempre.
+        Assert.DoesNotContain("1500", datos, StringComparison.Ordinal);
+        Assert.DoesNotContain("1000", datos, StringComparison.Ordinal);
+        // Tarea 10: el monto que de verdad sale del archivo de evolución (331.72, la tarifa mensual
+        // de la línea "Reserved VM Instance, Standard_D2s_v5, East US, 1 Year" sembrada en
+        // FakeInformeValorStoreConDatosParaEntrega) y el ahorro que combina esa tarifa con la demanda
+        // de BITCOST (500 - 331.72 = 168.28) tampoco pueden viajar: es exactamente el monto que
+        // Generar_para_variante_interna_publica_el_monto_real_de_evolucion prueba que SÍ sale cuando
+        // nadie lo recorta — el guard positivo de ese test es lo que le da sentido a estos dos.
+        Assert.DoesNotContain("331.72", datos, StringComparison.Ordinal);
+        Assert.DoesNotContain("168.28", datos, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// El guard positivo que le falta al test de arriba (hallazgo de la revisión de la Tarea 9,
+    /// cerrado en la Tarea 10): sin este test, <c>Generar_para_el_cliente_sin_bloques_con_ejecutado_poblado_no_sube_sus_montos</c>
+    /// podría pasar por la razón equivocada — que 331.72/168.28 nunca llegaron a materializarse,
+    /// nunca que el recorte los sacó. Variante interna (publica los ocho bloques sin pasar por
+    /// <c>InformeValorHtmlExporter.Recortar</c>): el mismo fixture de evolución, sin nadie que lo
+    /// recorte, tiene que subir las dos cifras.
+    ///
+    /// <para>331.72 sale íntegro de <c>ReservasFacturadasCalculador.TasaMensualDeLaLinea</c> (un solo
+    /// mes, un solo consumidor, sin prorrateo): es la prueba más directa de que el archivo de
+    /// evolución alimenta el cruce. 168.28 = 500 (demanda de BITCOST, febrero de 2026, el último mes
+    /// completo antes del inicio derivado de la reserva) menos 331.72: prueba que la demanda de
+    /// BITCOST y la tarifa de evolución se combinan en el mismo <c>AhorroMes</c> que después viaja a
+    /// "ejecutado".</para>
+    /// </summary>
+    [Fact]
+    public async Task Generar_para_variante_interna_publica_el_monto_real_de_evolucion()
+    {
+        const int clientId = 943;
+        _factory.Access.Allow(clientId);
+        _factory.SembrarUnaReservaConConsumidor(clientId, credentialId: 43, reservationId: "resv-943");
+        var client = ClientFor("g30@bit.ec", Roles.Consultor, canEdit: true);
+
+        var res = await client.PostAsJsonAsync(
+            $"/informe-valor/clients/{clientId}/generar", Cuerpo(variante: "interna"));
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var subida = Assert.Single(_factory.Blobs.Uploads.Where(u => u.BlobName.Contains($"client-{clientId}/", StringComparison.Ordinal)).ToList());
+        var datos = BloqueDeDatos(Encoding.UTF8.GetString(subida.Data));
+
+        Assert.Contains("331.72", datos, StringComparison.Ordinal);
+        Assert.Contains("168.28", datos, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -561,7 +669,7 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
         Assert.Equal("cliente", fila.GetProperty("variante").GetString());
         // La MISMA grafía que aceptó el POST y que lee la capa de dibujo: una sola por concepto.
         Assert.Equal("centroCosto", fila.GetProperty("bloques_publicados")[0].GetString());
-        Assert.Equal(6, fila.GetProperty("bloques_totales").GetInt32());
+        Assert.Equal(8, fila.GetProperty("bloques_totales").GetInt32());
         Assert.Equal("2026-01-01", fila.GetProperty("period_start").GetString());
         Assert.Contains("/descargar", fila.GetProperty("download_url").GetString()!, StringComparison.Ordinal);
     }
@@ -622,6 +730,34 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
         Assert.Equal(HttpStatusCode.NotFound, res.StatusCode);
         var detail = (await res.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("detail").GetString()!;
         Assert.Contains("no existe", detail, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// T10: la corrida de evolución que alimentó el informe se archiva igual que sus tres hermanas
+    /// (facturación, casos, RBAC), y el fake store la devuelve intacta al releerla por
+    /// <c>GetEntregaAsync</c> -- no solo desde la lista de escritura (<c>_factory.Store.Entregas</c>,
+    /// que ya prueba el test hermano de arriba para las otras tres corridas). Si el índice posicional
+    /// de <c>EvolucionIngestaId</c> quedara mal contado en el fake (o en el store real, que usa el
+    /// mismo criterio posicional sobre <c>ColumnasEntregaCompleta</c>), esta vuelta lo detecta.
+    /// </summary>
+    [Fact]
+    public async Task Generar_archiva_la_corrida_de_evolucion_y_la_entrega_archivada_la_devuelve()
+    {
+        const int clientId = 942;
+        _factory.Access.Allow(clientId);
+        var client = ClientFor("g29@bit.ec", Roles.Consultor, canEdit: true);
+
+        var res = await client.PostAsJsonAsync($"/informe-valor/clients/{clientId}/generar", Cuerpo());
+
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var entregaId = (await res.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("entrega_id").GetInt32();
+
+        var entrega = Assert.Single(_factory.Store.Entregas.Where(e => e.ClientId == clientId).ToList());
+        Assert.Equal(FakeInformeValorStoreConDatosParaEntrega.IngestaEvolucion, entrega.EvolucionIngestaId);
+
+        var archivada = await _factory.Store.GetEntregaAsync(clientId, entregaId, CancellationToken.None);
+        Assert.NotNull(archivada);
+        Assert.Equal(FakeInformeValorStoreConDatosParaEntrega.IngestaEvolucion, archivada!.EvolucionIngestaId);
     }
 
     /// <summary>
@@ -699,6 +835,7 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
         public InformeValorPreviewApiTests.FakeAzureReservationsClientControlable ReservationsClient { get; } = new();
         public FakeModulePermissionStore Perms { get; } = new FakeModulePermissionStore().SeedDefaults();
         public IModulePermissionService Service => Services.GetRequiredService<IModulePermissionService>();
+        public InformeValorPreviewApiTests.FakeOptimizationServiceControlable Optimization { get; } = new();
 
         public Factory() => Environment.SetEnvironmentVariable("JWT_SECRET", Secret);
 
@@ -749,6 +886,11 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
                 services.AddSingleton<IModulePermissionStore>(Perms);
                 services.RemoveAll<IModulePermissionService>();
                 services.AddSingleton<IModulePermissionService, ModulePermissionService>();
+                // Entrega 6 (T10): mismo motivo que en InformeValorPreviewApiTests.Factory -- sin
+                // este falso, /generar con un rol con acceso al módulo Optimization intentaría
+                // EnsureSchemaAsync contra una conexión SQL de verdad.
+                services.RemoveAll<IOptimizationService>();
+                services.AddSingleton<IOptimizationService>(Optimization);
             });
         }
     }
@@ -826,6 +968,7 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
     {
         public const int IngestaFacturacion = 4001;
         public const int IngestaCasos = 4002;
+        public const int IngestaEvolucion = 4003;
 
         public List<EntregaNueva> Entregas { get; } = [];
         private readonly Dictionary<(int ClientId, int EntregaId), EntregaArchivada> _archivadas = [];
@@ -845,7 +988,8 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
             _archivadas[(clientId, entregaId)] = new EntregaArchivada(
                 resumen, container, blobName, MesesParcialesForzados: [], RbacCorridaFecha: null,
                 SeguridadGestionadaExternamente: false, FacturacionIngestaId: null, CasosIngestaId: null,
-                RbacIngestaId: null, FotoReservas: null, PlantillaVersion: null, SummaryJson: null);
+                RbacIngestaId: null, EvolucionIngestaId: null, FotoReservas: null, PlantillaVersion: null,
+                SummaryJson: null);
         }
 
         public Task<int> ReplaceFacturacionAsync(
@@ -860,10 +1004,14 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
             int clientId, string fileName, string? user, RbacParseResult parsed, CancellationToken ct)
             => throw new NotSupportedException();
 
+        public Task<int> ReplaceEvolucionAsync(
+            int clientId, string fileName, string? user, ParseResult<EvolucionRow> parsed, CancellationToken ct)
+            => throw new NotSupportedException();
+
         public Task DeleteInsumoAsync(int clientId, string kind, CancellationToken ct) => throw new NotSupportedException();
 
-        /// <summary>Facturación y casos cargados (con su corrida), RBAC no: el tri-estado de
-        /// "insumo ausente" tiene que llegar como null a la entrega, no como cero.</summary>
+        /// <summary>Facturación, casos y evolución cargados (con su corrida), RBAC no: el tri-estado
+        /// de "insumo ausente" tiene que llegar como null a la entrega, no como cero.</summary>
         public Task<IReadOnlyList<InsumoEstado>> GetEstadoAsync(int clientId, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<InsumoEstado>>(
             [
@@ -873,6 +1021,9 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
                 new InsumoEstado(
                     SqlInformeValorStore.KindCasos, true, "casos.xlsx",
                     new DateTime(2026, 3, 1, 8, 5, 0, DateTimeKind.Utc), 0, 0, "ok", [], IngestaCasos),
+                new InsumoEstado(
+                    SqlInformeValorStore.KindEvolucion, true, "evolucion.xlsx",
+                    new DateTime(2026, 3, 1, 8, 10, 0, DateTimeKind.Utc), 0, 0, "ok", [], IngestaEvolucion),
             ]);
 
         public Task<IReadOnlyList<FacturacionRow>> GetFacturacionAsync(int clientId, CancellationToken ct) =>
@@ -896,6 +1047,56 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
         public Task<IReadOnlyList<RbacFila>> GetRbacAsync(int clientId, CancellationToken ct)
             => Task.FromResult<IReadOnlyList<RbacFila>>([]);
 
+        /// <summary>
+        /// Hallazgo de la revisión de la Tarea 9, cerrado en la Tarea 10: antes esta lista era
+        /// SIEMPRE vacía, así que la reserva sembrada por <see cref="Factory.SembrarUnaReservaConConsumidor"/>
+        /// (SKU <c>Standard_D2s_v5</c>, término <c>P1Y</c>) caía siempre en <c>SinLineaEnEvolucion</c>
+        /// y ningún test del recorte de "ejecutado" ejercitaba un monto real: probaban que la ausencia
+        /// de dinero no subía, no que un monto de verdad se recortara.
+        ///
+        /// <para>La línea con <c>IsReservation=true</c> (enero, <c>331.72</c>) es la que hace matchear
+        /// esa reserva (mismo SKU+término que <see cref="ReservasFacturadasCalculador"/> exige) y la
+        /// cifra distintiva que prueban <see cref="Generar_para_el_cliente_sin_bloques_con_ejecutado_poblado_no_sube_sus_montos"/>
+        /// (que no aparezca) y <see cref="Generar_para_variante_interna_publica_el_monto_real_de_evolucion"/>
+        /// (que sí aparezca). La demanda (<c>PorDemandaMes</c>) no sale de acá: sale de BITCOST
+        /// (<see cref="GetFacturacionAsync"/>), que ya trae a vm-1 facturando en enero y febrero de
+        /// 2026 — ambos meses caen antes del inicio derivado de la reserva (vencimiento 2027-06-01
+        /// menos el término P1Y = 2026-06-01), así que febrero (500) ya resuelve como el último mes
+        /// completo anterior sin tocar este archivo.</para>
+        ///
+        /// <para>Las otras dos líneas (<c>IsReservation=false</c>, una por mes) no aportan ninguna
+        /// cifra a "ejecutado": están para que el TOTAL de evolución de cada mes reconcilie con el de
+        /// BITCOST (1000 en enero, 500 en febrero) dentro del umbral de <c>InformeValorEnsamblador.CalcularConciliacion</c>.
+        /// Esa conciliación vive en <c>meta</c>, que el exportador NUNCA recorta —ni para la variante
+        /// del cliente ni sin bloques aprobados—, así que sin ellas la reserva de 331.72 dejaría un
+        /// desbalance mensual que "meta.conciliacion.difs" publicaría con los mismos 1000/500 que
+        /// estos tests verifican que no viajan: un leak por una puerta que este hallazgo no estaba
+        /// buscando cerrar.</para>
+        ///
+        /// <para>Acotado a los clientes que de verdad siembran esa reserva (941 y 943; 942 ya lo usa
+        /// <see cref="Generar_archiva_la_corrida_de_evolucion_y_la_entrega_archivada_la_devuelve"/> sin
+        /// reserva sembrada): el resto de los tests de esta clase comparte instancia de
+        /// <see cref="Factory"/> (<c>IClassFixture</c>) y llama al mismo <see cref="GetFacturacionAsync"/>
+        /// fijo, así que devolver estas filas para TODOS los clientes activaría la misma conciliación
+        /// (y el mismo cruce de reserva) en tests que no la esperan.</para>
+        /// </summary>
+        private static readonly IReadOnlyList<EvolucionRow> EvolucionParaReservaDePrueba =
+        [
+            new EvolucionRow(
+                NaturalKeyHash: "evo-resv-941-enero-reserva", Category: "Redes y Conectividad", Subcategory: null,
+                ResourceName: "Reserved VM Instance, Standard_D2s_v5, East US, 1 Year",
+                IsReservation: true, Pvp: 331.72m, PeriodYear: 2026, PeriodMonth: 1),
+            new EvolucionRow(
+                NaturalKeyHash: "evo-resv-941-enero-normal", Category: "Redes y Conectividad", Subcategory: null,
+                ResourceName: "vm-1", IsReservation: false, Pvp: 668.28m, PeriodYear: 2026, PeriodMonth: 1),
+            new EvolucionRow(
+                NaturalKeyHash: "evo-resv-941-febrero-normal", Category: "Redes y Conectividad", Subcategory: null,
+                ResourceName: "vm-1", IsReservation: false, Pvp: 500.00m, PeriodYear: 2026, PeriodMonth: 2),
+        ];
+
+        public Task<IReadOnlyList<EvolucionRow>> GetEvolucionAsync(int clientId, CancellationToken ct)
+            => Task.FromResult(clientId is 941 or 943 ? EvolucionParaReservaDePrueba : (IReadOnlyList<EvolucionRow>)[]);
+
         public Task<int> RegistrarEntregaAsync(EntregaNueva entrega, CancellationToken ct)
         {
             Entregas.Add(entrega);
@@ -911,7 +1112,7 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
                 resumen, entrega.BlobContainer, entrega.BlobName, entrega.MesesParcialesForzados,
                 entrega.RbacCorridaFecha, entrega.SeguridadGestionadaExternamente,
                 entrega.FacturacionIngestaId, entrega.CasosIngestaId, entrega.RbacIngestaId,
-                entrega.FotoReservas, entrega.PlantillaVersion, entrega.SummaryJson);
+                entrega.EvolucionIngestaId, entrega.FotoReservas, entrega.PlantillaVersion, entrega.SummaryJson);
             return Task.FromResult(entregaId);
         }
 
@@ -951,6 +1152,12 @@ public sealed class InformeValorEntregaApiTests : IClassFixture<InformeValorEntr
 
         public Task<IReadOnlyList<HallazgoResueltoFila>> LeerHallazgosResueltosAsync(
             int clientId, CancellationToken ct = default) => throw new NotSupportedException();
+
+        // Entrega 6 (T10): ningún test de esta clase configura el barrido en particular (la doble
+        // puerta ya está cubierta en InformeValorPreviewApiTests); mismo default seguro del resto de
+        // los fakes de este módulo.
+        public Task<RegistroBarrido> LeerBarridoResueltoAsync(int clientId, CancellationToken ct = default) =>
+            Task.FromResult(RegistroBarrido.SinBarrido());
     }
 
     public sealed class FakeClientStoreParaEntrega : IClientStore

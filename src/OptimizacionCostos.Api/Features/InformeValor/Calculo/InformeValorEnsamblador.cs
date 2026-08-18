@@ -1,4 +1,5 @@
 using System.Globalization;
+using OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 
 namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
@@ -58,13 +59,37 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo;
 /// <paramref name="fotoReservas"/> sigue siendo opcional: sin ella el eje sale no medido con su
 /// motivo, que es un estado que este módulo ya tenía (un cliente sin credenciales de Azure activas
 /// cae exactamente ahí), no uno nuevo.</para>
+///
+/// <para><b>Tarea 6 de la entrega 6: arma <c>D.ejecutado</c>, la octava clave (ver el comentario de
+/// clase de <see cref="ModeloInformeValor"/> para por qué es de nivel superior).</b> Encadena T3→T4→T5:
+/// <see cref="ReservasFacturadasCalculador"/> (Tarea 3) primero, porque <see cref="RegistroEjecutadoCalculador"/>
+/// (Tarea 4) necesita su salida para atribuirle el ahorro de una VM cubierta a la reserva y no al
+/// barrido/matriz; <see cref="AcumuladoCalculador"/> (Tarea 5) al final, sobre las filas y ejes que
+/// produjo la Tarea 4. Se computa solo cuando hay con qué: <paramref name="registroBarrido"/> no nulo
+/// (registroBarrido no nulo: la ruta intentó leer el barrido, con cualquier resultado declarado) o <paramref name="fotoReservas"/> ya medida — sin
+/// ninguno de los dos insumos no hay ninguna de las tres fuentes que cruzar, y <c>Ejecutado</c> queda
+/// <c>null</c>, misma semántica que los demás bloques ausentes de este método. <paramref name="registroBarrido"/>
+/// nulo es la rama de las pruebas unitarias (y de un llamador futuro que decida no leer el barrido):
+/// los dos llamadores de producción, <c>Preview</c> y <c>Generar</c>, siempre pasan uno ya resuelto
+/// (<c>InformeValorController.LeerRegistroBarridoAsync</c> nunca devuelve <c>null</c> — sin permiso
+/// cae a <see cref="RegistroBarrido.NoAutorizado"/>, nunca a la ausencia). Cuando sí llega <c>null</c>
+/// acá se usa ese mismo <see cref="RegistroBarrido.NoAutorizado"/> con un motivo propio de este
+/// método, nunca <see cref="RegistroBarrido.SinBarrido"/>: la ausencia acá es de LECTURA, no un hecho
+/// confirmado de que el cliente nunca corrió el barrido.</para>
+///
+/// <para><b>Tarea 8 de la entrega 6: resuelve <see cref="InformeValorMeta.Conciliacion"/></b>
+/// cruzando <paramref name="facturacion"/> (ya filtrada al rango) contra <paramref name="evolucion"/>
+/// — ver <see cref="CalcularConciliacion"/>. Independiente de <c>D.ejecutado</c>: se calcula siempre
+/// que llegue <paramref name="evolucion"/>, sin importar si hay <paramref name="registroBarrido"/> o
+/// una foto de reservas medida.</para>
 /// </summary>
 public static class InformeValorEnsamblador
 {
     public static ModeloInformeValor Ensamblar(
         IReadOnlyList<FacturacionRow> facturacion, int filasAntesDeFusionar,
         IReadOnlyList<CasoRow> casos, InsumosBd insumosBd, string nombreCliente,
-        ContextoInformeValor contexto, FotoReservas? fotoReservas = null)
+        ContextoInformeValor contexto, FotoReservas? fotoReservas = null,
+        RegistroBarrido? registroBarrido = null, IReadOnlyList<EvolucionRow>? evolucion = null)
     {
         var consumo = ConsumoCalculador.Calcular(facturacion, filasAntesDeFusionar, contexto);
         var operacion = OperacionCalculador.Calcular(casos, contexto);
@@ -95,11 +120,75 @@ public static class InformeValorEnsamblador
             Periodo: FormatearPeriodo(contexto.PeriodStart, contexto.PeriodEnd),
             Corte: contexto.Corte.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
             Cobertura: CalcularCobertura(facturacionEnRango, insumosBd.Rbac, insumosBd.Advisor),
-            RbacOrigen: insumosBd.RbacOrigen);
+            RbacOrigen: insumosBd.RbacOrigen,
+            Conciliacion: CalcularConciliacion(facturacionEnRango, evolucion, contexto));
+
+        // Tarea 6: D.ejecutado, la octava clave (ver el comentario de clase de ModeloInformeValor y
+        // el de esta clase). Solo se computa cuando hay con qué: sin registroBarrido ni una foto de
+        // reservas ya medida, ninguna de las tres fuentes tiene nada que cruzar y el bloque queda
+        // null, misma semántica que los demás bloques ausentes de este método.
+        EjecutadoModelo? ejecutado = null;
+        if (registroBarrido is not null || (fotoReservas?.Medido ?? false))
+        {
+            var fotoParaEjecutado = fotoReservas ?? FotoReservasPedidaAparte(contexto);
+            var reservasFacturadas = ReservasFacturadasCalculador.Calcular(
+                fotoParaEjecutado, evolucion ?? [], facturacion, contexto);
+            var (filasEjecutado, ejesEjecutado) = RegistroEjecutadoCalculador.Calcular(
+                registroBarrido ?? RegistroBarrido.NoAutorizado(
+                    "El barrido no se leyó en esta llamada al ensamblador: no es que el cliente no lo " +
+                    "haya corrido, es que quien llamó no lo pidió (hoy solo pasa en pruebas unitarias: " +
+                    "los dos endpoints de producción siempre resuelven el barrido antes de llamar)."),
+                // Ojo: aun sin registroBarrido, la rama de matriz corre con HallazgosResueltos reales;
+                // solo el eje del barrido queda suprimido hasta que el controller lo cablee (T10).
+                insumosBd.HallazgosResueltos ?? [], reservasFacturadas, fotoParaEjecutado, facturacion, contexto);
+            ejecutado = AcumuladoCalculador.Calcular(
+                filasEjecutado, ejesEjecutado, reservasFacturadas, consumo?.Total, contexto);
+        }
 
         return new ModeloInformeValor(
             meta, operacion, consumo, seguridad, postura, roadmap,
-            CatSerie: CalcularCatSerie(facturacionEnRango));
+            CatSerie: CalcularCatSerie(facturacionEnRango),
+            Ejecutado: ejecutado,
+            Opex: MapearOpex(insumosBd.Opex, contexto),
+            Cronologia: MapearCronologia(insumosBd.Hitos, contexto));
+    }
+
+    /// <summary>Proyecta el score de Opex al modelo publicado. La serie se recorta al rango del
+    /// informe (D0: el recolector no filtra por fecha, la calculadora sí).</summary>
+    private static OpexModelo? MapearOpex(OpexScore? opex, ContextoInformeValor contexto)
+    {
+        if (opex is null) return null;
+        var serie = new List<IReadOnlyList<object?>>();
+        foreach (var p in opex.Serie)
+            if (p.Fecha >= contexto.PeriodStart && p.Fecha <= contexto.PeriodEnd)
+                serie.Add([ConsumoCalculador.Ym((short)p.Fecha.Year, (byte)p.Fecha.Month), Redondeo.ComoJs(p.Score, 1)]);
+        return new OpexModelo(
+            Actual: opex.Actual is null ? null : Redondeo.ComoJs(opex.Actual.Value, 1),
+            Fecha: opex.SnapshotDate?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+            Estado: opex.Status,
+            Serie: serie,
+            Medido: opex.Medido,
+            Motivo: opex.Motivo);
+    }
+
+    /// <summary>Proyecta la bitácora al modelo publicado, filtrando por la lista blanca de campos
+    /// y por el rango del informe. Lo omitido se cuenta, nunca se descarta en silencio.</summary>
+    private static CronologiaModelo? MapearCronologia(IReadOnlyList<HitoFila>? hitos, ContextoInformeValor contexto)
+    {
+        if (hitos is null) return null;
+        var publicables = new List<HitoModelo>();
+        var omitidos = 0;
+        foreach (var h in hitos)
+        {
+            var fecha = DateOnly.FromDateTime(h.Fecha);
+            if (fecha < contexto.PeriodStart || fecha > contexto.PeriodEnd) { omitidos++; continue; }
+            if (!CronologiaModelo.CamposPublicables.Contains(h.Campo)) { omitidos++; continue; }
+            publicables.Add(new HitoModelo(
+                Fecha: fecha.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                Campo: h.Campo, Antes: h.ValorAnterior, Despues: h.ValorNuevo,
+                Recomendacion: h.Recomendacion, MatrixCode: h.MatrixCode, Pilar: h.PillarNumber));
+        }
+        return new CronologiaModelo(publicables, omitidos);
     }
 
     /// <summary>
@@ -274,6 +363,76 @@ public static class InformeValorEnsamblador
             .ToList();
 
         return new InformeValorCobertura(filas.Count, filas);
+    }
+
+    /// <summary>Piso en dólares del umbral de <see cref="CalcularConciliacion"/>: sin él, un cliente
+    /// con gasto casi nulo dispararía una fila por centavos de redondeo del pivot de Excel.</summary>
+    private const decimal UmbralPiso = 1.00m;
+
+    /// <summary>Tasa del umbral de <see cref="CalcularConciliacion"/>, publicada en
+    /// <see cref="ConciliacionArchivos.Umbral"/>: 0.5% del total de hechos de CADA mes, nunca un
+    /// monto fijo (ver el comentario de clase de <see cref="ConciliacionArchivos"/>).</summary>
+    private const decimal UmbralTasa = 0.005m;
+
+    /// <summary>
+    /// Tarea 8 de la entrega 6 (spec, "Reglas de convivencia entre los dos archivos"): compara el
+    /// total mensual de <paramref name="facturacionEnRango"/> (ya filtrada por el mismo D0 que usan
+    /// <see cref="CalcularCobertura"/> y <see cref="CalcularCatSerie"/>) contra el de
+    /// <paramref name="evolucion"/>, filtrada acá mismo con la misma <see cref="ConsumoCalculador.EnRango"/>
+    /// — <see cref="EvolucionRow.PeriodYear"/>/<see cref="EvolucionRow.PeriodMonth"/> son los mismos
+    /// tipos que ya acepta esa función, así que no hace falta una segunda definición de rango.
+    /// Ningún bloque individual ve las dos fuentes a la vez, así que este cruce vive acá — mismo
+    /// motivo que <see cref="CalcularCobertura"/> (D12).
+    ///
+    /// <para>El umbral se recalcula POR MES, nunca contra un total global: <c>max(<see cref="UmbralPiso"/>,
+    /// <see cref="UmbralTasa"/> del total de hechos de ESE mes)</c>. La comparación usa los totales
+    /// SIN redondear; el redondeo (E1) se aplica solo a los tres números que se publican en cada
+    /// fila, después de decidir si esa fila entra — para que un mes justo en el borde no cambie de
+    /// lado según el orden en que se redondee y se compare.</para>
+    ///
+    /// <para><c>null</c> cuando no hay evolución cargada (ni siquiera una lista vacía): sin la
+    /// segunda fuente no hay nada que conciliar, ni siquiera "coincide".</para>
+    /// </summary>
+    private static ConciliacionArchivos? CalcularConciliacion(
+        IReadOnlyList<FacturacionRow> facturacionEnRango,
+        IReadOnlyList<EvolucionRow>? evolucion,
+        ContextoInformeValor contexto)
+    {
+        if (evolucion is null || evolucion.Count == 0) return null;
+
+        var totalesHechos = new Dictionary<string, decimal>();
+        foreach (var f in facturacionEnRango)
+        {
+            var mes = ConsumoCalculador.Ym(f.Year, f.Month);
+            totalesHechos[mes] = totalesHechos.GetValueOrDefault(mes) + f.Pvp;
+        }
+
+        var totalesEvolucion = new Dictionary<string, decimal>();
+        foreach (var e in evolucion)
+        {
+            if (!ConsumoCalculador.EnRango(e.PeriodYear, e.PeriodMonth, contexto.PeriodStart, contexto.PeriodEnd))
+                continue;
+            var mes = ConsumoCalculador.Ym(e.PeriodYear, e.PeriodMonth);
+            totalesEvolucion[mes] = totalesEvolucion.GetValueOrDefault(mes) + e.Pvp;
+        }
+
+        var meses = totalesHechos.Keys.Union(totalesEvolucion.Keys, StringComparer.Ordinal)
+            .OrderBy(m => m, StringComparer.Ordinal);
+
+        var diferencias = new List<IReadOnlyList<object?>>();
+        foreach (var mes in meses)
+        {
+            var hechos = totalesHechos.GetValueOrDefault(mes);
+            var evolucionMes = totalesEvolucion.GetValueOrDefault(mes);
+            var dif = hechos - evolucionMes;
+            var umbralDelMes = Math.Max(UmbralPiso, hechos * UmbralTasa);
+            if (Math.Abs(dif) <= umbralDelMes) continue; // el redondeo del pivot no es discrepancia
+
+            diferencias.Add((IReadOnlyList<object?>)
+                [mes, Redondeo.ComoJs(hechos), Redondeo.ComoJs(evolucionMes), Redondeo.ComoJs(dif)]);
+        }
+
+        return new ConciliacionArchivos(Coincide: diferencias.Count == 0, Diferencias: diferencias, Umbral: UmbralTasa);
     }
 
     /// <summary>

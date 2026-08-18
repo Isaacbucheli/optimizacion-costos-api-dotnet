@@ -207,15 +207,24 @@ public sealed class OptimizationService(
         return v is null or DBNull ? null : Convert.ToInt32(v);
     }
 
+    internal const string UpdateStateSql = """
+        UPDATE dbo.optimization_finding_state
+        SET state = @state, notes = @notes, updated_by = @actor, updated_at = SYSUTCDATETIME(),
+            resolved_by_kind = CASE
+                WHEN @state = 'resuelto' THEN 'manual'
+                WHEN @state IN ('abierto', 'en_progreso') THEN NULL
+                ELSE resolved_by_kind END
+        WHERE fingerprint = @fp
+        """;
+
     public async Task<bool> UpdateStateAsync(byte[] fingerprint, string state, string? notes, string? actor, CancellationToken ct = default)
     {
         await using var conn = await factory.OpenAsync(ct);
+        // UpdateStateSql menciona resolved_by_kind, que llega por soft-migration: sin esto, contra
+        // una BD donde la tabla ya existia sin la columna el UPDATE falla con "Invalid column name".
+        await EnsureSchemaAsync(conn, ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            UPDATE dbo.optimization_finding_state
-            SET state = @state, notes = @notes, updated_by = @actor, updated_at = SYSUTCDATETIME()
-            WHERE fingerprint = @fp
-            """;
+        cmd.CommandText = UpdateStateSql;
         cmd.Parameters.Add(new SqlParameter("@state", state));
         cmd.Parameters.Add(new SqlParameter("@notes", (object?)notes ?? DBNull.Value));
         cmd.Parameters.Add(new SqlParameter("@actor", (object?)actor ?? DBNull.Value));
@@ -275,6 +284,9 @@ public sealed class OptimizationService(
         }
     }
 
+    internal const string AutoResolveSql =
+        "UPDATE dbo.optimization_finding_state SET state = 'resuelto', resolved_by_kind = 'auto', updated_at = SYSUTCDATETIME() WHERE fingerprint = @fp";
+
     private static async Task<Dictionary<string, int>> ReconcileAsync(SqlConnection conn, SqlTransaction tx, int clientId, int scanId, List<Finding> findings, CancellationToken ct)
     {
         var currentByHex = new Dictionary<string, byte[]>();
@@ -324,7 +336,7 @@ public sealed class OptimizationService(
         {
             if (!currentByHex.ContainsKey(hex) && state is "abierto" or "en_progreso")
             {
-                await ExecFpAsync(conn, tx, "UPDATE dbo.optimization_finding_state SET state = 'resuelto', updated_at = SYSUTCDATETIME() WHERE fingerprint = @fp",
+                await ExecFpAsync(conn, tx, AutoResolveSql,
                     Convert.FromHexString(hex), 0, ct, includeScan: false);
                 counts["auto_resolved"]++;
             }
@@ -379,49 +391,53 @@ public sealed class OptimizationService(
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    internal const string SchemaSql = """
+        IF OBJECT_ID('dbo.optimization_scan', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.optimization_scan (
+                scan_id INT IDENTITY(1,1) PRIMARY KEY, client_id INT NOT NULL,
+                started_at DATETIME2 NOT NULL CONSTRAINT DF_optscan_started DEFAULT SYSUTCDATETIME(),
+                finished_at DATETIME2 NULL, status VARCHAR(20) NOT NULL CONSTRAINT DF_optscan_status DEFAULT 'running',
+                subscriptions_scanned INT NOT NULL CONSTRAINT DF_optscan_subs DEFAULT 0,
+                findings_count INT NOT NULL CONSTRAINT DF_optscan_count DEFAULT 0,
+                total_estimated_monthly_savings DECIMAL(18,2) NULL,
+                currency VARCHAR(10) NOT NULL CONSTRAINT DF_optscan_ccy DEFAULT 'USD',
+                triggered_by NVARCHAR(255) NULL, error_summary NVARCHAR(MAX) NULL,
+                CONSTRAINT FK_optscan_client FOREIGN KEY (client_id) REFERENCES dbo.clients(client_id));
+            CREATE INDEX IX_optscan_client_started ON dbo.optimization_scan(client_id, started_at DESC);
+        END;
+        IF OBJECT_ID('dbo.optimization_finding', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.optimization_finding (
+                finding_id INT IDENTITY(1,1) PRIMARY KEY, scan_id INT NOT NULL, client_id INT NOT NULL,
+                check_id VARCHAR(100) NOT NULL, category VARCHAR(50) NOT NULL, severity VARCHAR(20) NOT NULL,
+                subscription_id VARCHAR(100) NOT NULL, azure_resource_id NVARCHAR(2048) NOT NULL,
+                resource_name NVARCHAR(512) NULL, resource_type NVARCHAR(300) NULL, region VARCHAR(100) NULL,
+                details_json NVARCHAR(MAX) NULL, estimated_monthly_savings DECIMAL(18,2) NULL,
+                currency VARCHAR(10) NOT NULL CONSTRAINT DF_optfind_ccy DEFAULT 'USD', fingerprint VARBINARY(32) NOT NULL,
+                CONSTRAINT FK_optfind_scan FOREIGN KEY (scan_id) REFERENCES dbo.optimization_scan(scan_id));
+            CREATE INDEX IX_optfind_scan ON dbo.optimization_finding(scan_id);
+            CREATE INDEX IX_optfind_fingerprint ON dbo.optimization_finding(fingerprint);
+        END;
+        IF OBJECT_ID('dbo.optimization_finding_state', 'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.optimization_finding_state (
+                fingerprint VARBINARY(32) NOT NULL PRIMARY KEY, client_id INT NOT NULL, check_id VARCHAR(100) NOT NULL,
+                azure_resource_id NVARCHAR(2048) NOT NULL, state VARCHAR(20) NOT NULL CONSTRAINT DF_optstate_state DEFAULT 'abierto',
+                notes NVARCHAR(MAX) NULL, first_seen_scan_id INT NOT NULL, last_seen_scan_id INT NOT NULL,
+                updated_by NVARCHAR(255) NULL, updated_at DATETIME2 NOT NULL CONSTRAINT DF_optstate_updated DEFAULT SYSUTCDATETIME(),
+                CONSTRAINT FK_optstate_client FOREIGN KEY (client_id) REFERENCES dbo.clients(client_id),
+                CONSTRAINT CK_optstate_state CHECK (state IN ('abierto','en_progreso','resuelto','ignorado')));
+            CREATE INDEX IX_optstate_client ON dbo.optimization_finding_state(client_id);
+        END;
+        IF COL_LENGTH('dbo.optimization_finding_state', 'resolved_by_kind') IS NULL
+            ALTER TABLE dbo.optimization_finding_state ADD resolved_by_kind VARCHAR(20) NULL;
+        """;
+
     private static async Task EnsureSchemaAsync(SqlConnection conn, CancellationToken ct)
     {
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
-            IF OBJECT_ID('dbo.optimization_scan', 'U') IS NULL
-            BEGIN
-                CREATE TABLE dbo.optimization_scan (
-                    scan_id INT IDENTITY(1,1) PRIMARY KEY, client_id INT NOT NULL,
-                    started_at DATETIME2 NOT NULL CONSTRAINT DF_optscan_started DEFAULT SYSUTCDATETIME(),
-                    finished_at DATETIME2 NULL, status VARCHAR(20) NOT NULL CONSTRAINT DF_optscan_status DEFAULT 'running',
-                    subscriptions_scanned INT NOT NULL CONSTRAINT DF_optscan_subs DEFAULT 0,
-                    findings_count INT NOT NULL CONSTRAINT DF_optscan_count DEFAULT 0,
-                    total_estimated_monthly_savings DECIMAL(18,2) NULL,
-                    currency VARCHAR(10) NOT NULL CONSTRAINT DF_optscan_ccy DEFAULT 'USD',
-                    triggered_by NVARCHAR(255) NULL, error_summary NVARCHAR(MAX) NULL,
-                    CONSTRAINT FK_optscan_client FOREIGN KEY (client_id) REFERENCES dbo.clients(client_id));
-                CREATE INDEX IX_optscan_client_started ON dbo.optimization_scan(client_id, started_at DESC);
-            END;
-            IF OBJECT_ID('dbo.optimization_finding', 'U') IS NULL
-            BEGIN
-                CREATE TABLE dbo.optimization_finding (
-                    finding_id INT IDENTITY(1,1) PRIMARY KEY, scan_id INT NOT NULL, client_id INT NOT NULL,
-                    check_id VARCHAR(100) NOT NULL, category VARCHAR(50) NOT NULL, severity VARCHAR(20) NOT NULL,
-                    subscription_id VARCHAR(100) NOT NULL, azure_resource_id NVARCHAR(2048) NOT NULL,
-                    resource_name NVARCHAR(512) NULL, resource_type NVARCHAR(300) NULL, region VARCHAR(100) NULL,
-                    details_json NVARCHAR(MAX) NULL, estimated_monthly_savings DECIMAL(18,2) NULL,
-                    currency VARCHAR(10) NOT NULL CONSTRAINT DF_optfind_ccy DEFAULT 'USD', fingerprint VARBINARY(32) NOT NULL,
-                    CONSTRAINT FK_optfind_scan FOREIGN KEY (scan_id) REFERENCES dbo.optimization_scan(scan_id));
-                CREATE INDEX IX_optfind_scan ON dbo.optimization_finding(scan_id);
-                CREATE INDEX IX_optfind_fingerprint ON dbo.optimization_finding(fingerprint);
-            END;
-            IF OBJECT_ID('dbo.optimization_finding_state', 'U') IS NULL
-            BEGIN
-                CREATE TABLE dbo.optimization_finding_state (
-                    fingerprint VARBINARY(32) NOT NULL PRIMARY KEY, client_id INT NOT NULL, check_id VARCHAR(100) NOT NULL,
-                    azure_resource_id NVARCHAR(2048) NOT NULL, state VARCHAR(20) NOT NULL CONSTRAINT DF_optstate_state DEFAULT 'abierto',
-                    notes NVARCHAR(MAX) NULL, first_seen_scan_id INT NOT NULL, last_seen_scan_id INT NOT NULL,
-                    updated_by NVARCHAR(255) NULL, updated_at DATETIME2 NOT NULL CONSTRAINT DF_optstate_updated DEFAULT SYSUTCDATETIME(),
-                    CONSTRAINT FK_optstate_client FOREIGN KEY (client_id) REFERENCES dbo.clients(client_id),
-                    CONSTRAINT CK_optstate_state CHECK (state IN ('abierto','en_progreso','resuelto','ignorado')));
-                CREATE INDEX IX_optstate_client ON dbo.optimization_finding_state(client_id);
-            END;
-            """;
+        cmd.CommandText = SchemaSql;
         await cmd.ExecuteNonQueryAsync(ct);
     }
 }
