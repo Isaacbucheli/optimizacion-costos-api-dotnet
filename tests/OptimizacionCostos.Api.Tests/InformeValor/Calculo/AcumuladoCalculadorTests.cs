@@ -337,4 +337,24 @@ public sealed class AcumuladoCalculadorTests
         Assert.Equal("2026-07", m.Proyeccion[0][0]);
         Assert.Equal(300m + 50m * 6, m.ProyeccionFinDeAnio);
     }
+
+    /// <summary>Entrega 8: una fila SinProyeccion (reserva heredada del respaldo, sin vencimiento
+    /// derivable) suma su tasa dentro del rango —es un hecho facturado— pero la proyección a fin
+    /// de año la excluye: la salvaguarda 4 pesa más que la cifra.</summary>
+    [Fact]
+    public void Las_filas_sin_proyeccion_suman_en_el_rango_pero_no_proyectan()
+    {
+        var filas = new List<AccionEjecutada>
+        {
+            F("Reserva Standard_B4ms (1 Year)", "Reservas", "2026-01", 100m, fuenteMonto: "estimado")
+                with { SinProyeccion = true },
+        };
+        var m = AcumuladoCalculador.Calcular(filas, EjesOk, ReservasVacioMedido, gastoTotalRango: null,
+            Ctx("2026-01-01", "2026-03-31", corte: "2026-03-31"));
+
+        Assert.Equal(300m, m.AcumuladoTotal); // tasa 100 vigente los 3 meses del rango
+        Assert.Equal(9, m.Proyeccion.Count);  // abril a diciembre
+        Assert.All(m.Proyeccion, p => Assert.Equal(0m, (decimal)p[1]!)); // tasa proyectada cero
+        Assert.Equal(300m, m.ProyeccionFinDeAnio); // el acumulado no crece a futuro
+    }
 }

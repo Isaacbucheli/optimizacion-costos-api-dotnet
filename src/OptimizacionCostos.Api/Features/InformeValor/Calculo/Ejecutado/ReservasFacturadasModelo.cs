@@ -19,7 +19,11 @@ public sealed record ReservasFacturadasModelo(
     [property: JsonPropertyName("totalAhorro")] decimal TotalAhorro,
     [property: JsonPropertyName("ahorroAnualizado")] decimal AhorroAnualizado,      // TotalAhorro*12, exacto (M5d: ×12 de un decimal de 2 cifras no genera cifras nuevas)
     [property: JsonPropertyName("sinLineaEnEvolucion")] IReadOnlyList<string> SinLineaEnEvolucion, // reservas de la foto sin match (p. ej. no-VM: is_reservation solo detecta VM)
-    [property: JsonPropertyName("consumidoresNoLeidos")] int ConsumidoresNoLeidos);
+    [property: JsonPropertyName("consumidoresNoLeidos")] int ConsumidoresNoLeidos,
+    // Entrega 8, pieza A: las reservas leídas SOLO desde el archivo de evolución, cuando la foto
+    // de Azure no midió. Con foto medida es null SIEMPRE (la foto es la autoridad): la tabla por
+    // VM y el respaldo nunca coexisten.
+    [property: JsonPropertyName("respaldo")] ReservasArchivoModelo? Respaldo = null);
 
 public sealed record ReservaVmFila(
     [property: JsonPropertyName("reservationId")] string? ReservationId, // la ReservaActiva que originó esta fila (Tarea 4: sumar AhorroMes por reserva)

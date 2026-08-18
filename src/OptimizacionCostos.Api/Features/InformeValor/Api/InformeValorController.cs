@@ -9,7 +9,9 @@ using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Features.Cdc;
 using OptimizacionCostos.Api.Features.Clients;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
+using OptimizacionCostos.Api.Features.CostEngine.Pricing;
 using OptimizacionCostos.Api.Features.InformeValor.Calculo;
+using OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 using OptimizacionCostos.Api.Features.InformeValor.Entrega;
 using OptimizacionCostos.Api.Features.InformeValor.Recolector;
 using OptimizacionCostos.Api.Features.Optimization;
@@ -53,7 +55,8 @@ public sealed class InformeValorController(
     IInsumosBdRecolector recolector, IClientStore clientStore,
     IReservationService reservations, IAzureReservationsClient reservationsClient,
     IBlobStorageService blobs, AppConfig config,
-    IModulePermissionService permissions, IOptimizationService optimization) : ControllerBase
+    IModulePermissionService permissions, IOptimizationService optimization,
+    IPriceRepository prices) : ControllerBase
 {
     // Un export de BITCOST de 24 meses de un cliente grande está entre 8 y 18 MB, así que el
     // tope compartido de UploadValidation (10 MiB) rechazaría un archivo legítimo.
@@ -460,9 +463,22 @@ public sealed class InformeValorController(
         var registro = await LeerRegistroBarridoAsync(clientId, ct);
         var foto = await fotoPendiente;
 
+        // Entrega 8, pieza A: los precios de catálogo para el respaldo de reservas se resuelven
+        // SOLO cuando la foto real no midió — pasarlos es lo que habilita el respaldo en el
+        // ensamblador (la foto es la autoridad; Preview nunca los pasa). IPriceRepository es
+        // síncrono (motor de costos): Task.Run como el patrón del WAF.
+        IReadOnlyDictionary<string, PrecioReservaVm>? preciosReserva = null;
+        if (!foto.Medido)
+        {
+            var lineasReserva = ReservasArchivoCalculador.LineasParaPrecios(evolucion);
+            if (lineasReserva.Count > 0)
+                preciosReserva = await Task.Run(
+                    () => PreciosReservaRecolector.Resolver(prices, lineasReserva), ct);
+        }
+
         var modelo = InformeValorEnsamblador.Ensamblar(
             facturacion, FilasAntesDeFusionar(estados), casos, insumosBd, nombreCliente, contexto, foto,
-            registroBarrido: registro, evolucion: evolucion);
+            registroBarrido: registro, evolucion: evolucion, preciosReserva: preciosReserva);
 
         ArtefactoInforme artefacto;
         try

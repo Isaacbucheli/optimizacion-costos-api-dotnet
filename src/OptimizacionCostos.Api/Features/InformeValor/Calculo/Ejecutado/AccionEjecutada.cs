@@ -11,18 +11,22 @@ namespace OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 /// OptimizationService.ReconcileAsync). Por eso el registro publica la fecha como "última
 /// actualización del estado" en la nota cuando la autoría es indeterminada.</para></summary>
 public sealed record AccionEjecutada(
-    [property: JsonPropertyName("fuente")] string Fuente,           // "barrido" | "matriz" | "reserva"
+    [property: JsonPropertyName("fuente")] string Fuente,           // "barrido" | "matriz" | "reserva" | "reserva-archivo" | "manual"
     [property: JsonPropertyName("oportunidad")] string Oportunidad, // check / hallazgo / nombre de reserva
     [property: JsonPropertyName("cat")] string Categoria,
     [property: JsonPropertyName("sub")] string? SubscriptionId,
     [property: JsonPropertyName("rg")] string? ResourceGroup,
     [property: JsonPropertyName("rec")] string? ResourceName,
     [property: JsonPropertyName("mes")] string MesEjecucion,        // "aaaa-MM"
-    [property: JsonPropertyName("fin")] string? MesFin,             // "aaaa-MM": solo reservas (vencimiento)
+    [property: JsonPropertyName("fin")] string? MesFin,             // "aaaa-MM": reservas (vencimiento) o fin declarado a mano
     [property: JsonPropertyName("monto")] decimal? MontoMensual,    // YA redondeado (E1)
-    [property: JsonPropertyName("fuenteMonto")] string? FuenteMonto,// "facturado" | "estimado" | null
+    [property: JsonPropertyName("fuenteMonto")] string? FuenteMonto,// "facturado" | "estimado" | "declarado" | null
     [property: JsonPropertyName("sinMonto")] string? MotivoSinMonto,
-    [property: JsonPropertyName("autoria")] string Autoria);        // "declarada" | "automatica" | "indeterminada"
+    [property: JsonPropertyName("autoria")] string Autoria,         // "declarada" | "automatica" | "indeterminada"
+    // Entrega 8: true en reservas HEREDADAS del respaldo (sin fecha de compra observable no hay
+    // vencimiento derivable, y la salvaguarda 4 —la proyección respeta vencimientos— pesa más que
+    // la cifra). La fila suma su tasa dentro del rango; la proyección a fin de año la excluye.
+    [property: JsonPropertyName("sinProyeccion")] bool SinProyeccion = false);
 
 /// <summary>Qué ejes del registro se pudieron medir (D9): el informe declara, no rellena.</summary>
 public sealed record RegistroEjes(

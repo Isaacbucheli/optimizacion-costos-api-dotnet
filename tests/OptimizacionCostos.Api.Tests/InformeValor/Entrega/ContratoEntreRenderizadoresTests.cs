@@ -175,6 +175,17 @@ public sealed class ContratoEntreRenderizadoresTests
             "SeccionCronologia.tsx (Tarea 9) agrupan los hitos por fecha, no por pilar, así que ninguno " +
             "de los dos lo dibuja: verificado con grep para \"pilar\" en SeccionCronologia.tsx, sin " +
             "resultados."),
+        ("ejecutado.reservas.respaldo", Lado.Ninguno,
+            "ENTRADA TEMPORAL de la entrega 8 (pieza A): las reservas leídas desde el archivo de " +
+            "evolución cuando la foto de Azure no midió. Las Tareas 8 (plantilla) y 9 (React) de esa " +
+            "entrega dibujan la tabla del respaldo; al hacerlo, esta entrada se restringe a las " +
+            "sub-rutas que ninguna vista publique (por ejemplo la línea cruda del pivot) o se retira."),
+        ("ejecutado.filas.sinProyeccion", Lado.Ninguno,
+            "Flag de cálculo de la entrega 8: una reserva heredada del respaldo (sin fecha de compra " +
+            "observable) suma su tasa en el rango pero la proyección a fin de año la excluye. El " +
+            "efecto se publica en la curva y el total proyectado, no como columna de la tabla: ningún " +
+            "renderizador lo dibuja fila por fila, y el motivo del eje ya declara cuántas quedaron " +
+            "fuera."),
     ];
 
     public enum Lado { Html, React, Ninguno }

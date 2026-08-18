@@ -326,6 +326,32 @@ public static class RegistroEjecutadoCalculador
     {
         var filas = new List<AccionEjecutada>();
         var sinInicio = 0;
+
+        // Entrega 8, pieza A: sin foto de Azure pero con respaldo desde el archivo de evolución,
+        // las filas del registro salen de las líneas del archivo. Solo cuando la foto NO midió —
+        // la foto es la autoridad, y las dos vías nunca coexisten (sin doble conteo por
+        // construcción). Heredada (sin fecha de compra observable) => SinProyeccion: suma en el
+        // rango, no proyecta (decisión 2026-08-18).
+        if (!fotoReservas.Medido && reservasFacturadas.Respaldo is { } respaldo)
+        {
+            foreach (var linea in respaldo.Filas)
+            {
+                filas.Add(new AccionEjecutada(
+                    Fuente: "reserva-archivo",
+                    Oportunidad: $"Reserva {linea.Sku} ({linea.TermTexto})",
+                    Categoria: CategoriaEjecutado.Resolver("reserva", null, null),
+                    SubscriptionId: null, ResourceGroup: null, ResourceName: null,
+                    MesEjecucion: linea.Desde,
+                    MesFin: linea.Vence,
+                    MontoMensual: linea.AhorroMes,
+                    FuenteMonto: linea.AhorroMes is null ? null : "estimado",
+                    MotivoSinMonto: linea.MotivoSinMonto,
+                    Autoria: "declarada",
+                    SinProyeccion: linea.Heredada));
+            }
+            return (filas, sinInicio);
+        }
+
         if (!fotoReservas.Medido) return (filas, sinInicio);
 
         var ahorroPorReserva = reservasFacturadas.Filas

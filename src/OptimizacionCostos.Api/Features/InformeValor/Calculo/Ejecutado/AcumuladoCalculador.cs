@@ -211,11 +211,17 @@ public static class AcumuladoCalculador
         var meses = MesesDeProyeccion(contexto);
         if (meses.Count == 0) return ([], acumuladoTotal);
 
+        // Entrega 8: las filas marcadas SinProyeccion (reservas heredadas del respaldo, sin
+        // vencimiento derivable) suman su tasa en la serie histórica —son hechos facturados—
+        // pero NO se extienden a futuro: proyectar una reserva que puede vencer mañana es
+        // exactamente lo que la salvaguarda 4 existe para impedir.
+        var proyectables = filas.Where(f => !f.SinProyeccion).ToList();
+
         var proyeccion = new List<IReadOnlyList<object?>>();
         var acumulado = acumuladoTotal;
         foreach (var mes in meses)
         {
-            var tasa = TasaVigenteEn(filas, ToOrdinal(mes));
+            var tasa = TasaVigenteEn(proyectables, ToOrdinal(mes));
             acumulado += tasa;
             proyeccion.Add((IReadOnlyList<object?>)[mes, tasa, acumulado]);
         }

@@ -89,7 +89,8 @@ public static class InformeValorEnsamblador
         IReadOnlyList<FacturacionRow> facturacion, int filasAntesDeFusionar,
         IReadOnlyList<CasoRow> casos, InsumosBd insumosBd, string nombreCliente,
         ContextoInformeValor contexto, FotoReservas? fotoReservas = null,
-        RegistroBarrido? registroBarrido = null, IReadOnlyList<EvolucionRow>? evolucion = null)
+        RegistroBarrido? registroBarrido = null, IReadOnlyList<EvolucionRow>? evolucion = null,
+        IReadOnlyDictionary<string, PrecioReservaVm>? preciosReserva = null)
     {
         var consumo = ConsumoCalculador.Calcular(facturacion, filasAntesDeFusionar, contexto);
         var operacion = OperacionCalculador.Calcular(casos, contexto);
@@ -133,6 +134,26 @@ public static class InformeValorEnsamblador
             var fotoParaEjecutado = fotoReservas ?? FotoReservasPedidaAparte(contexto);
             var reservasFacturadas = ReservasFacturadasCalculador.Calcular(
                 fotoParaEjecutado, evolucion ?? [], facturacion, contexto);
+
+            // Entrega 8, pieza A: la foto es la autoridad; el respaldo desde el archivo corre
+            // solo cuando quien llama YA capturó la foto real y no midió (Generar pasa
+            // preciosReserva únicamente en ese caso; Preview nunca lo pasa — misma asimetría
+            // preview/generar que la foto ya tiene).
+            if (!fotoParaEjecutado.Medido && preciosReserva is not null
+                && ReservasArchivoCalculador.Calcular(evolucion ?? [], preciosReserva) is { } respaldoArchivo)
+            {
+                reservasFacturadas = reservasFacturadas with
+                {
+                    Medido = true,
+                    Motivo = "Reservas leídas desde el archivo de evolución (respaldo): la conexión " +
+                             "Azure del cliente no estaba disponible. Sin confirmación de cobertura " +
+                             "por VM; " +
+                             (respaldoArchivo.Filas.Count(f => f.Heredada) is var heredadas && heredadas > 0
+                                 ? $"{heredadas} reserva(s) sin fecha de compra observable no se proyectan a fin de año."
+                                 : "todas las compras se observaron dentro del archivo."),
+                    Respaldo = respaldoArchivo,
+                };
+            }
             var (filasEjecutado, ejesEjecutado) = RegistroEjecutadoCalculador.Calcular(
                 registroBarrido ?? RegistroBarrido.NoAutorizado(
                     "El barrido no se leyó en esta llamada al ensamblador: no es que el cliente no lo " +

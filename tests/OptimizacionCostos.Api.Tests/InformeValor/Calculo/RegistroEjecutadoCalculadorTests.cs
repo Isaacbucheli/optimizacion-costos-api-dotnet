@@ -517,4 +517,77 @@ public sealed class RegistroEjecutadoCalculadorTests
         Assert.False(ejes.BarridoMedido);
         Assert.Equal("El cliente no tiene ningún barrido de optimización corrido.", ejes.BarridoMotivo);
     }
+
+    // ── Entrega 8, pieza A: el respaldo desde el archivo de evolución ──
+
+    private static ReservaArchivoFila LineaArchivo(
+        string sku, string term, decimal cargo, decimal? ahorro, string desde, string? vence, bool heredada) =>
+        new(Linea: $"Reserved VM Instance, {sku}, US East 2, {term}", Sku: sku, Region: "US East 2",
+            TermTexto: term, CargoMes: cargo, AhorroMes: ahorro, Desde: desde, Vence: vence,
+            Heredada: heredada, MotivoSinMonto: ahorro is null ? "sin precio de catálogo" : null);
+
+    [Fact]
+    public void Sin_foto_pero_con_respaldo_las_filas_salen_de_las_lineas_del_archivo()
+    {
+        var respaldo = new ReservasArchivoModelo(
+            Filas:
+            [
+                LineaArchivo("Standard_D4s_v3", "3 Years", cargo: 300m, ahorro: 200m, desde: "2026-03", vence: "2029-03", heredada: false),
+                LineaArchivo("Standard_B4ms", "1 Year", cargo: 120m, ahorro: 50m, desde: "2026-01", vence: null, heredada: true),
+            ],
+            TotalCargo: 420m, TotalAhorro: 250m, SinPrecio: 0);
+
+        var (filas, ejes) = Calcular(
+            reservasFacturadas: ModeloReservas(medido: true, motivo: "respaldo") with { Respaldo = respaldo },
+            fotoReservas: Foto(medido: false, motivo: "sin credenciales"));
+
+        Assert.Equal(2, filas.Count);
+        Assert.All(filas, f => Assert.Equal("reserva-archivo", f.Fuente));
+        Assert.All(filas, f => Assert.Equal("estimado", f.FuenteMonto));
+        Assert.All(filas, f => Assert.Equal("declarada", f.Autoria));
+
+        var observada = filas.Single(f => !f.SinProyeccion);
+        Assert.Equal("2026-03", observada.MesEjecucion);
+        Assert.Equal("2029-03", observada.MesFin); // la proyección la corta en su vencimiento
+
+        var heredada = filas.Single(f => f.SinProyeccion);
+        Assert.Null(heredada.MesFin); // sin fecha de compra observable no hay vencimiento derivable
+        Assert.True(ejes.ReservasMedidas);
+    }
+
+    /// <summary>La foto es la autoridad (decisión 2026-08-18): con foto medida, un respaldo que
+    /// llegara por error se ignora — las dos vías nunca coexisten, sin doble conteo por
+    /// construcción.</summary>
+    [Fact]
+    public void Con_foto_medida_el_respaldo_se_ignora()
+    {
+        var respaldo = new ReservasArchivoModelo(
+            Filas: [LineaArchivo("Standard_D4s_v3", "3 Years", 300m, 200m, "2026-03", "2029-03", heredada: false)],
+            TotalCargo: 300m, TotalAhorro: 200m, SinPrecio: 0);
+
+        var (filas, _) = Calcular(
+            reservasFacturadas: ModeloReservas(medido: true) with { Respaldo = respaldo },
+            fotoReservas: Foto(medido: true, reservas: []));
+
+        Assert.DoesNotContain(filas, f => f.Fuente == "reserva-archivo");
+    }
+
+    /// <summary>Una línea del respaldo sin precio de catálogo entra a la tabla con su motivo,
+    /// fuera de la aritmética: cargo visible, ahorro nunca inventado.</summary>
+    [Fact]
+    public void Una_linea_del_respaldo_sin_precio_queda_sin_monto_con_motivo()
+    {
+        var respaldo = new ReservasArchivoModelo(
+            Filas: [LineaArchivo("Standard_D4s_v3", "5 Years", 300m, ahorro: null, desde: "2026-03", vence: "2031-03", heredada: false)],
+            TotalCargo: 300m, TotalAhorro: 0m, SinPrecio: 1);
+
+        var (filas, _) = Calcular(
+            reservasFacturadas: ModeloReservas(medido: true) with { Respaldo = respaldo },
+            fotoReservas: Foto(medido: false, motivo: "sin credenciales"));
+
+        var fila = Assert.Single(filas);
+        Assert.Null(fila.MontoMensual);
+        Assert.Null(fila.FuenteMonto);
+        Assert.NotNull(fila.MotivoSinMonto);
+    }
 }
