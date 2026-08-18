@@ -225,6 +225,81 @@ public sealed class SqlClientStore(ISqlConnectionFactory factory) : IClientStore
         await CountedDeleteAsync(conn, tx, counts, "waf_ingestion_run", "DELETE FROM dbo.waf_ingestion_run WHERE client_id = @id", clientId, ct);
         await CountedDeleteAsync(conn, tx, counts, "waf_advisor_score_snapshot",
             "IF OBJECT_ID('dbo.waf_advisor_score_snapshot','U') IS NOT NULL DELETE FROM dbo.waf_advisor_score_snapshot WHERE client_id = @id;", clientId, ct);
+
+        // -------- Informes mensuales --------
+        await CountedDeleteAsync(conn, tx, counts, "report_action_plan", "DELETE FROM dbo.report_action_plan WHERE client_id = @id", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "client_monthly_report", "DELETE FROM dbo.client_monthly_report WHERE client_id = @id", clientId, ct);
+
+        // -------- Costos e inventario --------
+        await CountedDeleteAsync(conn, tx, counts, "scenario_breakdown", """
+            DELETE FROM dbo.scenario_breakdown WHERE scenario_id IN (
+                SELECT s.scenario_id FROM dbo.cost_scenarios s
+                INNER JOIN dbo.cost_analysis a ON a.analysis_id = s.analysis_id WHERE a.client_id = @id)
+            """, clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "cost_scenarios",
+            "DELETE FROM dbo.cost_scenarios WHERE analysis_id IN (SELECT analysis_id FROM dbo.cost_analysis WHERE client_id = @id)", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "cost_results",
+            "DELETE FROM dbo.cost_results WHERE analysis_id IN (SELECT analysis_id FROM dbo.cost_analysis WHERE client_id = @id)", clientId, ct);
+        foreach (var table in DetailTables)
+            await CountedDeleteAsync(conn, tx, counts, table, $"""
+                IF OBJECT_ID('dbo.{table}','U') IS NOT NULL
+                    DELETE FROM dbo.{table} WHERE resource_id IN (
+                        SELECT r.resource_id FROM dbo.azure_resources r
+                        INNER JOIN dbo.cost_analysis a ON a.analysis_id = r.analysis_id WHERE a.client_id = @id);
+                """, clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "azure_resources",
+            "DELETE FROM dbo.azure_resources WHERE analysis_id IN (SELECT analysis_id FROM dbo.cost_analysis WHERE client_id = @id)", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "analysis_files",
+            "DELETE FROM dbo.analysis_files WHERE analysis_id IN (SELECT analysis_id FROM dbo.cost_analysis WHERE client_id = @id)", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "cost_analysis", "DELETE FROM dbo.cost_analysis WHERE client_id = @id", clientId, ct);
+
+        // -------- Advisor score: histórico y trabajos de sincronización --------
+        // Las dos tienen FK a clients y faltaban acá: borrar un cliente con histórico de score o
+        // con un trabajo de sync encolado fallaba por clave foránea.
+        await CountedDeleteAsync(conn, tx, counts, "waf_advisor_score_history",
+            "IF OBJECT_ID('dbo.waf_advisor_score_history','U') IS NOT NULL DELETE FROM dbo.waf_advisor_score_history WHERE client_id = @id;", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "waf_advisor_sync_job",
+            "IF OBJECT_ID('dbo.waf_advisor_sync_job','U') IS NOT NULL DELETE FROM dbo.waf_advisor_sync_job WHERE client_id = @id;", clientId, ct);
+
+        // -------- Barrido de optimización de Azure --------
+        // optimization_finding_state va primero: además de su FK a clients tiene FK_optfind_scan
+        // contra optimization_scan, así que al revés falla aunque el cliente exista.
+        await CountedDeleteAsync(conn, tx, counts, "optimization_finding_state",
+            "IF OBJECT_ID('dbo.optimization_finding_state','U') IS NOT NULL DELETE FROM dbo.optimization_finding_state WHERE client_id = @id;", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "optimization_scan",
+            "IF OBJECT_ID('dbo.optimization_scan','U') IS NOT NULL DELETE FROM dbo.optimization_scan WHERE client_id = @id;", clientId, ct);
+
+        // -------- Informe de valor --------
+        // Los cuatro insumos antes de la bitácora, por la convención hijos→padres de este método
+        // (entre ellas no hay FK: ingesta_id no declara REFERENCES).
+        await CountedDeleteAsync(conn, tx, counts, "informe_valor_facturacion",
+            "IF OBJECT_ID('dbo.informe_valor_facturacion','U') IS NOT NULL DELETE FROM dbo.informe_valor_facturacion WHERE client_id = @id;", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "informe_valor_evolucion",
+            "IF OBJECT_ID('dbo.informe_valor_evolucion','U') IS NOT NULL DELETE FROM dbo.informe_valor_evolucion WHERE client_id = @id;", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "informe_valor_caso",
+            "IF OBJECT_ID('dbo.informe_valor_caso','U') IS NOT NULL DELETE FROM dbo.informe_valor_caso WHERE client_id = @id;", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "informe_valor_rbac",
+            "IF OBJECT_ID('dbo.informe_valor_rbac','U') IS NOT NULL DELETE FROM dbo.informe_valor_rbac WHERE client_id = @id;", clientId, ct);
+        await CountedDeleteAsync(conn, tx, counts, "informe_valor_ingesta",
+            "IF OBJECT_ID('dbo.informe_valor_ingesta','U') IS NOT NULL DELETE FROM dbo.informe_valor_ingesta WHERE client_id = @id;", clientId, ct);
+        // La bitácora de entregas (entrega 3). Borra el índice de los artefactos, no los blobs: el
+        // artefacto de un cliente eliminado queda huérfano en Storage y nadie lo va a encontrar. Es
+        // el mismo comportamiento que el resto del método (los logos de cliente también quedan), y
+        // conviene dejarlo dicho acá en vez de que alguien lo descubra auditando el contenedor.
+        await CountedDeleteAsync(conn, tx, counts, "informe_valor_entrega",
+            "IF OBJECT_ID('dbo.informe_valor_entrega','U') IS NOT NULL DELETE FROM dbo.informe_valor_entrega WHERE client_id = @id;", clientId, ct);
+
+        // -------- Catalogo de WAF: el barrido de huerfanas, al final a proposito --------
+        // Va ultimo y no arriba con el resto de WAF porque es lo unico del metodo que toca una tabla
+        // GLOBAL y compartida. Sus DELETE toman locks sobre el catalogo, y arriba los sostenia durante
+        // todo el resto de la cascada: para un cliente grande son decenas de miles de filas de costos,
+        // inventario e informe de valor, y en esa ventana una ingesta o un sync de Advisor de OTRO
+        // cliente puede trabarse o entrar en deadlock contra este borrado. Aca la ventana es minima.
+        //
+        // El orden que si es obligatorio: el INSERT a #canon_del_cliente tiene que quedar ARRIBA,
+        // antes de borrar waf_recommendation (despues ya no habria de donde sacar la lista), y estos
+        // dos barridos despues de TODOS los DELETE de waf_* del cliente. Invertir cualquiera de las
+        // dos cosas deja el barrido en un no-op silencioso, sin que falle nada.
         // Un alias se va solo si su canonica tambien se va, asi que lleva las MISMAS guardas que el
         // barrido de abajo (todas menos la de alias, que seria contra si misma). Con una sola guarda
         // quedaba una asimetria que pierde datos: una canonica retenida por estar referenciada se
@@ -290,69 +365,6 @@ public sealed class SqlClientStore(ISqlConnectionFactory factory) : IClientStore
             """, null, ct);
         await ExecAsync(conn, tx,
             "IF OBJECT_ID('tempdb..#canon_del_cliente') IS NOT NULL DROP TABLE #canon_del_cliente;", null, ct);
-
-        // -------- Informes mensuales --------
-        await CountedDeleteAsync(conn, tx, counts, "report_action_plan", "DELETE FROM dbo.report_action_plan WHERE client_id = @id", clientId, ct);
-        await CountedDeleteAsync(conn, tx, counts, "client_monthly_report", "DELETE FROM dbo.client_monthly_report WHERE client_id = @id", clientId, ct);
-
-        // -------- Costos e inventario --------
-        await CountedDeleteAsync(conn, tx, counts, "scenario_breakdown", """
-            DELETE FROM dbo.scenario_breakdown WHERE scenario_id IN (
-                SELECT s.scenario_id FROM dbo.cost_scenarios s
-                INNER JOIN dbo.cost_analysis a ON a.analysis_id = s.analysis_id WHERE a.client_id = @id)
-            """, clientId, ct);
-        await CountedDeleteAsync(conn, tx, counts, "cost_scenarios",
-            "DELETE FROM dbo.cost_scenarios WHERE analysis_id IN (SELECT analysis_id FROM dbo.cost_analysis WHERE client_id = @id)", clientId, ct);
-        await CountedDeleteAsync(conn, tx, counts, "cost_results",
-            "DELETE FROM dbo.cost_results WHERE analysis_id IN (SELECT analysis_id FROM dbo.cost_analysis WHERE client_id = @id)", clientId, ct);
-        foreach (var table in DetailTables)
-            await CountedDeleteAsync(conn, tx, counts, table, $"""
-                IF OBJECT_ID('dbo.{table}','U') IS NOT NULL
-                    DELETE FROM dbo.{table} WHERE resource_id IN (
-                        SELECT r.resource_id FROM dbo.azure_resources r
-                        INNER JOIN dbo.cost_analysis a ON a.analysis_id = r.analysis_id WHERE a.client_id = @id);
-                """, clientId, ct);
-        await CountedDeleteAsync(conn, tx, counts, "azure_resources",
-            "DELETE FROM dbo.azure_resources WHERE analysis_id IN (SELECT analysis_id FROM dbo.cost_analysis WHERE client_id = @id)", clientId, ct);
-        await CountedDeleteAsync(conn, tx, counts, "analysis_files",
-            "DELETE FROM dbo.analysis_files WHERE analysis_id IN (SELECT analysis_id FROM dbo.cost_analysis WHERE client_id = @id)", clientId, ct);
-        await CountedDeleteAsync(conn, tx, counts, "cost_analysis", "DELETE FROM dbo.cost_analysis WHERE client_id = @id", clientId, ct);
-
-        // -------- Advisor score: histórico y trabajos de sincronización --------
-        // Las dos tienen FK a clients y faltaban acá: borrar un cliente con histórico de score o
-        // con un trabajo de sync encolado fallaba por clave foránea.
-        await CountedDeleteAsync(conn, tx, counts, "waf_advisor_score_history",
-            "IF OBJECT_ID('dbo.waf_advisor_score_history','U') IS NOT NULL DELETE FROM dbo.waf_advisor_score_history WHERE client_id = @id;", clientId, ct);
-        await CountedDeleteAsync(conn, tx, counts, "waf_advisor_sync_job",
-            "IF OBJECT_ID('dbo.waf_advisor_sync_job','U') IS NOT NULL DELETE FROM dbo.waf_advisor_sync_job WHERE client_id = @id;", clientId, ct);
-
-        // -------- Barrido de optimización de Azure --------
-        // optimization_finding_state va primero: además de su FK a clients tiene FK_optfind_scan
-        // contra optimization_scan, así que al revés falla aunque el cliente exista.
-        await CountedDeleteAsync(conn, tx, counts, "optimization_finding_state",
-            "IF OBJECT_ID('dbo.optimization_finding_state','U') IS NOT NULL DELETE FROM dbo.optimization_finding_state WHERE client_id = @id;", clientId, ct);
-        await CountedDeleteAsync(conn, tx, counts, "optimization_scan",
-            "IF OBJECT_ID('dbo.optimization_scan','U') IS NOT NULL DELETE FROM dbo.optimization_scan WHERE client_id = @id;", clientId, ct);
-
-        // -------- Informe de valor --------
-        // Los cuatro insumos antes de la bitácora, por la convención hijos→padres de este método
-        // (entre ellas no hay FK: ingesta_id no declara REFERENCES).
-        await CountedDeleteAsync(conn, tx, counts, "informe_valor_facturacion",
-            "IF OBJECT_ID('dbo.informe_valor_facturacion','U') IS NOT NULL DELETE FROM dbo.informe_valor_facturacion WHERE client_id = @id;", clientId, ct);
-        await CountedDeleteAsync(conn, tx, counts, "informe_valor_evolucion",
-            "IF OBJECT_ID('dbo.informe_valor_evolucion','U') IS NOT NULL DELETE FROM dbo.informe_valor_evolucion WHERE client_id = @id;", clientId, ct);
-        await CountedDeleteAsync(conn, tx, counts, "informe_valor_caso",
-            "IF OBJECT_ID('dbo.informe_valor_caso','U') IS NOT NULL DELETE FROM dbo.informe_valor_caso WHERE client_id = @id;", clientId, ct);
-        await CountedDeleteAsync(conn, tx, counts, "informe_valor_rbac",
-            "IF OBJECT_ID('dbo.informe_valor_rbac','U') IS NOT NULL DELETE FROM dbo.informe_valor_rbac WHERE client_id = @id;", clientId, ct);
-        await CountedDeleteAsync(conn, tx, counts, "informe_valor_ingesta",
-            "IF OBJECT_ID('dbo.informe_valor_ingesta','U') IS NOT NULL DELETE FROM dbo.informe_valor_ingesta WHERE client_id = @id;", clientId, ct);
-        // La bitácora de entregas (entrega 3). Borra el índice de los artefactos, no los blobs: el
-        // artefacto de un cliente eliminado queda huérfano en Storage y nadie lo va a encontrar. Es
-        // el mismo comportamiento que el resto del método (los logos de cliente también quedan), y
-        // conviene dejarlo dicho acá en vez de que alguien lo descubra auditando el contenedor.
-        await CountedDeleteAsync(conn, tx, counts, "informe_valor_entrega",
-            "IF OBJECT_ID('dbo.informe_valor_entrega','U') IS NOT NULL DELETE FROM dbo.informe_valor_entrega WHERE client_id = @id;", clientId, ct);
     }
 
     /// <summary>SQL de apoyo del purge (armar y descartar la tabla temporal de canonicas). No borra
