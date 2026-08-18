@@ -1,3 +1,4 @@
+﻿using System.Runtime.CompilerServices;
 using OptimizacionCostos.Api.Features.InformeValor;
 
 namespace OptimizacionCostos.Api.Tests.InformeValor;
@@ -175,5 +176,59 @@ public sealed class InformeValorSchemaTests
 
         Assert.Contains(
             $"IF COL_LENGTH('dbo.informe_valor_entrega', '{columna}') IS NULL", todo, StringComparison.Ordinal);
+    }
+
+    /// <summary>Las guardas <c>OBJECT_ID ... IS NULL</c> que fijan los tests de arriba NO son
+    /// atómicas: entre el chequeo y el CREATE cabe otra conexión. Pasó en producción el
+    /// 2026-08-18, minutos después del despliegue que estrenó <c>informe_valor_evolucion</c>: la
+    /// pantalla abre pidiendo varios endpoints a la vez, cada uno asegura el esquema en su propia
+    /// conexión, las tres leyeron NULL, una creó la tabla y las otras se cayeron con 2714. El
+    /// usuario lo vio como "Error interno".</summary>
+    [Theory]
+    [InlineData(2714)] // objeto duplicado — el que efectivamente pasó
+    [InlineData(1913)] // índice duplicado
+    [InlineData(2705)] // columna duplicada, la carrera de los ALTER
+    public void La_carrera_de_creacion_se_tolera(int numero)
+    {
+        Assert.Contains(numero, InformeValorSchema.ErroresDeCarreraDeEsquema);
+    }
+
+    /// <summary>La tolerancia tiene que ser angosta. Un 208 ("Invalid object name") o un 8152
+    /// (truncamiento) significan que el esquema quedó mal, no que otro lo creó primero: tragarlos
+    /// convertiría un esquema roto en un módulo que devuelve datos incompletos sin avisar.</summary>
+    [Theory]
+    [InlineData(208)]  // Invalid object name
+    [InlineData(8152)] // datos truncados
+    [InlineData(8178)] // parámetro no suministrado
+    [InlineData(547)]  // conflicto de FK
+    public void La_tolerancia_no_se_come_errores_reales(int numero)
+    {
+        Assert.DoesNotContain(numero, InformeValorSchema.ErroresDeCarreraDeEsquema);
+    }
+
+    /// <summary>Que el conjunto exista no sirve si el ensure deja de usarlo. Esta prueba lee el
+    /// fuente (mismo patrón que <c>SinRelojDelSistemaTests</c>) y exige que el bucle que corre las
+    /// sentencias siga filtrando por él: sin esto, borrar el <c>catch</c> reintroduce el incidente
+    /// sin romper ninguna prueba.</summary>
+    [Fact]
+    public void El_ensure_sigue_filtrando_por_ese_conjunto()
+    {
+        var fuente = File.ReadAllText(ArchivoDelEsquema());
+        var i = fuente.IndexOf("public static async Task EnsureSchemaAsync", StringComparison.Ordinal);
+        Assert.True(i >= 0, "no se encontró EnsureSchemaAsync; si se renombró, hay que ajustar esta prueba");
+
+        var cuerpo = fuente[i..];
+        Assert.Contains("catch (SqlException ex) when (ErroresDeCarreraDeEsquema.Contains(ex.Number))",
+            cuerpo, StringComparison.Ordinal);
+    }
+
+    private static string ArchivoDelEsquema([CallerFilePath] string archivoDeEstaPrueba = "")
+    {
+        // <raiz>/tests/OptimizacionCostos.Api.Tests/InformeValor/<este archivo>
+        var raiz = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(archivoDeEstaPrueba)!, "..", "..", ".."));
+        var archivo = Path.Combine(raiz, "src", "OptimizacionCostos.Api", "Features", "InformeValor", "InformeValorSchema.cs");
+        Assert.True(File.Exists(archivo),
+            $"no se encontró '{archivo}'. Si la estructura del repo cambió, hay que ajustar esta prueba.");
+        return archivo;
     }
 }
