@@ -1,4 +1,5 @@
 using OptimizacionCostos.Api.Features.InformeValor.Calculo;
+using OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado;
 using OptimizacionCostos.Api.Features.InformeValor.Entrega;
 
 namespace OptimizacionCostos.Api.Tests.InformeValor.Entrega;
@@ -1129,5 +1130,85 @@ public sealed class RenderDelArtefactoTests
                     Umbral: 0.005m),
             },
         };
+    }
+
+    // ================================================================================
+    // Entrega 8: el respaldo de reservas desde archivo y los montos declarados
+    // ================================================================================
+
+    /// <summary>La tarjeta de composición publica los tres orígenes del dinero, incluido el
+    /// declarado por el consultor (entrega 8, pieza B).</summary>
+    [Fact]
+    public void La_tarjeta_de_composicion_publica_los_declarados()
+    {
+        var r = RenderDeArtefacto.Correr(ModeloDePrueba.Crear(), VarianteInforme.Interna);
+        if (r is null) return;
+
+        r.ExigirQueDibujeCompleto();
+        Assert.Contains("declarados por el consultor", r.Nodo("body-ejecutado").Todo, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>Sin foto de Azure pero con respaldo del archivo, la sección de reservas dibuja la
+    /// tabla POR LÍNEA rotulada como respaldo — nunca el pendiente, y nunca la tabla por VM que
+    /// sin foto no se puede armar (entrega 8, pieza A).</summary>
+    [Fact]
+    public void La_seccion_de_reservas_dibuja_el_respaldo_desde_archivo()
+    {
+        var modelo = ModeloDePrueba.Crear();
+        modelo = modelo with
+        {
+            Ejecutado = modelo.Ejecutado! with
+            {
+                Reservas = new ReservasFacturadasModelo(
+                    Medido: true,
+                    Motivo: "Reservas leídas desde el archivo de evolución (respaldo): la conexión Azure " +
+                            "del cliente no estaba disponible.",
+                    Filas: [], TotalDemanda: 0m, TotalReserva: 0m, TotalAhorro: 0m, AhorroAnualizado: 0m,
+                    SinLineaEnEvolucion: [], ConsumidoresNoLeidos: 0,
+                    Respaldo: new ReservasArchivoModelo(
+                        Filas:
+                        [
+                            new ReservaArchivoFila(
+                                Linea: "Reserved VM Instance, Standard_D4s_v3, US East 2, 3 Years",
+                                Sku: "Standard_D4s_v3", Region: "US East 2", TermTexto: "3 Years",
+                                CargoMes: 36001m, AhorroMes: 36002m, Desde: "2026-03", Vence: "2029-03",
+                                Heredada: false, MotivoSinMonto: null),
+                            new ReservaArchivoFila(
+                                Linea: "Reserved VM Instance, Standard_B4ms, US East, 1 Year",
+                                Sku: "Standard_B4ms", Region: "US East", TermTexto: "1 Year",
+                                CargoMes: 36003m, AhorroMes: null, Desde: "2026-01", Vence: null,
+                                Heredada: true, MotivoSinMonto: "sin precio de catálogo"),
+                        ],
+                        TotalCargo: 36004m, TotalAhorro: 36002m, SinPrecio: 1)),
+            },
+        };
+
+        var r = RenderDeArtefacto.Correr(modelo, VarianteInforme.Interna);
+        if (r is null) return;
+
+        r.ExigirQueDibujeCompleto();
+        var s = r.Nodo("body-reservas").Todo + " " + r.Nodo("sub-reservas").Todo;
+        Assert.Contains("respaldo", s, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("archivo de evolución", s, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Standard_D4s_v3", s, StringComparison.Ordinal);
+        Assert.Contains("desde antes del rango", s, StringComparison.OrdinalIgnoreCase); // la heredada, rotulada
+    }
+
+    /// <summary>La evidencia de una acción manual es interna y NO PUEDE viajar: el modelo publicado
+    /// no tiene dónde llevarla (candado por tipo) y el artefacto generado jamás serializa esa clave,
+    /// en ninguna variante (entrega 8, decisión 2026-08-18).</summary>
+    [Fact]
+    public void La_evidencia_no_viaja_al_artefacto()
+    {
+        Assert.DoesNotContain(
+            typeof(OptimizacionCostos.Api.Features.InformeValor.Calculo.Ejecutado.AccionEjecutada).GetProperties(),
+            p => p.Name.Contains("Evidencia", StringComparison.OrdinalIgnoreCase));
+
+        foreach (var variante in new[] { VarianteInforme.Interna, VarianteInforme.Cliente })
+        {
+            var artefacto = InformeValorHtmlExporter.Exportar(ModeloDePrueba.Crear(), variante, null);
+            var html = System.Text.Encoding.UTF8.GetString(artefacto.Contenido);
+            Assert.DoesNotContain("\"evidencia\"", html, StringComparison.OrdinalIgnoreCase);
+        }
     }
 }

@@ -1310,7 +1310,7 @@ function render(){
         [pubEj?fmt(ej.total):NOPUB,'','','Ahorro acumulado del período','Suma del ahorro mensual de cada acción por los meses que estuvo vigente dentro del período.'],
         [pubEj?fmt(ej.tasaVigente):NOPUB,'/mes','','Tasa vigente al cierre','Lo que las acciones ejecutadas ahorran cada mes al final del período.'],
         [pubEj?fmt(ej.proyeccionFin):NOPUB,'','','Proyectado a fin de año','Acción por acción hasta diciembre, cortando cada reserva en su vencimiento.'],
-        [num(ej.filas.length),'','','Acciones ejecutadas',pubEj?(fmt(ej.facturado)+' medidos contra la facturación y '+fmt(ej.estimado)+' estimados por el catálogo.'):'La composición entre facturado y estimado no se publicó.'],
+        [num(ej.filas.length),'','','Acciones ejecutadas',pubEj?(fmt(ej.facturado)+' medidos contra la facturación, '+fmt(ej.estimado)+' estimados por el catálogo y '+fmt(ej.declarado)+' declarados por el consultor.'):'La composición entre facturado, estimado y declarado no se publicó.'],
       ])+
       '<div class="panel" style="margin-top:16px"><h3>Ahorro acumulado mes a mes</h3><div id="c-ej-acum"></div></div>'+
       '<div class="grid2" style="margin-top:16px">'+
@@ -1883,6 +1883,35 @@ function render(){
   } else if(!rs||!rs.medido){
     $('#body-reservas').innerHTML=pendiente(rs&&rs.motivo?rs.motivo:'No se pudieron leer las reservas del cliente.');
     $('#sub-reservas').textContent='';
+  } else if(rs.respaldo){
+    /* Entrega 8, pieza A: modo respaldo. La foto de Azure no midió pero el archivo de evolución
+       trae las líneas de reserva: se publica la tabla POR LÍNEA (nunca por VM: sin foto no se
+       sabe qué máquinas cubre cada reserva, y eso no se inventa) con el cargo facturado y el
+       ahorro estimado por catálogo de precios. Mismo interruptor que la tabla por VM. */
+    var rsp=rs.respaldo;
+    var pubRsp=pub('reservasFacturadas');
+    $('#sub-reservas').textContent='Reservas leídas desde el archivo de evolución (respaldo): la conexión Azure del cliente no estaba disponible, así que no hay confirmación de cobertura por VM. Por cada línea de reserva: el cargo mensual facturado y el ahorro estimado por catálogo de precios.';
+    var tbr='<table><thead><tr><th>Reserva</th><th>Término</th><th class="num">Cargo mensual</th><th class="num">Ahorro estimado</th><th>Desde</th><th>Vence</th></tr></thead><tbody>';
+    rsp.filas.forEach(function(f){
+      var ahorroCelda=!pubRsp?NOPUB_TD:(f.ahorro==null?'<span style="color:#8b8b8b">'+esc(f.sinMonto||'sin precio de catálogo')+'</span>':esc(fmt(f.ahorro)));
+      tbr+='<tr><td>'+esc(f.sku)+(f.heredada?' <span class="tags"><span>desde antes del rango</span></span>':'')+'</td>'+
+        '<td>'+esc(f.term)+'</td>'+
+        '<td class="num">'+(pubRsp?esc(fmt(f.cargo)):NOPUB_TD)+'</td>'+
+        '<td class="num">'+ahorroCelda+'</td>'+
+        '<td>'+esc(ymAb(f.desde))+'</td><td>'+(f.vence?esc(ymAb(f.vence)):'—')+'</td></tr>';
+    });
+    tbr+='<tr class="tot"><td colspan="2">Total '+num(rsp.filas.length)+' líneas</td>'+
+      '<td class="num">'+(pubRsp?esc(fmt(rsp.totalCargo)):NOPUB_TD)+'</td>'+
+      '<td class="num">'+(pubRsp?esc(fmt(rsp.totalAhorro)):NOPUB_TD)+'</td><td></td><td></td></tr></tbody></table>';
+    $('#body-reservas').innerHTML=
+      tarjetas([
+        [pubRsp?fmt(rsp.totalAhorro):NOPUB,'/mes','','Ahorro estimado por reservas','Según el catálogo de precios de Azure: lo que el cargo de cada reserva reemplaza de consumo por demanda.'],
+        [pubRsp?fmt(rsp.totalCargo):NOPUB,'/mes','','Cargo mensual de reservas','Lo que las líneas de reserva facturan cada mes en el archivo de evolución.'],
+      ])+
+      '<div class="panel" style="margin-top:16px"><div class="tbl">'+tbr+'</div>'+
+      (rsp.sinPrecio?'<div class="note" style="margin-top:12px">'+num(rsp.sinPrecio)+' línea(s) sin precio de catálogo: se publica su cargo, sin ahorro.</div>':'')+
+      '<div class="note" style="margin-top:12px"><b>Modo respaldo.</b> '+esc(rs.motivo||'Las reservas se leyeron desde el archivo de evolución, sin confirmación de Azure.')+'</div>'+
+      '</div>';
   } else {
     var pubRs=pub('reservasFacturadas');
     $('#sub-reservas').textContent=plu(rs.filas.length,'máquina cubierta','máquinas cubiertas')+' por instancias reservadas. Por cada una: lo que costaba a tarifa por demanda antes de la compra contra lo que factura la reserva cada mes.';
