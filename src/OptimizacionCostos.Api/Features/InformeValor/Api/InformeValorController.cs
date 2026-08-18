@@ -222,6 +222,105 @@ public sealed class InformeValorController(
     /// consumidor completa el bloque con esa segunda llamada — la misma carga en dos fases que ya
     /// usa la pantalla de reservas del producto.</para>
     /// </summary>
+    // ===================================================================================
+    // El registro manual de acciones ejecutadas (entrega 8, pieza B): la unidad de la PPT
+    // de referencia como CRUD del módulo. Las filas activas entran al registro de lo
+    // ejecutado como quinta fuente (FuenteMonto "declarado").
+    // ===================================================================================
+
+    /// <summary>Solo lee: hereda [RequireModule(Modules.InformeValor)] (ModuleAccess.View).</summary>
+    [HttpGet("clients/{clientId:int}/acciones")]
+    public async Task<IActionResult> Acciones(int clientId, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+        var acciones = await store.GetAccionesManualesAsync(clientId, ct);
+        return Ok(new { acciones });
+    }
+
+    [HttpPost("clients/{clientId:int}/acciones")]
+    [RequireModule(Modules.InformeValor, ModuleAccess.Edit)]
+    public async Task<IActionResult> CrearAccion(
+        int clientId, [FromBody] AccionManualRequest request, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+        if (ValidarAccion(request) is { } detalle) return BadRequest(new { detail = detalle });
+
+        var id = await store.InsertAccionManualAsync(
+            clientId, AccionDe(request), User.FindFirstValue(ClaimTypes.Email), ct);
+        return StatusCode(StatusCodes.Status201Created, new { accion_id = id });
+    }
+
+    [HttpPut("clients/{clientId:int}/acciones/{accionId:int}")]
+    [RequireModule(Modules.InformeValor, ModuleAccess.Edit)]
+    public async Task<IActionResult> ActualizarAccion(
+        int clientId, int accionId, [FromBody] AccionManualRequest request, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+        if (ValidarAccion(request) is { } detalle) return BadRequest(new { detail = detalle });
+
+        return await store.UpdateAccionManualAsync(clientId, accionId, AccionDe(request), ct)
+            ? NoContent()
+            : NotFound(new { detail = "La acción no existe para este cliente." });
+    }
+
+    [HttpDelete("clients/{clientId:int}/acciones/{accionId:int}")]
+    [RequireModule(Modules.InformeValor, ModuleAccess.Edit)]
+    public async Task<IActionResult> EliminarAccion(int clientId, int accionId, CancellationToken ct)
+    {
+        var chk = await access.AssertClientAccessAsync(User, clientId, ct);
+        if (!chk.Ok) return Translate(chk);
+
+        return await store.DeleteAccionManualAsync(clientId, accionId, ct)
+            ? NoContent()
+            : NotFound(new { detail = "La acción no existe para este cliente." });
+    }
+
+    /// <summary>El detalle del 400, o null si el cuerpo es válido. Las mismas reglas que replica
+    /// el front: oportunidad obligatoria, meses "aaaa-MM", fin no anterior al inicio, monto no
+    /// negativo. Los anchos se validan acá para responder 400 legible en vez del truncamiento
+    /// silencioso del store.</summary>
+    private static string? ValidarAccion(AccionManualRequest r)
+    {
+        if (string.IsNullOrWhiteSpace(r.Oportunidad))
+            return "La oportunidad es obligatoria: es el nombre de la acción ejecutada.";
+        if (r.Oportunidad.Trim().Length > 200)
+            return "La oportunidad supera los 200 caracteres.";
+        if (!EsMesValido(r.MesEjecucion))
+            return "El mes de ejecución es obligatorio con la forma aaaa-MM (por ejemplo 2026-07).";
+        if (r.MesFin is not null && !EsMesValido(r.MesFin))
+            return "El mes de fin, si viene, lleva la forma aaaa-MM.";
+        if (r.MesFin is not null && string.CompareOrdinal(r.MesFin, r.MesEjecucion) < 0)
+            return "El mes de fin no puede ser anterior al mes de ejecución.";
+        if (r.MontoMensual is < 0m)
+            return "El ahorro mensual no puede ser negativo.";
+        if (r.Categoria is { Length: > 100 })
+            return "La categoría supera los 100 caracteres.";
+        if (r.Recurso is { Length: > 512 })
+            return "El recurso supera los 512 caracteres.";
+        if (r.Nota is { Length: > 1000 })
+            return "La nota supera los 1000 caracteres.";
+        return null;
+    }
+
+    private static bool EsMesValido(string? mes) =>
+        mes is { Length: 7 } && mes[4] == '-'
+        && int.TryParse(mes[..4], NumberStyles.None, CultureInfo.InvariantCulture, out _)
+        && int.TryParse(mes[5..], NumberStyles.None, CultureInfo.InvariantCulture, out var m)
+        && m is >= 1 and <= 12;
+
+    private static AccionManualNueva AccionDe(AccionManualRequest r) => new(
+        Oportunidad: r.Oportunidad!.Trim(),
+        Categoria: string.IsNullOrWhiteSpace(r.Categoria) ? null : r.Categoria.Trim(),
+        MesEjecucion: r.MesEjecucion!,
+        MesFin: r.MesFin,
+        MontoMensual: r.MontoMensual,
+        Recurso: string.IsNullOrWhiteSpace(r.Recurso) ? null : r.Recurso.Trim(),
+        Nota: string.IsNullOrWhiteSpace(r.Nota) ? null : r.Nota.Trim(),
+        Evidencia: string.IsNullOrWhiteSpace(r.Evidencia) ? null : r.Evidencia);
+
     [HttpPost("clients/{clientId:int}/preview")]
     public async Task<IActionResult> Preview(int clientId, [FromBody] PreviewRequest request, CancellationToken ct)
     {
@@ -984,6 +1083,13 @@ public sealed class InformeValorController(
 /// correcta, porque para quien llama "no mandé el campo" y "mandé null explícito" significan lo
 /// mismo, ninguna declaración).</para>
 /// </summary>
+/// <summary>El cuerpo del alta/edición de una acción manual (entrega 8, pieza B). Todos los
+/// campos llegan crudos y el controller valida (<c>ValidarAccion</c>); <c>Evidencia</c> es el
+/// texto fuente de la captura asistida y NUNCA sale al informe.</summary>
+public sealed record AccionManualRequest(
+    string? Oportunidad, string? Categoria, string? MesEjecucion, string? MesFin,
+    decimal? MontoMensual, string? Recurso, string? Nota, string? Evidencia);
+
 public sealed record PreviewRequest(
     DateOnly PeriodStart,
     DateOnly PeriodEnd,
