@@ -992,7 +992,9 @@ public sealed class InformeValorController(
         catch (Exception ex)
         {
             logger.LogError(ex, "informe-valor subir falló client_id={Cid} kind={Kind}", clientId, kind);
-            return Problem(statusCode: 500, detail: $"La carga no pudo completarse: {ex.GetType().Name}");
+            // El tipo de la excepción va al log, nunca al cliente (contrato del test
+            // El_500_no_filtra_el_detalle_de_la_excepcion).
+            return Problem(statusCode: 500, detail: "La carga no pudo completarse. Intenta de nuevo o contacta al administrador.");
         }
     }
 
