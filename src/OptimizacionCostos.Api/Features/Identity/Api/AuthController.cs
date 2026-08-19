@@ -19,7 +19,9 @@ public sealed class AuthController(
     TokenIssuer tokens,
     AppConfig config,
     IModulePermissionStore moduleStore,
-    IModulePermissionService modulePerms) : ControllerBase
+    IModulePermissionService modulePerms,
+    IRefreshTokenStore refreshStore,
+    ILogger<AuthController> logger) : ControllerBase
 {
     // -------------------- DTOs --------------------
     public sealed record LoginRequest(string? Username, string? Password);
@@ -30,6 +32,7 @@ public sealed class AuthController(
     public sealed record ChangePasswordRequest(string? CurrentPassword, string? NewPassword);
     public sealed record ModulePermissionRowDto(string? ModuleKey, bool CanView, bool CanEdit);
     public sealed record ModulePermissionsUpdateRequest(Dictionary<string, List<ModulePermissionRowDto>>? Permissions);
+    public sealed record RefreshRequest(string? RefreshToken);
 
     // -------------------- GET /auth/status --------------------
     [HttpGet("status")]
@@ -64,7 +67,7 @@ public sealed class AuthController(
         var email = payload.Email!.ToLowerInvariant();
         var hash = PasswordHasher.Hash(payload.Password!);
         var user = await users.UpsertBootstrapAdminAsync(email, payload.FullName!.Trim(), hash, ct);
-        return Ok(TokenResponse(user));
+        return Ok(await SessionResponseAsync(user, familyId: null, familyExpiresAt: null, ct));
     }
 
     // -------------------- POST /auth/login --------------------
@@ -94,7 +97,7 @@ public sealed class AuthController(
         }
 
         var user = new PublicUser(row.UserId, row.Email, row.FullName, row.Role, row.IsActive, "", row.MustChangePassword);
-        return Ok(TokenResponse(user));
+        return Ok(await SessionResponseAsync(user, familyId: null, familyExpiresAt: null, ct));
     }
 
     // -------------------- POST /auth/change-password --------------------
@@ -121,12 +124,14 @@ public sealed class AuthController(
         var hash = PasswordHasher.Hash(payload.NewPassword!);
         await users.UpdateUserAsync(row.UserId, null, null, null, hash, null, mustChangePassword: false, ct);
 
-        // WEB-12: cambiar la contraseña revoca las sesiones anteriores. El reemplazo se
-        // emite en el mismo segundo de la revocación (la comparación estricta de AuthSetup
-        // lo deja pasar); el front lo persiste y el usuario no pierde la sesión.
+        // WEB-12: cambiar la contraseña revoca las sesiones anteriores (access y familias de
+        // refresh). El reemplazo — access Y refresh de familia nueva, o la sesión moriría a
+        // los 15 minutos — se emite en el mismo segundo de la revocación (la comparación
+        // estricta de AuthSetup lo deja pasar); el front lo persiste.
         await users.RevokeTokensAsync(row.UserId, ct);
+        await refreshStore.RevokeAllForUserAsync(row.UserId, DateTime.UtcNow, ct);
         var refreshed = new PublicUser(row.UserId, row.Email, row.FullName, row.Role, true, "", false);
-        var response = TokenResponse(refreshed);
+        var response = await SessionResponseAsync(refreshed, familyId: null, familyExpiresAt: null, ct);
         response["changed"] = true;
         response["must_change_password"] = false;
         return Ok(response);
@@ -146,9 +151,58 @@ public sealed class AuthController(
 
         var row = await users.GetForLoginAsync(email, ct);
         if (row is not null)
+        {
             await users.RevokeTokensAsync(row.UserId, ct);
+            // Las familias de refresh también mueren: sin esto, el refresh del navegador
+            // resucitaría la sesión que el usuario acaba de cerrar.
+            await refreshStore.RevokeAllForUserAsync(row.UserId, DateTime.UtcNow, ct);
+        }
 
         return Ok(new Dictionary<string, object?> { ["logged_out"] = true });
+    }
+
+    // -------------------- POST /auth/refresh --------------------
+    // Canje del refresh rotatorio (spec DAST 2026-08-19). Single-use con gracia de
+    // AuthRefreshGraceSeconds para la carrera legítima de dos pestañas; el reuso fuera de la
+    // gracia es señal de robo y revoca la familia completa. La familia expira en absoluto a
+    // las AuthRefreshHours del login: renovar el access no extiende la jornada.
+    [HttpPost("refresh")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Refresh([FromBody] RefreshRequest payload, CancellationToken ct)
+    {
+        IActionResult Invalid() => Unauthorized(new { detail = "Invalid or expired refresh token" });
+        if (string.IsNullOrWhiteSpace(payload.RefreshToken)) return Invalid();
+
+        var now = DateTime.UtcNow;
+        var row = await refreshStore.FindByHashAsync(RefreshTokenCodec.Hash(payload.RefreshToken), ct);
+        if (row is null || row.RevokedAt is not null || DateTime.SpecifyKind(row.ExpiresAt, DateTimeKind.Utc) <= now)
+            return Invalid();
+
+        if (row.UsedAt is { } used)
+        {
+            var edad = (now - DateTime.SpecifyKind(used, DateTimeKind.Utc)).TotalSeconds;
+            if (edad > config.AuthRefreshGraceSeconds)
+            {
+                // Reuso fuera de la gracia: alguien más ya canjeó este token. Se quema la
+                // familia entera y queda rastro en el log (alerta de reutilización del DAST).
+                await refreshStore.RevokeFamilyAsync(row.FamilyId, now, ct);
+                logger.LogWarning("Refresh token reuse detectado user_id={UserId} family={FamilyId}",
+                    row.UserId, row.FamilyId);
+                return Invalid();
+            }
+            // Dentro de la gracia: carrera de pestañas, se emite un hermano sin castigo.
+        }
+        else
+        {
+            await refreshStore.MarkUsedAsync(row.RefreshId, now, ct);
+        }
+
+        var userRow = await users.GetByIdAsync(row.UserId, ct);
+        if (userRow is null || !userRow.IsActive) return Invalid();
+
+        await refreshStore.PurgeExpiredAsync(row.UserId, now.AddDays(-7), ct);
+
+        return Ok(await SessionResponseAsync(userRow, row.FamilyId, row.ExpiresAt, ct));
     }
 
     // -------------------- GET /auth/me --------------------
@@ -281,9 +335,12 @@ public sealed class AuthController(
         if (!ok) return NotFound(new { detail = "User not found" });
 
         // WEB-12: un cambio de contraseña (reset por admin o propio) mata las sesiones
-        // que el usuario tuviera abiertas con la credencial anterior.
+        // que el usuario tuviera abiertas con la credencial anterior, refresh incluido.
         if (payload.Password is not null)
+        {
             await users.RevokeTokensAsync(userId, ct);
+            await refreshStore.RevokeAllForUserAsync(userId, DateTime.UtcNow, ct);
+        }
 
         return Ok(await users.GetByIdAsync(userId, ct));
     }
@@ -383,6 +440,25 @@ public sealed class AuthController(
     }
 
     // -------------------- helpers --------------------
+    /// <summary>TokenResponse + refresh token. familyId/familyExpiresAt null = familia nueva
+    /// (login, bootstrap, change-password); con valores = rotación dentro de la familia (el
+    /// expires_at absoluto se hereda: renovar no extiende la jornada).</summary>
+    private async Task<Dictionary<string, object?>> SessionResponseAsync(
+        PublicUser user, Guid? familyId, DateTime? familyExpiresAt, CancellationToken ct)
+    {
+        var response = TokenResponse(user);
+        var now = DateTime.UtcNow;
+        var family = familyId ?? Guid.NewGuid();
+        var expiresAt = familyExpiresAt is { } fx
+            ? DateTime.SpecifyKind(fx, DateTimeKind.Utc)
+            : now.AddHours(config.AuthRefreshHours);
+        var refresh = RefreshTokenCodec.NewToken();
+        await refreshStore.CreateAsync(user.UserId, family, RefreshTokenCodec.Hash(refresh), now, expiresAt, ct);
+        response["refresh_token"] = refresh;
+        response["refresh_expires_in"] = (int)Math.Max(0, (expiresAt - now).TotalSeconds);
+        return response;
+    }
+
     private Dictionary<string, object?> TokenResponse(PublicUser user)
     {
         var issued = tokens.Create(user.Email, user.FullName, user.Role);

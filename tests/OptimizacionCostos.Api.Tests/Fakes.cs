@@ -79,6 +79,82 @@ public sealed class FakeAlertCatalogStore : IAlertCatalogStore
         => Task.FromResult(_kql.RemoveAll(k => k.KqlId == kqlId) > 0);
 }
 
+/// <summary>Refresh tokens en memoria (sin SQL). Registrarlo en toda factory cuyos tests
+/// pasen por login/bootstrap/change-password/logout/refresh: esos endpoints ahora emiten o
+/// revocan refresh tokens y con el store SQL real abrirían conexión a BD.</summary>
+public sealed class FakeRefreshTokenStore : IRefreshTokenStore
+{
+    private sealed class Row
+    {
+        public long RefreshId { get; init; }
+        public int UserId { get; init; }
+        public Guid FamilyId { get; init; }
+        public required byte[] Hash { get; init; }
+        public DateTime IssuedAt { get; init; }
+        public DateTime ExpiresAt { get; init; }
+        public DateTime? UsedAt { get; set; }
+        public DateTime? RevokedAt { get; set; }
+    }
+
+    private readonly List<Row> _rows = [];
+    private long _seq;
+
+    public int Count => _rows.Count;
+
+    /// <summary>Retro-fecha el used_at del token dado (por su valor en claro) para probar la
+    /// gracia de reuso sin dormir en los tests.</summary>
+    public void EnvejecerUso(string token, TimeSpan edad)
+    {
+        var hash = RefreshTokenCodec.Hash(token);
+        var row = _rows.FirstOrDefault(r => r.Hash.AsSpan().SequenceEqual(hash));
+        if (row?.UsedAt is not null) row.UsedAt = DateTime.UtcNow - edad;
+    }
+
+    public Task<RefreshTokenRow?> FindByHashAsync(byte[] hash, CancellationToken ct = default)
+    {
+        var row = _rows.FirstOrDefault(r => r.Hash.AsSpan().SequenceEqual(hash));
+        return Task.FromResult(row is null ? null : (RefreshTokenRow?)new RefreshTokenRow(
+            row.RefreshId, row.UserId, row.FamilyId, row.IssuedAt, row.ExpiresAt, row.UsedAt, row.RevokedAt));
+    }
+
+    public Task CreateAsync(int userId, Guid familyId, byte[] hash, DateTime issuedAt, DateTime expiresAt, CancellationToken ct = default)
+    {
+        _rows.Add(new Row
+        {
+            RefreshId = ++_seq, UserId = userId, FamilyId = familyId, Hash = hash,
+            IssuedAt = issuedAt, ExpiresAt = expiresAt,
+        });
+        return Task.CompletedTask;
+    }
+
+    public Task MarkUsedAsync(long refreshId, DateTime usedAt, CancellationToken ct = default)
+    {
+        var row = _rows.FirstOrDefault(r => r.RefreshId == refreshId);
+        if (row is not null) row.UsedAt ??= usedAt;
+        return Task.CompletedTask;
+    }
+
+    public Task RevokeFamilyAsync(Guid familyId, DateTime revokedAt, CancellationToken ct = default)
+    {
+        foreach (var row in _rows.Where(r => r.FamilyId == familyId && r.RevokedAt is null))
+            row.RevokedAt = revokedAt;
+        return Task.CompletedTask;
+    }
+
+    public Task RevokeAllForUserAsync(int userId, DateTime revokedAt, CancellationToken ct = default)
+    {
+        foreach (var row in _rows.Where(r => r.UserId == userId && r.RevokedAt is null))
+            row.RevokedAt = revokedAt;
+        return Task.CompletedTask;
+    }
+
+    public Task PurgeExpiredAsync(int userId, DateTime cutoff, CancellationToken ct = default)
+    {
+        _rows.RemoveAll(r => r.UserId == userId && r.ExpiresAt < cutoff);
+        return Task.CompletedTask;
+    }
+}
+
 /// <summary>
 /// Matriz rol×módulo en memoria. SeedDefaults() replica el seed de producción
 /// (consultor todo; lector solo ver, optimization excluido) para que los tests

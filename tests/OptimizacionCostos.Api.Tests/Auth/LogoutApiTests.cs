@@ -119,6 +119,8 @@ public sealed class LogoutApiTests : IClassFixture<LogoutApiTests.Factory>
                 services.AddSingleton<IUserDirectory>(Directory);
                 services.RemoveAll<IAppUserStore>();
                 services.AddSingleton<IAppUserStore>(Users);
+                services.RemoveAll<IRefreshTokenStore>();
+                services.AddSingleton<IRefreshTokenStore>(new FakeRefreshTokenStore());
                 services.RemoveAll<IModulePermissionStore>();
                 services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
             });
