@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.OpenApi.Models;
@@ -264,7 +266,7 @@ const string CorsPolicy = "BitCors";
 builder.Services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
 {
     if (config.CorsOrigins.Length > 0)
-        p.WithOrigins(config.CorsOrigins).AllowAnyHeader().AllowAnyMethod();
+        p.WithOrigins(config.CorsOrigins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
 }));
 
 builder.Services.AddEndpointsApiExplorer();
@@ -367,6 +369,26 @@ if (!app.Environment.IsDevelopment() && config.CorsOrigins.Length == 0)
 }
 
 app.UseCors(CorsPolicy);
+app.Use(async (context, next) =>
+{
+    var unsafeMethod = HttpMethods.IsPost(context.Request.Method) || HttpMethods.IsPut(context.Request.Method)
+        || HttpMethods.IsPatch(context.Request.Method) || HttpMethods.IsDelete(context.Request.Method);
+    var isLogin = context.Request.Path.Equals("/auth/login", StringComparison.OrdinalIgnoreCase)
+        || context.Request.Path.Equals("/auth/bootstrap", StringComparison.OrdinalIgnoreCase);
+    var hasBrowserSession = context.Request.Cookies.TryGetValue(BrowserSession.SessionCookieName, out _);
+    if (unsafeMethod && !isLogin && hasBrowserSession)
+    {
+        var cookie = context.Request.Cookies[BrowserSession.CsrfCookieName];
+        var header = context.Request.Headers[BrowserSession.CsrfHeaderName].ToString();
+        if (string.IsNullOrEmpty(cookie) || !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(cookie), Encoding.UTF8.GetBytes(header)))
+        {
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            await context.Response.WriteAsJsonAsync(new { detail = "CSRF validation failed" });
+            return;
+        }
+    }
+    await next();
+});
 app.UseAuthentication();
 // Después de UseAuthentication para poder particionar por usuario (el claim "sub" ya está resuelto) y
 // después de UseCors para que el 429 salga con Access-Control-Allow-Origin: si no, el navegador
