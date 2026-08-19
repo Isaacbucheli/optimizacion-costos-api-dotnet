@@ -21,7 +21,16 @@ public sealed class AppConfig
     public string Sql2Password { get; init; } = "";
 
     public string JwtSecret { get; init; } = "";
-    public int AuthTokenMinutes { get; init; } = 480;
+    // Access token de 15 min por defecto (spec DAST 2026-08-19; antes 480). El rollout se
+    // gobierna con el app setting: se mantiene 480 en Azure hasta que el front con refresh
+    // esté desplegado, y recién entonces se baja o se quita el setting.
+    public int AuthTokenMinutes { get; init; } = 15;
+    // Expiración ABSOLUTA de la familia de refresh tokens desde el login (la jornada de
+    // siempre): renovar el access no la extiende.
+    public int AuthRefreshHours { get; init; } = 8;
+    // Ventana en la que el reuso de un refresh ya rotado se tolera como carrera legítima de
+    // dos pestañas; fuera de ella el reuso revoca la familia completa (detección de robo).
+    public int AuthRefreshGraceSeconds { get; init; } = 60;
     // Habilita POST /auth/bootstrap (crear primer admin). Default false (paridad con FastAPI).
     public bool AuthBootstrapEnabled { get; init; }
 
@@ -117,7 +126,7 @@ public sealed class AppConfig
         string Get(string key, string fallback = "") =>
             Environment.GetEnvironmentVariable(key) ?? cfg[key] ?? fallback;
 
-        var minutesRaw = Get("APP_AUTH_TOKEN_MINUTES", "480");
+        var minutesRaw = Get("APP_AUTH_TOKEN_MINUTES", "15");
         var corsRaw = Get("CORS_ORIGINS");
 
         return new AppConfig
@@ -135,7 +144,9 @@ public sealed class AppConfig
             StorageContainerUploads = Get("STORAGE_CONTAINER_UPLOADS", "uploads"),
             StorageContainerOutputs = Get("STORAGE_CONTAINER_OUTPUTS", "outputs"),
             JwtSecret = Get("JWT_SECRET"),
-            AuthTokenMinutes = int.TryParse(minutesRaw, out var m) ? m : 480,
+            AuthTokenMinutes = int.TryParse(minutesRaw, out var m) ? m : 15,
+            AuthRefreshHours = int.TryParse(Get("APP_AUTH_REFRESH_HOURS"), out var rh) && rh > 0 ? rh : 8,
+            AuthRefreshGraceSeconds = int.TryParse(Get("APP_AUTH_REFRESH_GRACE_SECONDS"), out var rg) && rg >= 0 ? rg : 60,
             AuthBootstrapEnabled = Get("APP_AUTH_BOOTSTRAP_ENABLED").Trim().ToLowerInvariant() is "true" or "1",
             SwaggerEnabled = Get("SWAGGER_ENABLED").Trim().ToLowerInvariant() is "true" or "1",
             OptimizationAllowedEmails = Get("OPTIMIZATION_ALLOWED_EMAILS")
