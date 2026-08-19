@@ -240,6 +240,8 @@ public sealed class TemporaryPasswordApiTests : IClassFixture<TemporaryPasswordA
                 services.AddSingleton<IUserDirectory>(Directory);
                 services.RemoveAll<IAppUserStore>();
                 services.AddSingleton<IAppUserStore>(Users);
+                services.RemoveAll<IRefreshTokenStore>();
+                services.AddSingleton<IRefreshTokenStore>(new FakeRefreshTokenStore());
                 services.RemoveAll<IModulePermissionStore>();
                 services.AddSingleton<IModulePermissionStore>(new FakeModulePermissionStore().SeedDefaults());
             });
@@ -257,6 +259,7 @@ public sealed class FakeAppUser
     public string PasswordHash { get; set; } = "";
     public bool IsActive { get; set; } = true;
     public bool MustChangePassword { get; set; }
+    public DateTime? TokensRevokedAt { get; set; }
     public string CreatedAt { get; } = "2026-01-01T00:00:00";
 }
 
@@ -308,6 +311,13 @@ public sealed class FakeAppUserStore : IAppUserStore
     {
         var u = Find(email);
         return Task.FromResult(u is not null && u.UserId != excludeUserId);
+    }
+
+    public Task RevokeTokensAsync(int userId, CancellationToken ct = default)
+    {
+        var u = _users.FirstOrDefault(x => x.UserId == userId);
+        if (u is not null) u.TokensRevokedAt = DateTime.UtcNow;
+        return Task.CompletedTask;
     }
 
     public Task<IReadOnlyList<PublicUser>> ListUsersAsync(CancellationToken ct = default) =>

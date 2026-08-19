@@ -86,6 +86,23 @@ public static class AuthSetup
                             return;
                         }
 
+                        // WEB-12: un token emitido antes de tokens_revoked_at (logout, cambio de
+                        // contraseña) se rechaza aunque su firma y exp sean válidos. Comparación
+                        // ESTRICTA truncada a segundos: el token que change-password emite en el
+                        // mismo segundo de revocar sobrevive. Sin iat legible no hay forma de
+                        // ubicar el token frente a la marca: se rechaza.
+                        if (user.TokensRevokedAt is { } revoked)
+                        {
+                            var revokedUnix = new DateTimeOffset(DateTime.SpecifyKind(revoked, DateTimeKind.Utc))
+                                .ToUnixTimeSeconds();
+                            var iatRaw = ctx.Principal!.FindFirst("iat")?.Value;
+                            if (!long.TryParse(iatRaw, out var iat) || iat < revokedUnix)
+                            {
+                                ctx.Fail("Invalid or expired token");
+                                return;
+                            }
+                        }
+
                         // El rol que autoriza es el de BD, no el del token.
                         var identity = (ClaimsIdentity)ctx.Principal!.Identity!;
                         foreach (var stale in identity.FindAll(ClaimTypes.Role).ToList())

@@ -35,6 +35,11 @@ public interface IAppUserStore
     Task<bool> UserExistsAsync(int userId, CancellationToken ct = default);
     /// <summary>Fuerza rol=admin + is_active=1 para los emails superadmin que existan (auto-reparación).</summary>
     Task EnsureSuperAdminsAsync(IReadOnlyList<string> emails, CancellationToken ct = default);
+    /// <summary>Revoca los tokens del usuario (WEB-12): los access emitidos antes de ahora
+    /// dejan de valer vía app_users.tokens_revoked_at. La llaman logout, change-password y el
+    /// reset de contraseña por admin. NUNCA el re-hash transparente del login (no es un cambio
+    /// de credenciales del usuario).</summary>
+    Task RevokeTokensAsync(int userId, CancellationToken ct = default);
 }
 
 public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserStore
@@ -85,6 +90,8 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
                 ALTER TABLE dbo.app_users ADD updated_at DATETIME2 NULL;
             IF COL_LENGTH('dbo.app_users', 'must_change_password') IS NULL
                 ALTER TABLE dbo.app_users ADD must_change_password BIT NOT NULL CONSTRAINT DF_app_users_must_change_password DEFAULT 0;
+            IF COL_LENGTH('dbo.app_users', 'tokens_revoked_at') IS NULL
+                ALTER TABLE dbo.app_users ADD tokens_revoked_at DATETIME2 NULL;
             """;
         await cmd2.ExecuteNonQueryAsync(ct);
 
@@ -150,6 +157,16 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
             r.GetInt32(0), r.GetString(1), r.GetString(2), r.GetString(3),
             r.IsDBNull(4) ? "" : r.GetString(4), !r.IsDBNull(5) && r.GetBoolean(5),
             !r.IsDBNull(6) && r.GetBoolean(6));
+    }
+
+    public async Task RevokeTokensAsync(int userId, CancellationToken ct = default)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+        await EnsureAuthSchemaAsync(conn, ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "UPDATE dbo.app_users SET tokens_revoked_at = SYSUTCDATETIME() WHERE user_id = @id";
+        cmd.Parameters.Add(new SqlParameter("@id", userId));
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     public async Task<bool> EmailExistsAsync(string email, int? excludeUserId = null, CancellationToken ct = default)

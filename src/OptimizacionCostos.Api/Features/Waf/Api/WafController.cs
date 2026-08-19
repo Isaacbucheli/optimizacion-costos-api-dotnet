@@ -7,6 +7,7 @@ using OptimizacionCostos.Api.Configuration;
 using OptimizacionCostos.Api.Data;
 using OptimizacionCostos.Api.Features.Clients;
 using OptimizacionCostos.Api.Features.CostEngine.Api;
+using OptimizacionCostos.Api.Features.Storage;
 
 namespace OptimizacionCostos.Api.Features.Waf.Api;
 
@@ -38,6 +39,9 @@ public sealed class WafController(
     AppConfig config,
     ILogger<WafController> logger) : ControllerBase
 {
+    /// <summary>Tope de subida del Excel de matriz (mismo criterio que InformeValor: 32 MiB).</summary>
+    private const long ExcelImportMaxBytes = 32L * 1024 * 1024;
+
     private const string CostReferenceDisclaimer =
         "Valor referencial calculado con tarifas publicas de Azure (Retail Prices). "
         + "No representa facturacion real CSP, descuentos, reservas, Savings Plans, creditos ni impuestos.";
@@ -916,22 +920,49 @@ public sealed class WafController(
     public async Task<IActionResult> ExcelImportPreview(
         int clientId, IFormFile file, [FromQuery(Name = "use_ai")] bool useAi = true, CancellationToken ct = default)
     {
+        // El guard de acceso corre ANTES de validar la extensión o leer el archivo: con el
+        // orden inverso, el error que recibe un usuario sin permiso depende del nombre de su
+        // archivo (fuga de información; mismo contrato que InformeValorUploadApiTests).
+        var guard = await GuardAsync(clientId, ct);
+        if (guard is not null) return guard;
+
         var fileName = SafeFileName(file?.FileName);
         if (!fileName.ToLowerInvariant().EndsWith(".xlsx"))
             return BadRequest(new { detail = "El archivo debe ser una matriz Excel .xlsx." });
         if (file is null || file.Length == 0)
             return BadRequest(new { detail = "El archivo Excel esta vacio." });
 
-        var guard = await GuardAsync(clientId, ct);
-        if (guard is not null) return guard;
-
         byte[] content;
-        using (var ms = new MemoryStream()) { await file.CopyToAsync(ms, ct); content = ms.ToArray(); }
+        try
+        {
+            await using var input = file.OpenReadStream();
+            content = await UploadValidation.ReadLimitedUploadAsync(input, ExcelImportMaxBytes, ct);
+        }
+        catch (UploadValidationException ex)
+        {
+            return StatusCode(ex.StatusCode, new { detail = ex.Message });
+        }
         if (content.Length == 0) return BadRequest(new { detail = "El archivo Excel esta vacio." });
 
         try
         {
             var (rows, metrics) = excelImporter.Parse(content);
+
+            // UPL-01 (DAST): un Excel válido que no tiene la forma de la matriz se rechaza
+            // con 422 ANTES de invocar la curación IA (RT-05), declarando qué se descartó.
+            if (!metrics.HeaderFound)
+                return UnprocessableEntity(new
+                {
+                    detail = "La hoja 'Resultados' no contiene la fila de encabezado esperada (columna 'Ámbito de revisión').",
+                    metrics = MetricsDto(metrics),
+                });
+            if (rows.Count == 0)
+                return UnprocessableEntity(new
+                {
+                    detail = "El Excel no contiene ninguna fila válida de la matriz.",
+                    metrics = MetricsDto(metrics),
+                });
+
             var aiConfigured = useAi && curator.GetConfigStatus().Configured;
             var preview = await excelImporter.PreviewAsync(clientId, rows, useAi, maxAiCalls: 40, ct);
             var matched = preview.Count(p => p.Status == "matched");
@@ -944,7 +975,7 @@ public sealed class WafController(
                 rows_matched = matched,
                 rows_needs_review = needsReview,
                 ai_enabled = aiConfigured,
-                metrics = new { sheet = metrics.Sheet, rows_total = metrics.RowsTotal, rows_with_warnings = metrics.RowsWithWarnings },
+                metrics = MetricsDto(metrics),
                 rows = preview.Select(ToPreviewDto),
             });
         }
@@ -955,9 +986,21 @@ public sealed class WafController(
         catch (Exception ex)
         {
             logger.LogError(ex, "WAF Excel preview failed client_id={Cid}", clientId);
-            return Problem(statusCode: 500, detail: $"WAF Excel preview failed: {ex.GetType().Name}");
+            // El tipo de la excepción va al log, nunca al cliente (contrato del test
+            // El_500_no_filtra_el_detalle_de_la_excepcion).
+            return Problem(statusCode: 500, detail: "No se pudo procesar el archivo. Intenta de nuevo o contacta al administrador.");
         }
     }
+
+    private static object MetricsDto(WafExcelParseMetadata m) => new
+    {
+        sheet = m.Sheet,
+        rows_total = m.RowsTotal,
+        rows_with_warnings = m.RowsWithWarnings,
+        header_found = m.HeaderFound,
+        rows_skipped = m.RowsSkipped,
+        warnings = m.Warnings,
+    };
 
     /// <summary>POST excel-import/apply. Port de apply_waf_excel_import.</summary>
     [HttpPost("clients/{clientId:int}/excel-import/apply")]
@@ -997,7 +1040,9 @@ public sealed class WafController(
         catch (Exception ex)
         {
             logger.LogError(ex, "WAF Excel apply failed client_id={Cid}", clientId);
-            return Problem(statusCode: 500, detail: $"WAF Excel apply failed: {ex.GetType().Name}");
+            // El tipo de la excepción va al log, nunca al cliente (contrato del test
+            // El_500_no_filtra_el_detalle_de_la_excepcion).
+            return Problem(statusCode: 500, detail: "No se pudo aplicar la matriz. Intenta de nuevo o contacta al administrador.");
         }
     }
 
@@ -1006,12 +1051,14 @@ public sealed class WafController(
     [RequireModule(Modules.WafIngestions, ModuleAccess.Edit)]
     public async Task<IActionResult> UploadIngestion(int clientId, IFormFile file, CancellationToken ct)
     {
+        // Guard antes que la extensión: el error de un usuario sin permiso no puede depender
+        // del nombre de su archivo (mismo contrato que el preview y que InformeValor).
+        var guard = await GuardAsync(clientId, ct);
+        if (guard is not null) return guard;
+
         var fileName = SafeFileName(file?.FileName);
         if (!fileName.ToLowerInvariant().EndsWith(".csv"))
             return BadRequest(new { detail = "El archivo debe ser un CSV exportado desde Azure Advisor." });
-
-        var guard = await GuardAsync(clientId, ct);
-        if (guard is not null) return guard;
 
         if (file is null || file.Length == 0) return BadRequest(new { detail = "El archivo CSV esta vacio." });
         byte[] content;
@@ -1042,7 +1089,9 @@ public sealed class WafController(
         catch (Exception ex)
         {
             logger.LogError(ex, "WAF ingestion failed client_id={Cid}", clientId);
-            return Problem(statusCode: 500, detail: $"WAF ingestion failed: {ex.GetType().Name}");
+            // El tipo de la excepción va al log, nunca al cliente (contrato del test
+            // El_500_no_filtra_el_detalle_de_la_excepcion).
+            return Problem(statusCode: 500, detail: "La ingesta no pudo completarse. Intenta de nuevo o contacta al administrador.");
         }
     }
 

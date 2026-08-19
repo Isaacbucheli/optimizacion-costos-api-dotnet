@@ -58,11 +58,18 @@ public sealed record WafExcelRow(
     IReadOnlyList<string> Resources,
     IReadOnlyList<string> Warnings);
 
-/// <summary>Metadata del parse (port del 2º elemento de la tupla de parse_waf_matrix_excel).</summary>
+/// <summary>Metadata del parse (port del 2º elemento de la tupla de parse_waf_matrix_excel).
+/// RowsTotal cuenta las filas ACEPTADAS (contrato histórico del preview); RowsSkipped cuenta
+/// las filas con contenido descartadas después del encabezado — o toda la hoja si el encabezado
+/// nunca apareció (HeaderFound=false). Las filas de título previas al encabezado y las secciones
+/// de pilar son parte del formato y no cuentan como descartadas (UPL-01 del DAST).</summary>
 public sealed record WafExcelParseMetadata(
     string Sheet,
     int RowsTotal,
-    int RowsWithWarnings);
+    int RowsWithWarnings,
+    bool HeaderFound,
+    int RowsSkipped,
+    IReadOnlyList<string> Warnings);
 
 /// <summary>
 /// Candidato puntuado para el match Excel↔catálogo (port del dataclass WafExcelCandidate de

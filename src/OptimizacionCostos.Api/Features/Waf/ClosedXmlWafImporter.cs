@@ -92,7 +92,21 @@ public sealed partial class ClosedXmlWafImporter(
     public (IReadOnlyList<WafExcelRow> Rows, WafExcelParseMetadata Metadata) Parse(byte[] content)
     {
         using var stream = new MemoryStream(content, writable: false);
-        using var workbook = new XLWorkbook(stream);
+        XLWorkbook workbook;
+        try
+        {
+            workbook = new XLWorkbook(stream);
+        }
+        catch (Exception ex) when (ex is System.IO.FileFormatException or FormatException
+            or ArgumentException or InvalidDataException
+            or DocumentFormat.OpenXml.Packaging.OpenXmlPackageException)
+        {
+            // UPL-02 (DAST): un contenido que no es un paquete OOXML válido (texto renombrado
+            // .xlsx, zip corrupto) es un rechazo de usuario, no un 500. Mismo catálogo de
+            // excepciones que XlsxRowReader.AbrirPaquete (InformeValor).
+            throw new InvalidOperationException("El archivo no es un Excel (.xlsx) válido.");
+        }
+        using var _ = workbook;
         if (!workbook.Worksheets.TryGetWorksheet(SheetName, out var sheet))
             throw new InvalidOperationException("El Excel no contiene la hoja 'Resultados'.");
 
@@ -101,6 +115,20 @@ public sealed partial class ClosedXmlWafImporter(
         var pillarSequence = new Dictionary<int, int>();
         var cols = new Dictionary<string, int>(DefaultColumnMap, StringComparer.Ordinal);
         var headerSeen = false;
+
+        // UPL-01 (DAST): el descarte de filas deja de ser mudo. Solo cuenta el contenido
+        // posterior al encabezado (los títulos previos son parte del formato); si el
+        // encabezado nunca aparece, cuenta toda la hoja con contenido.
+        const int maxSkipWarnings = 20;
+        var skipWarnings = new List<string>();
+        var rowsSkipped = 0;
+        var preHeaderConContenido = 0;
+        void Skip(int rowNum, string motivo)
+        {
+            rowsSkipped++;
+            if (skipWarnings.Count < maxSkipWarnings)
+                skipWarnings.Add($"Fila {rowNum}: descartada ({motivo}).");
+        }
 
         var lastRowUsed = sheet.LastRowUsed();
         var maxRow = lastRowUsed?.RowNumber() ?? 0;
@@ -117,12 +145,18 @@ public sealed partial class ClosedXmlWafImporter(
             var rowNumber = rowIndex;
             var normalizedFirst = WafText.NormalizeText(first);
 
+            var rowHasContent = values.Any(v => v.Length > 0);
+
             if (!headerSeen)
             {
                 if (normalizedFirst.Contains("ambito de revision", StringComparison.Ordinal))
                 {
                     headerSeen = true;
                     cols = BuildHeaderMap(cells);
+                }
+                else if (rowHasContent)
+                {
+                    preHeaderConContenido++;
                 }
                 continue;
             }
@@ -139,7 +173,13 @@ public sealed partial class ClosedXmlWafImporter(
                 continue;
             }
             if (string.IsNullOrEmpty(first) || currentPillar is null)
+            {
+                if (rowHasContent)
+                    Skip(rowNumber, currentPillar is null
+                        ? "sin sección de pilar previa"
+                        : "sin contenido en la primera columna");
                 continue;
+            }
 
             var (code, title) = ParseCodeAndTitle(first);
             var hasCode = !string.IsNullOrEmpty(code) && code.Contains('.', StringComparison.Ordinal);
@@ -151,7 +191,10 @@ public sealed partial class ClosedXmlWafImporter(
             if (!hasCode)
             {
                 if (string.IsNullOrEmpty(title) || trackingEmpty)
+                {
+                    Skip(rowNumber, "sin código de matriz (N.N) ni seguimiento reconocible");
                     continue;
+                }
             }
 
             pillarSequence[currentPillar.Value] = pillarSequence.GetValueOrDefault(currentPillar.Value) + 1;
@@ -185,10 +228,26 @@ public sealed partial class ClosedXmlWafImporter(
                 Warnings: warnings));
         }
 
+        if (!headerSeen)
+        {
+            // Sin encabezado ninguna fila pudo evaluarse: el conteo útil es cuánto contenido
+            // quedó afuera, con una sola advertencia que explica el porqué.
+            rowsSkipped = preHeaderConContenido;
+            skipWarnings.Clear();
+            skipWarnings.Add("La hoja 'Resultados' no contiene la fila de encabezado esperada (columna 'Ámbito de revisión').");
+        }
+        else if (rowsSkipped > maxSkipWarnings)
+        {
+            skipWarnings.Add($"…y {rowsSkipped - maxSkipWarnings} filas descartadas más.");
+        }
+
         var metadata = new WafExcelParseMetadata(
             Sheet: SheetName,
             RowsTotal: rows.Count,
-            RowsWithWarnings: rows.Count(r => r.Warnings.Count > 0));
+            RowsWithWarnings: rows.Count(r => r.Warnings.Count > 0),
+            HeaderFound: headerSeen,
+            RowsSkipped: rowsSkipped,
+            Warnings: skipWarnings);
         return (rows, metadata);
     }
 
