@@ -32,8 +32,9 @@ public interface IAnalysisAccess
     Task<AccessCheck> AssertCostResultAccessAsync(ClaimsPrincipal user, int costResultId, CancellationToken ct = default);
 
     /// <summary>
-    /// Verifica acceso a un cliente por su id (port de assert_client_access). 403 si no es
-    /// accesible. Usado por credenciales/suscripciones. admin = global.
+    /// Verifica acceso a un cliente por su id (port de assert_client_access). Para admin: 404
+    /// si el cliente no existe, Ok si existe. Para no-admin: 403 si el cliente no está en su
+    /// cartera (exista o no, sin revelar existencia). admin = global.
     /// </summary>
     Task<AccessCheck> AssertClientAccessAsync(ClaimsPrincipal user, int clientId, CancellationToken ct = default);
 
