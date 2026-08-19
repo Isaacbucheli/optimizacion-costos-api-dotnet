@@ -120,7 +120,35 @@ public sealed class AuthController(
 
         var hash = PasswordHasher.Hash(payload.NewPassword!);
         await users.UpdateUserAsync(row.UserId, null, null, null, hash, null, mustChangePassword: false, ct);
-        return Ok(new Dictionary<string, object?> { ["changed"] = true, ["must_change_password"] = false });
+
+        // WEB-12: cambiar la contraseña revoca las sesiones anteriores. El reemplazo se
+        // emite en el mismo segundo de la revocación (la comparación estricta de AuthSetup
+        // lo deja pasar); el front lo persiste y el usuario no pierde la sesión.
+        await users.RevokeTokensAsync(row.UserId, ct);
+        var refreshed = new PublicUser(row.UserId, row.Email, row.FullName, row.Role, true, "", false);
+        var response = TokenResponse(refreshed);
+        response["changed"] = true;
+        response["must_change_password"] = false;
+        return Ok(response);
+    }
+
+    // -------------------- POST /auth/logout --------------------
+    // WEB-12: el cierre de sesión revoca server-side. Cualquier token del usuario emitido
+    // antes de este instante (incluido el que autenticó esta llamada) pasa a rechazarse
+    // con 401 en AuthSetup. Idempotente.
+    [HttpPost("logout")]
+    [Authorize]
+    public async Task<IActionResult> Logout(CancellationToken ct)
+    {
+        var email = User.FindFirst("sub")?.Value;
+        if (string.IsNullOrWhiteSpace(email))
+            return Unauthorized(new { detail = "Invalid token" });
+
+        var row = await users.GetForLoginAsync(email, ct);
+        if (row is not null)
+            await users.RevokeTokensAsync(row.UserId, ct);
+
+        return Ok(new Dictionary<string, object?> { ["logged_out"] = true });
     }
 
     // -------------------- GET /auth/me --------------------
@@ -251,6 +279,12 @@ public sealed class AuthController(
         var hash = payload.Password is null ? null : PasswordHasher.Hash(payload.Password);
         var ok = await users.UpdateUserAsync(userId, email, payload.FullName?.Trim(), role, hash, payload.IsActive, mustChange, ct);
         if (!ok) return NotFound(new { detail = "User not found" });
+
+        // WEB-12: un cambio de contraseña (reset por admin o propio) mata las sesiones
+        // que el usuario tuviera abiertas con la credencial anterior.
+        if (payload.Password is not null)
+            await users.RevokeTokensAsync(userId, ct);
+
         return Ok(await users.GetByIdAsync(userId, ct));
     }
 
