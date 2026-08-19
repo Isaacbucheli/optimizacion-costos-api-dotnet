@@ -27,6 +27,10 @@ public sealed class TokenIssuer(AppConfig config)
             ["role"] = role,
             ["iat"] = now,
             ["exp"] = now + expiresIn,
+            // Identificador de sesión (informe DAST, WEB-12): hoy solo trazabilidad;
+            // habilita revocación por sesión individual en el futuro. La revocación
+            // vigente compara iat contra app_users.tokens_revoked_at.
+            ["jti"] = Guid.NewGuid().ToString("N"),
         };
 
         var unsigned = $"{B64Url(JsonBytes(header))}.{B64Url(JsonBytes(payload))}";
