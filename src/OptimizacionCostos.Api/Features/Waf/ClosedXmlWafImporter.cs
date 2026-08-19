@@ -92,7 +92,21 @@ public sealed partial class ClosedXmlWafImporter(
     public (IReadOnlyList<WafExcelRow> Rows, WafExcelParseMetadata Metadata) Parse(byte[] content)
     {
         using var stream = new MemoryStream(content, writable: false);
-        using var workbook = new XLWorkbook(stream);
+        XLWorkbook workbook;
+        try
+        {
+            workbook = new XLWorkbook(stream);
+        }
+        catch (Exception ex) when (ex is System.IO.FileFormatException or FormatException
+            or ArgumentException or InvalidDataException
+            or DocumentFormat.OpenXml.Packaging.OpenXmlPackageException)
+        {
+            // UPL-02 (DAST): un contenido que no es un paquete OOXML válido (texto renombrado
+            // .xlsx, zip corrupto) es un rechazo de usuario, no un 500. Mismo catálogo de
+            // excepciones que XlsxRowReader.AbrirPaquete (InformeValor).
+            throw new InvalidOperationException("El archivo no es un Excel (.xlsx) válido.");
+        }
+        using var _ = workbook;
         if (!workbook.Worksheets.TryGetWorksheet(SheetName, out var sheet))
             throw new InvalidOperationException("El Excel no contiene la hoja 'Resultados'.");
 
