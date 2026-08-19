@@ -184,6 +184,7 @@ builder.Services.AddBitRateLimiter(config);
 // Identidad: emisión de JWT (login/bootstrap) + administración de usuarios y asignaciones (B3).
 builder.Services.AddSingleton<TokenIssuer>();
 builder.Services.AddScoped<IAppUserStore, SqlAppUserStore>();
+builder.Services.AddScoped<IRefreshTokenStore, SqlRefreshTokenStore>();
 
 // Matriz de permisos rol×módulo (lector/consultor): store SQL + decisión cacheada.
 // AddMemoryCache ya está registrado más abajo (bloque FinOps); el orden no importa.
