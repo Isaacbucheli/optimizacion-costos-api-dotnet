@@ -97,12 +97,20 @@ public sealed class SqlAnalysisAccess(ISqlConnectionFactory factory) : IAnalysis
 
     // -------------------- internos --------------------
 
-    /// <summary>Lanza/devuelve 403 si el usuario no puede acceder al cliente indicado.</summary>
+    /// <summary>Devuelve 404 si el cliente no existe, 403 si existe pero el usuario no puede
+    /// acceder, Ok si puede.</summary>
     private async Task<AccessCheck> AssertClientAccessAsync(
         SqlConnection conn, ClaimsPrincipal user, int clientId, CancellationToken ct)
     {
         if (HasGlobalAccess(user))
-            return AccessCheck.Allow();
+            // El admin ve todos los clientes, así que el único fallo posible es que el cliente
+            // no exista: 404 en vez de un 200 con cuerpo vacío (robustez; hallazgo del pentest
+            // sobre un client_id inexistente). Para no-admin NO se consulta dbo.clients: se
+            // mantiene el 403 uniforme para cliente ajeno exista o no, sin oráculo de existencia
+            // (evita enumeración de clientes entre carteras).
+            return await ClientExistsAsync(conn, clientId, ct)
+                ? AccessCheck.Allow()
+                : AccessCheck.NotFound("Client not found");
 
         await EnsureAssignmentSchemaAsync(conn, ct);
         var email = user.FindFirst("sub")?.Value;
@@ -117,6 +125,14 @@ public sealed class SqlAnalysisAccess(ISqlConnectionFactory factory) : IAnalysis
         cmd.Parameters.Add(new SqlParameter("@client_id", clientId));
         var hit = await cmd.ExecuteScalarAsync(ct);
         return hit is null or DBNull ? AccessCheck.Forbidden() : AccessCheck.Allow();
+    }
+
+    private static async Task<bool> ClientExistsAsync(SqlConnection conn, int clientId, CancellationToken ct)
+    {
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT 1 FROM dbo.clients WHERE client_id = @id";
+        cmd.Parameters.Add(new SqlParameter("@id", clientId));
+        return await cmd.ExecuteScalarAsync(ct) is not (null or DBNull);
     }
 
     private static async Task<int?> ClientIdForAnalysisAsync(SqlConnection conn, int analysisId, CancellationToken ct)
