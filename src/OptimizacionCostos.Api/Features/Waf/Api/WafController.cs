@@ -981,7 +981,11 @@ public sealed class WafController(
         }
         catch (InvalidOperationException ex)
         {
-            return BadRequest(new { detail = ex.Message });
+            // Un archivo que no es un Excel válido (RT-01) o que no trae la hoja "Resultados"
+            // es una entidad no procesable, no una petición malformada: 422, igual que el
+            // resto de las validaciones de esquema del preview (UPL-01). Así RT-01 responde
+            // 422 en todos sus casos, sin exponer FileFormatException.
+            return UnprocessableEntity(new { detail = ex.Message });
         }
         catch (Exception ex)
         {
