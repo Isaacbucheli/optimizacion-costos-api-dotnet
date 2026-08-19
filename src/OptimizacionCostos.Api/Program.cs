@@ -375,6 +375,17 @@ app.UseRateLimiter();
 app.UseAuthorization();
 app.MapControllers();
 
+// El esquema de auth (incluida tokens_revoked_at, WEB-12) debe existir ANTES del primer
+// request autenticado: un token de 8h emitido antes del deploy puede llegar antes que el
+// primer login, que es quien corre el ensure lazy. Best-effort: si la BD no responde,
+// SqlUserDirectory tiene su propia defensa (SqlException 207 → ALTER → reintento).
+try
+{
+    using var scope = app.Services.CreateScope();
+    await scope.ServiceProvider.GetRequiredService<IAppUserStore>().EnsureSchemaAsync();
+}
+catch { /* la BD puede no responder en el arranque; el directory se defiende del 207 */ }
+
 // Auto-reparación de superadmins al arrancar: fuerza rol=admin + activo para los correos
 // protegidos (SUPERADMIN_EMAILS). Best-effort: si la BD no está lista, el login del superadmin
 // reconcilia igual. No hace nada si la lista está vacía (default seguro).

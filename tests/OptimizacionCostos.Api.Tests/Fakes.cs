@@ -9,8 +9,8 @@ public sealed class FakeUserDirectory : IUserDirectory
 {
     public Dictionary<string, AppUser> Users { get; } = new(StringComparer.OrdinalIgnoreCase);
 
-    public void Add(string email, string role, bool active = true) =>
-        Users[email] = new AppUser(email, "Test " + role, role, active);
+    public void Add(string email, string role, bool active = true, DateTime? revokedAt = null) =>
+        Users[email] = new AppUser(email, "Test " + role, role, active, revokedAt);
 
     public Task<AppUser?> FindActiveByEmailAsync(string email, CancellationToken ct = default)
     {

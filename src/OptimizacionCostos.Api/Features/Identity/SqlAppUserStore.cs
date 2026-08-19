@@ -85,6 +85,8 @@ public sealed class SqlAppUserStore(ISqlConnectionFactory factory) : IAppUserSto
                 ALTER TABLE dbo.app_users ADD updated_at DATETIME2 NULL;
             IF COL_LENGTH('dbo.app_users', 'must_change_password') IS NULL
                 ALTER TABLE dbo.app_users ADD must_change_password BIT NOT NULL CONSTRAINT DF_app_users_must_change_password DEFAULT 0;
+            IF COL_LENGTH('dbo.app_users', 'tokens_revoked_at') IS NULL
+                ALTER TABLE dbo.app_users ADD tokens_revoked_at DATETIME2 NULL;
             """;
         await cmd2.ExecuteNonQueryAsync(ct);
 
