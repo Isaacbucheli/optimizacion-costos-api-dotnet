@@ -43,7 +43,7 @@ public sealed class AuthController(
         return Ok(new Dictionary<string, object?>
         {
             ["has_users"] = hasUsers,
-            ["roles"] = new[] { "admin", "consultor", "lector" },
+            ["roles"] = new[] { "admin", "consultor", "lector", "monitoreo" },
         });
     }
 
@@ -402,7 +402,7 @@ public sealed class AuthController(
         => Ok(await MatrixResponseAsync(ct));
 
     // -------------------- PUT /auth/module-permissions --------------------
-    // Guarda la matriz completa. Candado: lector jamás can_edit; edit ⇒ view.
+    // Guarda la matriz completa. Candado: lector y monitoreo jamás can_edit; edit ⇒ view.
     [HttpPut("module-permissions")]
     [Authorize(Roles = Roles.Admin)]
     public async Task<IActionResult> PutModulePermissions([FromBody] ModulePermissionsUpdateRequest payload, CancellationToken ct)
@@ -414,7 +414,7 @@ public sealed class AuthController(
         foreach (var (roleRaw, rows) in payload.Permissions)
         {
             var role = (roleRaw ?? "").Trim().ToLowerInvariant();
-            if (role is not (Roles.Consultor or Roles.Lector))
+            if (role is not (Roles.Consultor or Roles.Lector or Roles.Monitoreo))
                 return BadRequest(new { detail = $"Invalid role '{roleRaw}'" });
 
             var clean = new List<ModulePermission>();
@@ -426,7 +426,7 @@ public sealed class AuthController(
                     return BadRequest(new { detail = $"Invalid module_key '{row.ModuleKey}'" });
                 if (!seenKeys.Add(key))
                     return BadRequest(new { detail = $"Duplicated module_key '{key}'" });
-                var canEdit = row.CanEdit && role != Roles.Lector; // candado duro
+                var canEdit = row.CanEdit && !Roles.IsReadOnly(role); // candado duro
                 var canView = row.CanView || canEdit;               // edit ⇒ view
                 clean.Add(new ModulePermission(key, canView, canEdit));
             }
@@ -483,12 +483,12 @@ public sealed class AuthController(
         return Roles.Valid.Contains(normalized);
     }
 
-    // Los 11 módulos del catálogo con los permisos efectivos del rol:
-    // admin todo true; lector jamás can_edit; fila ausente = false/false.
+    // Los módulos del catálogo con los permisos efectivos del rol:
+    // admin todo true; lector/monitoreo jamás can_edit; fila ausente = false/false.
     private async Task<List<Dictionary<string, object?>>> BuildModulesAsync(string role, CancellationToken ct)
     {
         var isAdmin = string.Equals(role, Roles.Admin, StringComparison.OrdinalIgnoreCase);
-        var isLector = string.Equals(role, Roles.Lector, StringComparison.OrdinalIgnoreCase);
+        var readOnly = Roles.IsReadOnly(role);
         var perms = isAdmin
             ? null
             : await modulePerms.GetForRoleAsync(role, ct);
@@ -501,7 +501,7 @@ public sealed class AuthController(
             {
                 ["key"] = m.Key,
                 ["can_view"] = isAdmin || (p?.CanView ?? false),
-                ["can_edit"] = isAdmin || (!isLector && (p?.CanEdit ?? false)),
+                ["can_edit"] = isAdmin || (!readOnly && (p?.CanEdit ?? false)),
             };
         }).ToList();
     }
@@ -533,6 +533,7 @@ public sealed class AuthController(
             {
                 [Roles.Consultor] = ToMatrixRows(matrix, Roles.Consultor),
                 [Roles.Lector] = ToMatrixRows(matrix, Roles.Lector),
+                [Roles.Monitoreo] = ToMatrixRows(matrix, Roles.Monitoreo),
             },
         };
     }

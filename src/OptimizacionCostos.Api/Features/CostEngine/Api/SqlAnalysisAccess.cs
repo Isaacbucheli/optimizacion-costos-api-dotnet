@@ -12,9 +12,11 @@ namespace OptimizacionCostos.Api.Features.CostEngine.Api;
 /// </summary>
 public sealed class SqlAnalysisAccess(ISqlConnectionFactory factory) : IAnalysisAccess
 {
-    // Roles con acceso a todos los clientes (no requieren asignacion). Paridad con
-    // GLOBAL_ACCESS_ROLES = {"admin"} del Python.
-    private static bool HasGlobalAccess(ClaimsPrincipal user) => user.IsInRole(Roles.Admin);
+    // Roles con acceso a todos los clientes (no requieren asignacion): admin y monitoreo.
+    // Monitoreo es seguro aquí porque es de solo lectura por construcción: toda mutación
+    // exige además [Authorize(Roles=Editors/Admin)] o RequireModule(Edit), que jamás pasa.
+    public static bool HasGlobalAccess(ClaimsPrincipal user) =>
+        user.IsInRole(Roles.Admin) || user.IsInRole(Roles.Monitoreo);
 
     public async Task<IReadOnlySet<int>?> AccessibleClientIdsAsync(ClaimsPrincipal user, CancellationToken ct = default)
     {

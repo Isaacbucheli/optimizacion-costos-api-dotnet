@@ -130,6 +130,60 @@ public sealed class ModulePermissionsEndpointTests : IClassFixture<ModulePermiss
         _factory.Service.Invalidate();
     }
 
+    [Fact]
+    public async Task Status_lista_el_rol_monitoreo()
+    {
+        var client = _factory.CreateClient();
+        var body = await client.GetFromJsonAsync<JsonElement>("/auth/status");
+        var roles = body.GetProperty("roles").EnumerateArray().Select(r => r.GetString()).ToList();
+        Assert.Contains("monitoreo", roles);
+    }
+
+    [Fact]
+    public async Task Get_matriz_incluye_la_columna_monitoreo_nacida_denegada()
+    {
+        var client = ClientFor("admin6@bit.ec", Roles.Admin);
+        var body = await client.GetFromJsonAsync<JsonElement>("/auth/module-permissions");
+        var rows = body.GetProperty("permissions").GetProperty("monitoreo");
+        Assert.Equal(16, rows.GetArrayLength());
+        // El fake no siembra monitoreo: fila ausente = denegado, igual que en producción.
+        Assert.All(rows.EnumerateArray(), r =>
+        {
+            Assert.False(r.GetProperty("can_view").GetBoolean());
+            Assert.False(r.GetProperty("can_edit").GetBoolean());
+        });
+    }
+
+    [Fact]
+    public async Task Put_acepta_monitoreo_y_scrubbea_su_can_edit()
+    {
+        var client = ClientFor("admin7@bit.ec", Roles.Admin);
+        var res = await client.PutAsync("/auth/module-permissions", Json("""
+            {"permissions":{"monitoreo":[{"module_key":"alerts","can_view":true,"can_edit":true}]}}
+            """));
+        Assert.Equal(HttpStatusCode.OK, res.StatusCode);
+        var body = await res.Content.ReadFromJsonAsync<JsonElement>();
+        var alerts = body.GetProperty("permissions").GetProperty("monitoreo").EnumerateArray()
+            .Single(r => r.GetProperty("module_key").GetString() == "alerts");
+        Assert.True(alerts.GetProperty("can_view").GetBoolean());
+        Assert.False(alerts.GetProperty("can_edit").GetBoolean()); // candado
+        _factory.Service.Invalidate();
+    }
+
+    [Fact]
+    public async Task Me_de_monitoreo_jamas_trae_can_edit_true()
+    {
+        _factory.Perms.Set(Roles.Monitoreo, Modules.Alerts, canView: true, canEdit: true); // sucio a propósito
+        _factory.Service.Invalidate();
+        var client = ClientFor("mon@bit.ec", Roles.Monitoreo);
+        var me = await client.GetFromJsonAsync<JsonElement>("/auth/me");
+        var alerts = me.GetProperty("modules").EnumerateArray()
+            .Single(m => m.GetProperty("key").GetString() == Modules.Alerts);
+        Assert.True(alerts.GetProperty("can_view").GetBoolean());
+        Assert.False(alerts.GetProperty("can_edit").GetBoolean());
+        _factory.Service.Invalidate();
+    }
+
     public sealed class Factory : WebApplicationFactory<Program>
     {
         public const string Secret = TestAppFactory.Secret;

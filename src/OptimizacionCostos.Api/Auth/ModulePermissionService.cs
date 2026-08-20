@@ -5,8 +5,8 @@ namespace OptimizacionCostos.Api.Auth;
 
 /// <summary>
 /// Decisión de acceso por módulo con caché en memoria (TTL 60 s por rol).
-/// Reglas duras: admin pasa siempre; lector jamás edita (aunque la BD diga lo
-/// contrario); fila ausente = denegado.
+/// Reglas duras: admin pasa siempre; lector y monitoreo jamás editan (aunque la BD
+/// diga lo contrario); fila ausente = denegado.
 /// </summary>
 public interface IModulePermissionService
 {
@@ -23,7 +23,7 @@ public sealed class ModulePermissionService(IModulePermissionStore store, IMemor
     public async Task<bool> HasAccessAsync(string role, string moduleKey, bool requireEdit, CancellationToken ct = default)
     {
         if (string.Equals(role, Roles.Admin, StringComparison.OrdinalIgnoreCase)) return true;
-        if (requireEdit && string.Equals(role, Roles.Lector, StringComparison.OrdinalIgnoreCase)) return false;
+        if (requireEdit && Roles.IsReadOnly(role)) return false;
 
         var perms = await GetForRoleAsync(role, ct);
         return perms.TryGetValue(moduleKey, out var p) && (requireEdit ? p.CanEdit : p.CanView);
@@ -47,5 +47,6 @@ public sealed class ModulePermissionService(IModulePermissionStore store, IMemor
     {
         cache.Remove(CacheKey(Roles.Consultor));
         cache.Remove(CacheKey(Roles.Lector));
+        cache.Remove(CacheKey(Roles.Monitoreo));
     }
 }
