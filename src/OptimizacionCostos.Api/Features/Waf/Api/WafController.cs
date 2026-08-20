@@ -42,6 +42,11 @@ public sealed class WafController(
     /// <summary>Tope de subida del Excel de matriz (mismo criterio que InformeValor: 32 MiB).</summary>
     private const long ExcelImportMaxBytes = 32L * 1024 * 1024;
 
+    /// <summary>Límite de request de Kestrel para el preview: el tope + margen del envoltorio
+    /// multipart. Sube el default de Kestrel (~30 MB) para que el 413 lo decida nuestro tope y no
+    /// un corte prematuro del servidor (que se manifiesta como 400).</summary>
+    private const long ExcelImportRequestLimitBytes = ExcelImportMaxBytes + 8L * 1024 * 1024;
+
     private const string CostReferenceDisclaimer =
         "Valor referencial calculado con tarifas publicas de Azure (Retail Prices). "
         + "No representa facturacion real CSP, descuentos, reservas, Savings Plans, creditos ni impuestos.";
@@ -917,14 +922,40 @@ public sealed class WafController(
     /// <summary>POST excel-import/preview. Port de preview_waf_excel_import.</summary>
     [HttpPost("clients/{clientId:int}/excel-import/preview")]
     [RequireModule(Modules.Waf, ModuleAccess.Edit)]
+    [RequestSizeLimit(ExcelImportRequestLimitBytes)]
+    [DisableFormValueModelBinding]
     public async Task<IActionResult> ExcelImportPreview(
-        int clientId, IFormFile file, [FromQuery(Name = "use_ai")] bool useAi = true, CancellationToken ct = default)
+        int clientId, [FromQuery(Name = "use_ai")] bool useAi = true, CancellationToken ct = default)
     {
-        // El guard de acceso corre ANTES de validar la extensión o leer el archivo: con el
+        // El guard de acceso corre ANTES de leer el archivo o validar la extensión: con el
         // orden inverso, el error que recibe un usuario sin permiso depende del nombre de su
         // archivo (fuga de información; mismo contrato que InformeValorUploadApiTests).
         var guard = await GuardAsync(clientId, ct);
         if (guard is not null) return guard;
+
+        // El tope se mira sobre el Content-Length declarado, sin tocar el cuerpo (413 sin leer).
+        if (Request.ContentLength is > ExcelImportMaxBytes)
+            return StatusCode(StatusCodes.Status413PayloadTooLarge,
+                new { detail = $"El archivo supera el límite permitido de {ExcelImportMaxBytes / (1024 * 1024)} MB." });
+
+        // [DisableFormValueModelBinding] deja que leamos el form acá y controlemos el 413 (body
+        // chunked sin Content-Length) y el 400 (content-type no multipart), en vez del 500 opaco
+        // que produciría el model binding automático de un IFormFile como parámetro.
+        IFormFile? file;
+        try
+        {
+            var form = await Request.ReadFormAsync(ct);
+            file = form.Files["file"];
+        }
+        catch (Exception ex) when (ex is InvalidDataException or BadHttpRequestException)
+        {
+            return StatusCode(StatusCodes.Status413PayloadTooLarge,
+                new { detail = $"El archivo supera el límite permitido de {ExcelImportMaxBytes / (1024 * 1024)} MB." });
+        }
+        catch (InvalidOperationException)
+        {
+            return BadRequest(new { detail = "El cuerpo de la solicitud debe ser multipart/form-data." });
+        }
 
         var fileName = SafeFileName(file?.FileName);
         if (!fileName.ToLowerInvariant().EndsWith(".xlsx"))
