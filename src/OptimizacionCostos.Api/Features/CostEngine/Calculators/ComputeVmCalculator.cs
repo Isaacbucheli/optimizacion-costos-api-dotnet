@@ -122,18 +122,22 @@ public sealed class ComputeVmCalculator : ICostCalculator
             // excepción no se degradaba a price_not_found de esa fila: tumbaba el cálculo completo.
             VmPrices winPrices;
             VmPrices lnxPrices;
+            VmPrices primaryPrices;
             try
             {
                 if (needsWindowsPremium)
                 {
+                    // Pedimos Windows (para PAYG) y Linux (para calcular premium y RI base)
                     winPrices = _prices.GetVmPrices(vmSize, region, "Windows");
                     lnxPrices = _prices.GetVmPrices(vmSize, region, "Linux");
+                    primaryPrices = winPrices;
                 }
                 else
                 {
-                    var primary = _prices.GetVmPrices(vmSize, region, paygOs);
-                    winPrices = primary;
-                    lnxPrices = primary;
+                    // AHB activo (paygOs="Linux", compute base sin premium de licencia) o VM Linux nativa.
+                    primaryPrices = _prices.GetVmPrices(vmSize, region, paygOs);
+                    winPrices = primaryPrices;
+                    lnxPrices = primaryPrices;
                 }
             }
             catch (Exception ex)
@@ -144,10 +148,7 @@ public sealed class ComputeVmCalculator : ICostCalculator
                 continue;
             }
 
-            var primaryPrices = needsWindowsPremium ? null : _prices.GetVmPrices(vmSize, region, paygOs);
-            double? paygHourly = needsWindowsPremium
-                ? winPrices.PaygHourly
-                : primaryPrices!.PaygHourly;
+            double? paygHourly = primaryPrices.PaygHourly;
 
             if (paygHourly is null)
             {
@@ -239,7 +240,7 @@ public sealed class ComputeVmCalculator : ICostCalculator
             result.SqlAddonMonthly = sqlAddonMonthly > 0 ? sqlAddonMonthly : null;
             result.PaygMeterId = needsWindowsPremium
                 ? (winPrices.PaygHourly is not null ? winPrices.PaygMeterId : lnxPrices.PaygMeterId)
-                : primaryPrices!.PaygMeterId;
+                : primaryPrices.PaygMeterId;
 
             // RI total = (RI_base / N años) + Windows premium + SQL add-on
             // SQL y Windows premium NO se descuentan con RI: se siguen pagando por hora.
