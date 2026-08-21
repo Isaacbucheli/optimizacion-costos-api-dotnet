@@ -44,9 +44,6 @@ public sealed class ComputeVmCalculator : ICostCalculator
     private readonly IPriceRepository _prices;
     private readonly IPricingConstants _constants;
 
-    // Regex equivalente a re.search(r"_([A-Z]+)?(\d+)", vm_size): grupo 2 = primer número.
-    private static readonly Regex VcpuFromSizeRegex = new(@"_([A-Z]+)?(\d+)", RegexOptions.Compiled);
-
     public ComputeVmCalculator(IPriceRepository prices, IPricingConstants constants)
     {
         _prices = prices;
@@ -85,6 +82,9 @@ public sealed class ComputeVmCalculator : ICostCalculator
             // normal de pricing para obtener un PAYG referencial completo, y al final se marca
             // como no elegible a RI (no se recomienda reservar una máquina apagada).
             var isOff = !IsRunning(powerState);
+            // Distinto de isOff a propósito: Azure sigue facturando una VM "stopped" (apagada desde el
+            // SO) y solo deja de facturar la desasignada. Importa para la licencia de SQL Server.
+            var isDeallocated = IsDeallocated(powerState);
 
             // not vm_size or not region (truthy estilo Python: cadena vacía o null => falsy)
             if (string.IsNullOrEmpty(vmSize) || string.IsNullOrEmpty(region))
@@ -108,8 +108,21 @@ public sealed class ComputeVmCalculator : ICostCalculator
             // OS; Windows SIN beneficio usa la rama de premium.
             var paygOs = noWindowsServerLicense ? "Linux" : osType;
 
+            // Precios. primaryPrices es el que fija el PAYG: en la rama con premium es el de Windows;
+            // en la rama sin premium es el único lookup, hecho con el OS de tarificación (Linux si hay
+            // AHB, para que la VM con beneficio híbrido no pague el premium de licencia).
+            //
+            // Hasta el 2026-08-21 la rama sin premium llamaba DOS VECES a GetVmPrices con argumentos
+            // idénticos: una acá dentro y otra afuera del try. No era solo trabajo repetido. Cuando la
+            // selección determinista no encuentra PAYG, GetVmPrices cae al asistente de IA, que no
+            // memoiza, así que las dos llamadas eran dos elecciones independientes de meter y la fila
+            // salía mezclada: el PAYG y el payg_meter_id de la segunda, y la base del RI y el match= de
+            // la primera. Si la segunda no resolvía, la VM caía a manual_required aportando $0 aunque
+            // la primera ya tenía precio válido. Y la segunda quedaba FUERA del try, así que su
+            // excepción no se degradaba a price_not_found de esa fila: tumbaba el cálculo completo.
             VmPrices winPrices;
             VmPrices lnxPrices;
+            VmPrices primaryPrices;
             try
             {
                 if (needsWindowsPremium)
@@ -117,13 +130,14 @@ public sealed class ComputeVmCalculator : ICostCalculator
                     // Pedimos Windows (para PAYG) y Linux (para calcular premium y RI base)
                     winPrices = _prices.GetVmPrices(vmSize, region, "Windows");
                     lnxPrices = _prices.GetVmPrices(vmSize, region, "Linux");
+                    primaryPrices = winPrices;
                 }
                 else
                 {
                     // AHB activo (paygOs="Linux", compute base sin premium de licencia) o VM Linux nativa.
-                    var primary = _prices.GetVmPrices(vmSize, region, paygOs);
-                    winPrices = primary;
-                    lnxPrices = primary;
+                    primaryPrices = _prices.GetVmPrices(vmSize, region, paygOs);
+                    winPrices = primaryPrices;
+                    lnxPrices = primaryPrices;
                 }
             }
             catch (Exception ex)
@@ -134,12 +148,7 @@ public sealed class ComputeVmCalculator : ICostCalculator
                 continue;
             }
 
-            // PAYG. En la rama sin premium se reconsulta get_vm_prices con el OS de tarificación
-            // (Linux si AHB, para que la VM con beneficio híbrido no pague el premium de licencia).
-            var primaryPrices = needsWindowsPremium ? null : _prices.GetVmPrices(vmSize, region, paygOs);
-            double? paygHourly = needsWindowsPremium
-                ? winPrices.PaygHourly
-                : primaryPrices!.PaygHourly;
+            double? paygHourly = primaryPrices.PaygHourly;
 
             if (paygHourly is null)
             {
@@ -178,18 +187,51 @@ public sealed class ComputeVmCalculator : ICostCalculator
             var ri1yTotal = lnxPrices.Ri1yTotal;
             var ri3yTotal = lnxPrices.Ri3yTotal;
 
-            // SQL add-on
+            // SQL add-on. El conteo de vCores es el multiplicador de la licencia, así que sale de
+            // VmSizeVcpu y no de leer el primer número del nombre del tamaño (ver esa clase: el
+            // nombre miente en los tamaños de núcleo restringido y en las familias viejas).
             var sqlEdition = r.GetString("sql_image_sku");
             var sqlLicense = r.GetString("sql_license_type");
-            // vcpus = r.get("vcpu_count") or _vcpu_count_from_size(vm_size)
-            var vcpus = r.GetInt("vcpu_count") ?? VcpuCountFromSize(vmSize);
+            var vcpuResolution = VmSizeVcpu.Resolve(r.GetInt("vcpu_count"), vmSize);
+            var vcpus = vcpuResolution.Vcpus;
 
             var sqlAddonMonthly = 0.0;
-            // if sql_edition and vcpus: (truthy => no nulo/no vacío y vcpus != 0)
-            if (!string.IsNullOrEmpty(sqlEdition) && vcpus is not null && vcpus.Value != 0)
+            string? sqlAddonWarning = null;
+            var addonPerVcoreHr = string.IsNullOrEmpty(sqlEdition)
+                ? 0.0
+                : _constants.SqlAddonPerVcoreHour(sqlEdition, sqlLicense ?? "");
+            if (addonPerVcoreHr <= 0.0 && !string.IsNullOrEmpty(sqlEdition) && !IsZeroByDesign(sqlEdition, sqlLicense))
             {
-                var addonPerVcoreHr = _constants.SqlAddonPerVcoreHour(sqlEdition, sqlLicense ?? "");
-                sqlAddonMonthly = addonPerVcoreHr * vcpus.Value * hours;
+                // La edición o el tipo de licencia no están en el enum que conocemos. El caso concreto
+                // es sqlImageSku = "Unknown", que ARM devuelve de verdad cuando no pudo determinar la
+                // edición instalada: ahí $0 no es demostrablemente el número equivocado, pero el
+                // silencio sí es indefendible, porque detrás puede haber una Enterprise sin cotizar.
+                sqlAddonWarning =
+                    $"SQL: licencia NO cotizada, edicion \"{sqlEdition}\" / licencia " +
+                    $"\"{sqlLicense ?? "(sin dato)"}\" no reconocidas. Requiere validacion manual.";
+            }
+            else if (addonPerVcoreHr > 0.0)
+            {
+                if (isDeallocated)
+                {
+                    // Azure cobra la licencia SQL por tiempo de VM CORRIENDO y deja de cobrarla al
+                    // DESASIGNAR. Un apagado desde el sistema operativo NO la detiene, por eso acá
+                    // solo cuenta deallocated y no cualquier estado distinto de running.
+                    sqlAddonWarning = $"SQL {sqlEdition}: sin cargo de licencia (VM desasignada)";
+                }
+                else if (vcpus is > 0)
+                {
+                    sqlAddonMonthly = addonPerVcoreHr * vcpus.Value * hours;
+                }
+                else
+                {
+                    // No se pudo determinar el conteo de vCores. Antes esto devolvía $0 en silencio;
+                    // ahora queda visible, porque una licencia Enterprise no cobrada es la diferencia
+                    // más grande que puede tener la cotización de una VM.
+                    sqlAddonWarning =
+                        $"SQL {sqlEdition}: licencia NO cotizada, no se pudo determinar el conteo de " +
+                        $"vCores del tamaño {vmSize}. Requiere validacion manual.";
+                }
             }
 
             // PAYG total
@@ -198,7 +240,7 @@ public sealed class ComputeVmCalculator : ICostCalculator
             result.SqlAddonMonthly = sqlAddonMonthly > 0 ? sqlAddonMonthly : null;
             result.PaygMeterId = needsWindowsPremium
                 ? (winPrices.PaygHourly is not null ? winPrices.PaygMeterId : lnxPrices.PaygMeterId)
-                : primaryPrices!.PaygMeterId;
+                : primaryPrices.PaygMeterId;
 
             // RI total = (RI_base / N años) + Windows premium + SQL add-on
             // SQL y Windows premium NO se descuentan con RI: se siguen pagando por hora.
@@ -244,7 +286,14 @@ public sealed class ComputeVmCalculator : ICostCalculator
             }
             if (sqlAddonMonthly > 0)
             {
-                notes.Add($"SQL {sqlEdition} {sqlLicense}: +${sqlAddonMonthly.ToString("F2", CultureInfo.InvariantCulture)}/mes");
+                var vcoreNote = vcpuResolution.IsDerivedFromName
+                    ? $" ({vcpus} vCores deducidos del nombre del tamaño)"
+                    : $" ({vcpus} vCores)";
+                notes.Add($"SQL {sqlEdition} {sqlLicense}: +${sqlAddonMonthly.ToString("F2", CultureInfo.InvariantCulture)}/mes{vcoreNote}");
+            }
+            if (sqlAddonWarning is not null)
+            {
+                notes.Add(sqlAddonWarning);
             }
             if (notes.Count > 0)
             {
@@ -279,20 +328,27 @@ public sealed class ComputeVmCalculator : ICostCalculator
         return powerState.ToLowerInvariant().Contains("running");
     }
 
-    private static int? VcpuCountFromSize(string? vmSize)
+    /// <summary>
+    /// Ediciones de SQL Server y tipos de licencia donde $0 es la respuesta CORRECTA, no un hueco:
+    /// Developer y Express no tienen cargo de licencia, y con AHUB o DR el cliente aporta la suya.
+    /// Sirve para separar un cero legítimo de un cero por valor no reconocido (p.ej. la edición
+    /// "Unknown" que devuelve ARM cuando no pudo determinar qué está instalado). Las tarifas siguen
+    /// viviendo en <see cref="Pricing.PricingConstants.SqlAddonPerVcoreHour"/>; acá solo se clasifica.
+    /// </summary>
+    private static bool IsZeroByDesign(string? edition, string? license)
     {
-        if (string.IsNullOrEmpty(vmSize)) return null;
-        var match = VcpuFromSizeRegex.Match(vmSize);
-        if (match.Success)
-        {
-            if (int.TryParse(match.Groups[2].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var n))
-            {
-                return n;
-            }
-            return null;
-        }
-        return null;
+        var e = (edition ?? "").ToLowerInvariant();
+        var l = (license ?? "").ToLowerInvariant();
+        return e is "developer" or "express" || l is "ahub" or "dr";
     }
+
+    /// <summary>
+    /// Desasignada (deallocated), que NO es lo mismo que apagada. Azure deja de facturar compute y
+    /// licencia solo al desasignar; un shutdown desde el sistema operativo sigue facturando.
+    /// </summary>
+    private static bool IsDeallocated(string? powerState)
+        => !string.IsNullOrEmpty(powerState)
+           && powerState.Contains("deallocat", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>Imita el encadenado <c>a or b or c</c> de Python sobre cadenas (vacío/null = falsy).</summary>
     private static string? FirstNonEmpty(params string?[] candidates)

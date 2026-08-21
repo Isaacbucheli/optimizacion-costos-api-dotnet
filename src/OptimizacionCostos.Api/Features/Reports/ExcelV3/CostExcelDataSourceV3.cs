@@ -14,9 +14,10 @@ namespace OptimizacionCostos.Api.Features.Reports.ExcelV3;
 /// helpers <see cref="Number"/>/<see cref="Text"/>/<see cref="Monthly"/>/<see cref="NeutralizeReservedRows"/>
 /// se portaron del exportador Excel anterior (ClosedXmlCostExcelExporter, ya ELIMINADO en la limpieza
 /// 2026-07-07 cuando el motor v3 quedó como único). Las referencias "líneas N-M" en los comentarios
-/// de abajo son la procedencia histórica de cada bloque. Única diferencia deliberada con el viejo:
+/// de abajo son la procedencia histórica de cada bloque. Dos diferencias deliberadas con el viejo:
 /// la query "discovered_services" (hoja "Servicios no catalogados") NO se ejecuta aquí — queda fuera
-/// del entregable v3 por decisión de diseño.
+/// del entregable v3 por decisión de diseño; y la query "vms" acota sql_vm_details al análisis en
+/// curso (el viejo no lo hacía y duplicaba las VMs con SQL Server, ver el comentario en la query).
 /// </summary>
 public sealed record ExcelV3Data(
     string ClientName,
@@ -173,18 +174,14 @@ public sealed class CostExcelDataSourceV3(
     // query "discovered_services": fuera del entregable v3, ver comentario del header del archivo).
     // =================================================================================
 
-    private async Task<Dictionary<string, List<Dictionary<string, object?>>>> FetchRowsAsync(
-        int analysisId, CancellationToken ct)
-    {
-        await using var conn = await factory.OpenAsync(ct);
-
-        // El viejo exportador asegura el esquema de vm_power_usage (LEFT JOIN en la hoja de VMs).
-        // Aquí se crea best-effort por si nunca se corrió el refresh de encendido/apagado.
-        await EnsurePowerUsageSchemaAsync(conn, ct);
-        await EnsureNewDetailTablesAsync(conn, ct);
-
-        var queries = new (string Key, string Sql)[]
-        {
+    /// <summary>
+    /// Queries de <see cref="FetchRowsAsync"/>. Viven en un campo estático (y no como local del
+    /// método) para que la prueba de regresión pueda inspeccionar su texto vía InternalsVisibleTo:
+    /// la duplicación de las VMs con SQL Server salió de un JOIN sin acotar por análisis, y eso
+    /// solo se cata leyendo el SQL o corriendo el export contra la BD real.
+    /// </summary>
+    internal static readonly (string Key, string Sql)[] Queries =
+        [
             ("results", """
                 SELECT cr.*, r.resource_name, r.resource_type, r.subscription_name,
                        r.resource_group, r.location, r.region_name, r.sku_name,
@@ -201,14 +198,28 @@ public sealed class CostExcelDataSourceV3(
                        r.location, r.status, r.os_type, r.license_type, r.sku_name,
                        d.vm_size, d.power_state, d.os_license_benefit, d.vcpu_count,
                        d.has_sql_server, d.sql_edition, d.sql_license_type,
-                       s.sql_image_sku, s.sql_license_type AS sql_vm_license_type,
+                       s.sql_image_sku, s.sql_vm_license_type,
                        s.sql_image_offer, s.sql_management,
                        pu.running_hours, pu.uptime_pct
                 FROM dbo.cost_results cr
                 INNER JOIN dbo.azure_resources r ON r.resource_id = cr.resource_id
                 LEFT JOIN dbo.vm_details d ON d.resource_id = r.resource_id
-                LEFT JOIN dbo.sql_vm_details s
-                    ON LOWER(s.vm_azure_resource_id) = LOWER(r.azure_resource_id)
+                -- Diferencia deliberada con el viejo exportador (ver header): acotar sql_vm_details
+                -- al analisis en curso. sql_vm_details cuelga de azure_resources por resource_id,
+                -- que es POR ANALISIS, pero vm_azure_resource_id es el id ARM de la VM y ese id se
+                -- repite en cada analisis del cliente. El LEFT JOIN sin acotar devolvia una fila por
+                -- analisis historico, asi que la hoja duplicaba cada VM con SQL Server (x2 con dos
+                -- analisis, x3 con tres...) e inflaba el SUBTOTAL de la fila TOTAL. OUTER APPLY con
+                -- TOP 1: una fila como maximo, siempre.
+                OUTER APPLY (
+                    SELECT TOP 1 sv.sql_image_sku, sv.sql_license_type AS sql_vm_license_type,
+                           sv.sql_image_offer, sv.sql_management
+                    FROM dbo.sql_vm_details sv
+                    INNER JOIN dbo.azure_resources sr ON sr.resource_id = sv.resource_id
+                    WHERE sr.analysis_id = cr.analysis_id
+                      AND LOWER(sv.vm_azure_resource_id) = LOWER(r.azure_resource_id)
+                    ORDER BY sv.resource_id DESC
+                ) s
                 LEFT JOIN dbo.vm_power_usage pu
                     ON pu.resource_id = r.resource_id AND pu.analysis_id = cr.analysis_id
                 WHERE cr.analysis_id = @id AND cr.service_key = 'vms'
@@ -326,10 +337,20 @@ public sealed class CostExcelDataSourceV3(
                 INNER JOIN dbo.clients c ON c.client_id = ca.client_id
                 WHERE ca.analysis_id = @id
                 """),
-        };
+        ];
+
+    private async Task<Dictionary<string, List<Dictionary<string, object?>>>> FetchRowsAsync(
+        int analysisId, CancellationToken ct)
+    {
+        await using var conn = await factory.OpenAsync(ct);
+
+        // El viejo exportador asegura el esquema de vm_power_usage (LEFT JOIN en la hoja de VMs).
+        // Aquí se crea best-effort por si nunca se corrió el refresh de encendido/apagado.
+        await EnsurePowerUsageSchemaAsync(conn, ct);
+        await EnsureNewDetailTablesAsync(conn, ct);
 
         var output = new Dictionary<string, List<Dictionary<string, object?>>>();
-        foreach (var (key, sql) in queries)
+        foreach (var (key, sql) in Queries)
         {
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = sql;

@@ -1,4 +1,5 @@
 using System.Globalization;
+using OptimizacionCostos.Api.Features.CostEngine.Calculators;
 
 namespace OptimizacionCostos.Api.Features.Reports.ExcelV3;
 
@@ -306,23 +307,17 @@ public static class SheetCatalog
     private static object? Get(IDictionary<string, object?> row, string key) =>
         row.TryGetValue(key, out var v) ? v : null;
 
-    /// <summary>Port literal de VcpuFromSize (ClosedXmlCostExcelExporter.cs línea ~160): extrae el
-    /// número del 2º token de "Standard_D4s_v5" -&gt; 4 (o null si no hay tamaño o no hay dígitos).</summary>
+    /// <summary>
+    /// Conteo de vCores para la columna "vCPUs". Delega en <see cref="VmSizeVcpu"/>, el mismo
+    /// resolvedor que usa el cálculo de la licencia SQL, para que la hoja con la que el cliente valida
+    /// la cotización no muestre un número distinto del que se cobró.
+    ///
+    /// Antes tenía su propio parser (port de ClosedXmlCostExcelExporter): partía por guion bajo y
+    /// cortaba en el guion, así que un Standard_E32-16s_v3 mostraba 32 en vez de 16 y un
+    /// Standard_DS13_v2 mostraba 13, que no es el conteo de vCPU de ningún tamaño de Azure.
+    /// </summary>
     private static object? VcpuFromSize(object? sizeValue)
-    {
-        var size = sizeValue as string;
-        if (string.IsNullOrEmpty(size)) return null;
-        var parts = size.Split('_');
-        if (parts.Length < 2) return null;
-        var token = parts[1];
-        var digits = "";
-        foreach (var ch in token)
-        {
-            if (char.IsDigit(ch)) digits += ch;
-            else if (digits.Length > 0) break;
-        }
-        return digits.Length > 0 ? int.Parse(digits, CultureInfo.InvariantCulture) : null;
-    }
+        => VmSizeVcpu.Resolve(null, sizeValue as string).Vcpus;
 
     /// <summary>Estado del beneficio híbrido (Azure Hybrid Benefit) tal como lo expone Azure vía la
     /// propiedad ARM <c>licenseType</c> (os_license_benefit): Sí/No + tipo, sin montos. Windows_Server =

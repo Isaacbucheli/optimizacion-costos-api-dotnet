@@ -3,9 +3,14 @@ using OptimizacionCostos.Api.Features.CostEngine.Pricing;
 namespace OptimizacionCostos.Api.Tests.CostEngine;
 
 /// <summary>
-/// Doble de prueba de <see cref="IPricingConstants"/>. Valores por defecto iguales a
-/// app/pricing/constants.py (730 / 8760 / IP 3.65 / 2.63). El add-on SQL se delega a un
-/// <c>Func</c> con el port exacto por defecto, y todo es sobre-escribible para tests.
+/// Doble de prueba de <see cref="IPricingConstants"/>. Valores por defecto 730 / 8760 / IP 3.65 /
+/// 2.63. El add-on SQL se delega a un <c>Func</c> que por defecto espeja a
+/// <see cref="PricingConstants.SqlAddonPerVcoreHour"/>, y todo es sobre-escribible para tests.
+///
+/// El add-on ya NO es el port de app/pricing/constants.py: las tarifas se verificaron el 2026-08-21
+/// contra la Azure Retail Prices API (Enterprise 0.375 y no 0.3753, Web 0.008 que faltaba, licencia
+/// DR en 0). Este doble sigue a la implementación real para que los tests no se calibren contra
+/// tarifas que Azure no cobra.
 ///
 /// Los tests Python parchean <c>constants.hours_per_month</c> a 730 explícitamente; aquí
 /// 730 ya es el default, así que basta con <c>new FakePricingConstants()</c>. Para variar:
@@ -19,7 +24,7 @@ public sealed class FakePricingConstants : IPricingConstants
     public double HoursPerMonthValue { get; set; } = 730.0;
     public double HoursPerYearValue { get; set; } = 8760.0;
 
-    /// <summary>Por defecto, port exacto de sql_addon_per_vcore_hour de constants.py.</summary>
+    /// <summary>Por defecto, espejo de PricingConstants.SqlAddonPerVcoreHour.</summary>
     public Func<string, string, double> SqlAddonPerVcoreHourFn { get; set; } = DefaultSqlAddon;
 
     /// <summary>Por defecto, port exacto de public_ip_monthly_cost de constants.py.</summary>
@@ -38,10 +43,11 @@ public sealed class FakePricingConstants : IPricingConstants
     {
         var editionLower = (edition ?? "").ToLowerInvariant();
         var licenseLower = (licenseType ?? "").ToLowerInvariant();
-        if (licenseLower == "ahub") return 0.0;
+        if (licenseLower is "ahub" or "dr") return 0.0;
         if (editionLower is "developer" or "express") return 0.0;
-        if (editionLower == "enterprise") return 0.3753;
+        if (editionLower == "enterprise") return 0.375;
         if (editionLower == "standard") return 0.10;
+        if (editionLower == "web") return 0.008;
         return 0.0;
     }
 
