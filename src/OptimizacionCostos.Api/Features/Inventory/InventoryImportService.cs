@@ -63,6 +63,13 @@ public sealed class InventoryImportService(
         await using var conn = await factory.OpenAsync(ct);
         var clientId = await GetAnalysisClientIdAsync(conn, analysisId, ct);
 
+        // Guarda contra el doble import. Va ANTES del descubrimiento para no gastar llamadas a
+        // Resource Graph en una importación que se va a rechazar.
+        var rechazo = DuplicateImportRejection(
+            opts.ReplaceExisting, services, await CountResourcesByTypeAsync(conn, analysisId, ct));
+        if (rechazo is not null)
+            throw new ImportBadRequestException(rechazo);
+
         // Descubrimiento + sync (cada uno con su propia conexión, igual que el Python).
         var discoverySummary = await DiscoverAsync(clientId, ct);
         var syncSummary = await sync.SyncAsync(clientId, ct);
@@ -265,6 +272,70 @@ public sealed class InventoryImportService(
             subNameMap[subId] = subName;
         }
         return (groups, subNameMap);
+    }
+
+    /// <summary>
+    /// Recursos que el analisis YA tiene, contados por resource_type (clave insensible a mayusculas:
+    /// Resource Graph devuelve el tipo en minusculas, pero el catalogo no necesariamente).
+    /// </summary>
+    private static async Task<IReadOnlyDictionary<string, int>> CountResourcesByTypeAsync(
+        SqlConnection conn, int analysisId, CancellationToken ct)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT resource_type, COUNT(*) AS n
+            FROM dbo.azure_resources
+            WHERE analysis_id = @id AND resource_type IS NOT NULL
+            GROUP BY resource_type
+            """;
+        cmd.Parameters.Add(new SqlParameter("@id", analysisId));
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            counts[reader.GetString(0)] = reader.GetInt32(1);
+        }
+        return counts;
+    }
+
+    /// <summary>
+    /// Guarda contra el doble import (bug encontrado 2026-08-21). El importador solo sabe hacer dos
+    /// cosas: borrar-e-insertar (ReplaceExisting) o insertar. No existe un upsert. Importar dos veces
+    /// el mismo servicio en el mismo analisis SIN reemplazar duplicaba cada recurso, y con el cada
+    /// fila de cost_results, cada conteo y cada monto del analisis: paso de verdad en dos analisis,
+    /// uno con TODO el inventario al doble (206 recursos para 103 reales).
+    ///
+    /// Un default en la interfaz no alcanza, porque el endpoint se puede llamar directo. Asi que aca
+    /// se rechaza la combinacion que no se puede arreglar despues: insertar sobre lo que ya esta.
+    /// Devuelve el mensaje del rechazo, o null si la importacion puede seguir.
+    /// </summary>
+    internal static string? DuplicateImportRejection(
+        bool replaceExisting,
+        IReadOnlyList<ServiceCatalogEntry> services,
+        IReadOnlyDictionary<string, int> existingCountsByResourceType)
+    {
+        if (replaceExisting)
+        {
+            return null;
+        }
+
+        var choca = new List<string>();
+        foreach (var svc in services)
+        {
+            if (existingCountsByResourceType.TryGetValue(svc.AzureResourceType, out var n) && n > 0)
+            {
+                choca.Add($"{svc.DisplayName ?? svc.ServiceKey} ({n})");
+            }
+        }
+        if (choca.Count == 0)
+        {
+            return null;
+        }
+
+        return $"El analisis ya tiene inventario de: {string.Join(", ", choca)}. "
+             + "Importar sin reemplazar duplicaria esos recursos y con ellos todos los conteos y "
+             + "montos del analisis. Marca 'Reemplazar el inventario existente' para volver a "
+             + "importarlos, o crea un analisis nuevo.";
     }
 
     private static async Task DeletePreviousInventoryAsync(SqlConnection conn, SqlTransaction tx, int analysisId, CancellationToken ct)
