@@ -209,7 +209,7 @@ public sealed class ComputeVmCalculatorTests
 
         var result = Build(prices).Calculate(rows, 99)[0];
 
-        var addon = 0.3753 * 4 * Hours;                                    // Enterprise 0.3753, vcpus=4
+        var addon = 0.375 * 4 * Hours;                                     // Enterprise 0.375 (meter real), vcpus=4
         Assert.Equal(addon, result.SqlAddonMonthly!.Value, 5);
         Assert.Equal(0.10 * Hours + addon, result.PaygMonthly!.Value, 5);
     }
@@ -293,9 +293,12 @@ public sealed class ComputeVmCalculatorTests
         Assert.Contains("VM apagada — costo PAYG referencial", result.CalculationNotes);
     }
 
-    // Apagada + SQL VM: el add-on entra al PAYG referencial (igual que encendida).
+    // Desasignada + SQL VM: el compute sigue como PAYG referencial, pero la licencia NO se cobra.
+    // Cambio de criterio 2026-08-21: Azure cobra la licencia SQL por tiempo de VM corriendo y deja
+    // de cobrarla al desasignar. Hasta esa fecha el add-on entraba igual que en una VM encendida.
+    // El caso "stopped" (apagada desde el SO, que Azure SÍ factura) vive en ComputeVmSqlAddonTests.
     [Fact]
-    public void Stopped_sql_vm_includes_addon_in_referential_payg()
+    public void Deallocated_sql_vm_keeps_referential_compute_without_license()
     {
         var prices = new FakePriceRepository
         {
@@ -313,10 +316,10 @@ public sealed class ComputeVmCalculatorTests
 
         var result = Build(prices).Calculate(rows, 99)[0];
 
-        var addon = 0.10 * 4 * Hours;                                      // 292.0 (fake: 0.10/vcore/hr)
         Assert.Equal("calculated", result.CalculationStatus);
-        Assert.Equal(0.10 * Hours + addon, result.PaygMonthly!.Value, 5);  // 73 + 292 = 365
-        Assert.Equal(addon, result.SqlAddonMonthly!.Value, 5);
+        Assert.Equal(0.10 * Hours, result.PaygMonthly!.Value, 5);          // solo compute: 73
+        Assert.Null(result.SqlAddonMonthly);
+        Assert.Contains("sin cargo de licencia (VM desasignada)", result.CalculationNotes);
         Assert.False(result.RiApplies);
     }
 

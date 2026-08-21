@@ -44,7 +44,8 @@ public sealed class InventoryImportService(
     AppConfig config,
     ILogger<InventoryImportService> logger,
     IFinOpsRefData? refData = null,
-    IStorageFilesEnricher? storageFilesEnricher = null) : IInventoryImportService
+    IStorageFilesEnricher? storageFilesEnricher = null,
+    IVmSizeEnricher? vmSizeEnricher = null) : IInventoryImportService
 {
     private const string DiscoveryKql =
         "Resources | summarize resource_count=count(), sample_names=make_set(name, 5) by resource_type=tolower(type) | order by resource_count desc";
@@ -113,6 +114,33 @@ public sealed class InventoryImportService(
                             collected.Add((svc, row));
                         }
                         continue;
+                    }
+
+                    if (string.Equals(svc.ServiceKey, "vms", StringComparison.Ordinal) && vmSizeEnricher is not null)
+                    {
+                        // Conteo real de vCores del catálogo de SKUs de ARM. Sin esto, vcpu_count queda
+                        // NULL y la licencia de SQL Server se estima deduciendo los vCores del nombre
+                        // del tamaño, que en los tamaños de núcleo restringido cobra el doble.
+                        // A diferencia de storage_files, un fallo acá NO descarta las filas: el cálculo
+                        // tiene respaldo (VmSizeVcpu), así que se importa igual y queda la advertencia.
+                        try
+                        {
+                            var vmEnrichment = await vmSizeEnricher.EnrichAsync(cred, rows, ct);
+                            foreach (var w in vmEnrichment.Warnings)
+                            {
+                                ((List<object>)s["warnings"]!).Add(new { credential_id = credentialId, warning = w });
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            logger.LogWarning(ex, "VmSizeEnricher falló credential={Cred} type={Type}", credentialId, ex.GetType().Name);
+                            ((List<object>)s["warnings"]!).Add(new
+                            {
+                                credential_id = credentialId,
+                                warning = $"no se pudo leer el catálogo de tamaños de VM ({ex.GetType().Name}); "
+                                          + "los vCores para la licencia SQL se estimarán desde el nombre del tamaño",
+                            });
+                        }
                     }
 
                     foreach (var node in rows)

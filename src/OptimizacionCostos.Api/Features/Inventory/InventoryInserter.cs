@@ -181,12 +181,17 @@ public static class InventoryInserter
         await using var cmd = New(c, t, """
             INSERT INTO dbo.vm_details (resource_id, vm_size, power_state, os_type, os_license_benefit,
                 vcpu_count, memory_gb, has_sql_server, sql_edition, sql_license_type)
-            VALUES (@rid, @size, @power, @os, @lic, NULL, NULL, 0, NULL, NULL)
+            VALUES (@rid, @size, @power, @os, @lic, @vcpu, @mem, 0, NULL, NULL)
             """);
+        // vcpu_count y memory_gb los estampa VmSizeEnricher desde Microsoft.Compute/skus antes del
+        // insert (vcpuCount = vCPUsAvailable, el conteo que Azure licencia). Hasta el 2026-08-21 acá
+        // iba NULL fijo, y por eso el cálculo de la licencia SQL deducía los vCores del nombre del
+        // tamaño. Si ARM no respondió, siguen llegando nulos y el cálculo usa su respaldo.
         cmd.Parameters.AddRange([
             new SqlParameter("@rid", rid), new SqlParameter("@size", r.Str("vmSize") ?? ""),
             new SqlParameter("@power", Nz(r.Str("powerState"))), new SqlParameter("@os", Nz(r.Str("osType"))),
             new SqlParameter("@lic", Nz(r.Str("licenseType"))),
+            new SqlParameter("@vcpu", Nz(r.Int("vcpuCount"))), new SqlParameter("@mem", Nz(r.Dbl("memoryGb"))),
         ]);
         await cmd.ExecuteNonQueryAsync(ct);
     }

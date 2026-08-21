@@ -18,7 +18,7 @@ public interface IPricingConstants
     /// Python: <c>sql_addon_per_vcore_hour(edition, license_type)</c>.
     ///   - AHUB (cualquier edition): 0 (BYOL)
     ///   - Developer / Express: 0
-    ///   - Enterprise: 0.3753 (PAYG)
+    ///   - Enterprise: 0.375 (PAYG, meter "1 vCore License" de la Retail API)
     ///   - Standard: 0.10 (PAYG)
     ///   - edition desconocida: 0
     /// </summary>
